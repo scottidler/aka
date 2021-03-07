@@ -135,13 +135,13 @@ where
         }
     }
 
-    fn really_deserialize_alias<'de, D>(deserializer: D) -> Result<Alias, D::Error>
+    fn alias_string_or_struct<'de, D>(deserializer: D) -> Result<Alias, D::Error>
         where D: Deserializer<'de> {
         deserializer.deserialize_any(AliasVisitor)
     }
 
     #[derive(Debug, Deserialize)]
-    struct AliasWrapper(#[serde(deserialize_with="really_deserialize_alias")] Alias);
+    struct AliasStringOrStruct(#[serde(deserialize_with="alias_string_or_struct")] Alias);
 
     impl<'de> Visitor<'de> for AliasMap {
         type Value = Aliases;
@@ -155,7 +155,7 @@ where
             M: MapAccess<'de>,
         {
             let mut aliases = Aliases::new();
-            while let Some((name, AliasWrapper(mut alias))) = map.next_entry::<String, AliasWrapper>()? {
+            while let Some((name, AliasStringOrStruct(mut alias))) = map.next_entry::<String, AliasStringOrStruct>()? {
                 alias.name = name.to_owned();
                 aliases.insert(name.to_owned(), alias);
             }
