@@ -10,7 +10,7 @@ edition = "2018"
 void = "1.0.2"
 anyhow = "1.0.32"
 thiserror = "1.0.20"
-clap = "3.0.0-beta.2"
+structopt = "0.3"
 serde = { version = "1.0", features = ["derive"] }
 log = { version = "0.4", features = ["std", "serde"] }
 serde_yaml = "0.8"
