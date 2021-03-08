@@ -1,5 +1,6 @@
 use anyhow::{Context, Error, Result};
 use std::fs;
+use std::path::PathBuf;
 
 use super::spec::{Spec, Alias};
 
@@ -11,7 +12,7 @@ impl Loader {
         Self {}
     }
 
-    pub fn load(&self, filename: &str) -> Result<Spec, Error> {
+    pub fn load(&self, filename: &PathBuf) -> Result<Spec, Error> {
         let content =
             fs::read_to_string(filename).context(format!("Can't load filename={:?}", filename))?;
         let spec: Spec =
