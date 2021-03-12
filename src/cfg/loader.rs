@@ -2,7 +2,7 @@ use anyhow::{Context, Error, Result};
 use std::fs;
 use std::path::PathBuf;
 
-use super::spec::{Spec, Alias};
+use super::spec::Spec;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Loader {}

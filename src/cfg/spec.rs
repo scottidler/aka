@@ -1,15 +1,9 @@
-use anyhow::{
-    anyhow,
-    Result,
-};
+use anyhow::Result;
 use super::error::ConfigError;
-use std::marker::PhantomData;
 use serde::{Deserialize, Deserializer};
-use serde::de::{self, MapAccess, SeqAccess, Visitor, Error};
+use serde::de::{self, MapAccess,Visitor};
 use std::collections::HashMap;
 use std::fmt;
-use std::vec::Vec;
-use std::num::ParseIntError;
 use std::str::FromStr;
 use void::Void;
 

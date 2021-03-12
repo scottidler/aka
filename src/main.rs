@@ -1,10 +1,8 @@
-use anyhow::Result;
-use anyhow::anyhow;
+use anyhow::{anyhow, Result};
 use log::{info, warn};
-use std::env;
 use std::process::exit;
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use structopt::StructOpt; //FIXME: consider parsing by hand
 use shellexpand::tilde;
 
