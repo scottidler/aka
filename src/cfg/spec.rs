@@ -1,5 +1,4 @@
 use anyhow::Result;
-use super::error::ConfigError;
 use serde::{Deserialize, Deserializer};
 use serde::de::{self, MapAccess,Visitor};
 use std::collections::HashMap;
@@ -72,33 +71,7 @@ impl FromStr for Alias {
         })
     }
 }
-/*
-struct StringOrStruct<T>(PhantomData<fn ()-> T>);
-impl <'de, T> Visitor<'de> for StringOrStruct<T>
-where
-    T: Deserialize<'de> + FromStr<Err = Void>,
-{
-    type Value = T;
 
-    fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-        formatter.write_str("Alias: string or struct")
-    }
-
-    fn visit_str<E>(self, value: &str) -> Result<T, E>
-    where
-        E: de::Error,
-    {
-        Ok(FromStr::from_str(value).unwrap())
-    }
-
-    fn visit_map<M>(self, map: M) -> Result<T, M::Error>
-    where
-        M: MapAccess<'de>,
-    {
-        Deserialize::deserialize(de::value::MapAccessDeserializer::new(map))
-    }
-}
-*/
 fn deserialize_alias_map<'de, D>(deserializer: D) -> Result<Aliases, D::Error>
 where
     D: Deserializer<'de>,

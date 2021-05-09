@@ -1,13 +1,15 @@
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Error, Result};
 use log::{info, warn};
 use std::process::exit;
 
 use std::path::PathBuf;
 use structopt::StructOpt; //FIXME: consider parsing by hand
 use shellexpand::tilde;
+use shlex::split;
 
 pub mod cfg;
 use cfg::loader::Loader;
+use cfg::spec::{Spec, Alias};
 
 const CONFIGS: &'static [&'static str] = &[
     "~/.config/aka/aka.yml",
@@ -48,28 +50,66 @@ fn test_config(file: &PathBuf) -> Result<PathBuf> {
     Err(anyhow!("config {:?} not found!", file))
 }
 
-fn aka() -> Result<i32> {
-    let args = Args::from_args();
-    println!("args = {:#?}", args);
+#[derive(Debug)]
+struct AKA {
+    pub args: Vec<String>,
+    pub spec: Spec,
+}
 
-    let config = match &args.config {
-        Some(file) => test_config(file)?,
-        None => divine_config()?,
-    };
-    if args.verbose {
-        info!("args = {:?}", args);
-        warn!("hi");
+impl AKA {
+    pub fn new(cmdline: String, config: Option<PathBuf>) -> Result<Self> {
+        let args = split(&cmdline).ok_or(anyhow!("barf"))?;
+        let config = match &config {
+            Some(file) => test_config(file)?,
+            None => divine_config()?,
+        };
+        let loader = Loader::new();
+        let spec = loader.load(&config).unwrap();
+        Ok(Self {
+            args,
+            spec,
+        })
     }
 
-    let loader = Loader::new();
-    let spec = loader.load(&config).unwrap();
-    println!("spec: {:#?}", spec);
+    pub fn replace(&mut self) -> Result<i32> {
+        let mut i: usize = 0;
+        let mut args: Vec<String> = vec![];
+        while i < self.args.len() {
+            let arg = &self.args[i];
+            let rem: Vec<String> = self.args[i+i..].to_vec();
+            match self.spec.aliases.get(arg) {
+                Some(alias) => {
+                    let args1 = split(&alias.value).ok_or(anyhow!("barf"))?;
+                    args.extend::<Vec<String>>(args1);
+                        /*
+                        alias.value.clone().
+                        split_whitespace().
+                        map(str::to_string).
+                        collect());
+                        */
+                },
+                None => {
+                    args.push(arg.clone());
+                },
+            }
+            i += 1;
+        }
+        self.args = args;
+        Ok(0)
+    }
+}
 
-    Ok(0)
+fn execute() -> Result<i32> {
+    let args = Args::from_args();
+    let mut aka = AKA::new(args.cmdline, args.config)?;
+    println!("aka = {:#?}", aka);
+    let result = aka.replace();
+    println!("aka = {:#?}", aka);
+    result
 }
 
 fn main() {
-    exit(match aka() {
+    exit(match execute() {
         Ok(exitcode) => exitcode,
         Err(err) => {
             eprintln!("error: {:?}", err);
