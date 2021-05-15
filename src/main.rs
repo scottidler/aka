@@ -1,6 +1,6 @@
-use anyhow::{anyhow, Error, Result};
-use log::{info, warn};
+use anyhow::{anyhow, Result};
 use std::process::exit;
+//use log::{info, warn};
 
 use std::path::PathBuf;
 use structopt::StructOpt; //FIXME: consider parsing by hand
@@ -9,12 +9,12 @@ use shlex::split;
 
 pub mod cfg;
 use cfg::loader::Loader;
-use cfg::spec::{Spec, Alias};
+use cfg::spec::Spec;
 
 const CONFIGS: &'static [&'static str] = &[
-    "~/.config/aka/aka.yml",
-    "~/.aka.yml",
     "./aka.yml",
+    "~/.aka.yml",
+    "~/.config/aka/aka.yml",
 ];
 
 #[derive(Debug, StructOpt)]
@@ -58,7 +58,8 @@ struct AKA {
 
 impl AKA {
     pub fn new(cmdline: String, config: Option<PathBuf>) -> Result<Self> {
-        let args = split(&cmdline).ok_or(anyhow!("barf"))?;
+        let args = split(&cmdline)
+            .ok_or(anyhow!("failed to split cmdline={:?}", cmdline))?;
         let config = match &config {
             Some(file) => test_config(file)?,
             None => divine_config()?,
@@ -76,22 +77,24 @@ impl AKA {
         let mut args: Vec<String> = vec![];
         while i < self.args.len() {
             let arg = &self.args[i];
-            let rem: Vec<String> = self.args[i+i..].to_vec();
-            match self.spec.aliases.get(arg) {
+            let _rem: Vec<String> = self.args[i+i..].to_vec();
+            let value = match self.spec.aliases.get(arg) {
                 Some(alias) => {
-                    let args1 = split(&alias.value).ok_or(anyhow!("barf"))?;
-                    args.extend::<Vec<String>>(args1);
-                        /*
-                        alias.value.clone().
-                        split_whitespace().
-                        map(str::to_string).
-                        collect());
-                        */
+                    if alias.first {
+                        if i == 0 {
+                            alias.value.clone()
+                        }
+                        else {
+                            arg.clone()
+                        }
+                    }
+                    else {
+                        alias.value.clone()
+                    }
                 },
-                None => {
-                    args.push(arg.clone());
-                },
-            }
+                None => arg.clone(),
+            };
+            args.push(value);
             i += 1;
         }
         self.args = args;
@@ -102,9 +105,8 @@ impl AKA {
 fn execute() -> Result<i32> {
     let args = Args::from_args();
     let mut aka = AKA::new(args.cmdline, args.config)?;
-    println!("aka = {:#?}", aka);
     let result = aka.replace();
-    println!("aka = {:#?}", aka);
+    println!("{}", aka.args.join(" "));
     result
 }
 
