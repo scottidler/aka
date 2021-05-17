@@ -9,7 +9,7 @@ use shlex::split;
 
 pub mod cfg;
 use cfg::loader::Loader;
-use cfg::spec::Spec;
+use cfg::spec::{Spec, Alias};
 
 const CONFIGS: &'static [&'static str] = &[
     "./aka.yml",
@@ -71,31 +71,31 @@ impl AKA {
             spec,
         })
     }
+    pub fn use_alias(alias: &Alias, pos: usize) -> bool {
+        if pos == 0 {
+            true
+        }
+        else if !alias.first {
+            true
+        }
+        else {
+            false
+        }
+    }
 
     pub fn replace(&mut self) -> Result<i32> {
-        let mut i: usize = 0;
+        let mut pos: usize = 0;
         let mut args: Vec<String> = vec![];
-        while i < self.args.len() {
-            let arg = &self.args[i];
-            let _rem: Vec<String> = self.args[i+i..].to_vec();
+        while pos < self.args.len() {
+            let arg = &self.args[pos];
+            let _rem: Vec<String> = self.args[pos+pos..].to_vec();
             let value = match self.spec.aliases.get(arg) {
-                Some(alias) => {
-                    if alias.first {
-                        if i == 0 {
-                            alias.value.clone()
-                        }
-                        else {
-                            arg.clone()
-                        }
-                    }
-                    else {
-                        alias.value.clone()
-                    }
-                },
+                Some(alias) if AKA::use_alias(&alias, pos) => alias.value.clone(),
+                Some(_) => arg.clone(),
                 None => arg.clone(),
             };
             args.push(value);
-            i += 1;
+            pos += 1;
         }
         self.args = args;
         Ok(0)
