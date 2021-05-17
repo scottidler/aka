@@ -90,9 +90,9 @@ impl AKA {
             let arg = &self.args[pos];
             let _rem: Vec<String> = self.args[pos+pos..].to_vec();
             let value = match self.spec.aliases.get(arg) {
-                Some(alias) if AKA::use_alias(&alias, pos) => alias.value.clone(),
-                Some(_) => arg.clone(),
-                None => arg.clone(),
+                Some(alias) if AKA::use_alias(&alias, pos) => alias.value.to_owned(),
+                Some(_) => arg.to_owned(),
+                None => arg.to_owned(),
             };
             args.push(value);
             pos += 1;
