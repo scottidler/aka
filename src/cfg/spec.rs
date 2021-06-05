@@ -2,19 +2,12 @@ use anyhow::Result;
 use serde::{Deserialize, Deserializer};
 use serde::de::{self, MapAccess,Visitor};
 use std::collections::HashMap;
-use std::fmt;
 use std::str::FromStr;
-use void::Void;
+use std::fmt;
+
+use super::alias::Alias;
 
 type Aliases = HashMap<String, Alias>;
-
-fn default_false() -> bool {
-    false
-}
-
-fn default_true() -> bool {
-    true
-}
 
 fn default_version() -> i32 {
     1
@@ -39,37 +32,6 @@ pub struct Spec {
 
     #[serde(default, deserialize_with = "deserialize_alias_map")]
     pub aliases: Aliases,
-}
-
-#[derive(Clone, Debug, Default, PartialEq, Deserialize)]
-pub struct Alias {
-    #[serde(skip_deserializing)]
-    pub name: String,
-
-    pub value: String,
-
-    #[serde(default = "default_false")]
-    pub first: bool,
-
-    #[serde(default = "default_true")]
-    pub expand: bool,
-
-    #[serde(default = "default_true")]
-    pub space: bool,
-}
-
-impl FromStr for Alias {
-    type Err = Void;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        Ok(Alias {
-            name: "".to_owned(),
-            value: s.to_owned(),
-            first: false,
-            expand: true,
-            space: true,
-        })
-    }
 }
 
 fn deserialize_alias_map<'de, D>(deserializer: D) -> Result<Aliases, D::Error>
