@@ -3,6 +3,9 @@ use serde::Deserialize;
 use void::Void;
 use std::str::FromStr;
 
+use itertools::Itertools;
+use regex::Regex;
+
 fn default_false() -> bool {
     false
 }
@@ -26,6 +29,23 @@ pub struct Alias {
 
     #[serde(default = "default_true")]
     pub space: bool,
+}
+
+impl Alias {
+    pub fn positionals(&self) -> Vec<String> {
+        let re = Regex::new(r"(\$[1-9])").unwrap();
+        re.find_iter(&self.value)
+            .filter_map(|m| m.as_str().parse().ok())
+            .unique()
+            .collect()
+    }
+    pub fn keywords(&self) -> Vec<String> {
+        let re = Regex::new(r"(\$[A-z]+)").unwrap();
+        re.find_iter(&self.value)
+            .filter_map(|m| m.as_str().parse().ok())
+            .unique()
+            .collect()
+    }
 }
 
 impl FromStr for Alias {

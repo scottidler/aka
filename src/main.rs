@@ -89,10 +89,26 @@ impl AKA {
         let mut args: Vec<String> = vec![];
         while pos < self.args.len() {
             let arg = &self.args[pos];
-            let _rem: Vec<String> = self.args[pos+pos..].to_vec();
+            let remainders: Vec<String> = self.args[pos+1..].to_vec();
+            let remainders_len = remainders.len();
             let value = match self.spec.aliases.get(arg) {
                 Some(alias) if AKA::use_alias(&alias, pos) => {
-                    alias.value.to_owned()
+                    let positionals = alias.positionals();
+                    let positionals_len = alias.positionals().len();
+                    let _keywords = alias.keywords();
+                    let _keywords_len = alias.keywords().len();
+                    if !positionals.is_empty() && positionals_len == remainders_len {
+                        let mut result = alias.value.to_owned();
+                        let zipped = positionals.iter().zip(remainders.iter());
+                        for (positional, value) in zipped {
+                            result = result.replace(positional, value);
+                        }
+                        pos += positionals_len;
+                        result
+                    }
+                    else {
+                        arg.to_owned()
+                    }
                 },
                 Some(_) => arg.to_owned(),
                 None => arg.to_owned(),
