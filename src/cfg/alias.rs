@@ -37,6 +37,7 @@ impl Alias {
         re.find_iter(&self.value)
             .filter_map(|m| m.as_str().parse().ok())
             .unique()
+            .sorted()
             .collect()
     }
     pub fn keywords(&self) -> Vec<String> {
