@@ -104,7 +104,7 @@ impl AKA {
                         result
                     }
                     else {
-                        arg.to_owned()
+                        alias.value.to_owned()
                     }
                 },
                 Some(_) => arg.to_owned(),
