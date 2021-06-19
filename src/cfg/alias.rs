@@ -25,9 +25,6 @@ pub struct Alias {
     pub first: bool,
 
     #[serde(default = "default_true")]
-    pub expand: bool,
-
-    #[serde(default = "default_true")]
     pub space: bool,
 }
 
@@ -57,7 +54,6 @@ impl FromStr for Alias {
             name: "".to_owned(),
             value: s.to_owned(),
             first: false,
-            expand: true,
             space: true,
         })
     }
