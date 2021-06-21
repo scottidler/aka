@@ -55,6 +55,7 @@ fn test_config(file: &PathBuf) -> Result<PathBuf> {
 struct AKA {
     pub args: Vec<String>,
     pub spec: Spec,
+    pub space: bool,
 }
 
 impl AKA {
@@ -70,6 +71,7 @@ impl AKA {
         Ok(Self {
             args,
             spec,
+            space: true,
         })
     }
     pub fn use_alias(alias: &Alias, pos: usize) -> bool {
@@ -92,16 +94,22 @@ impl AKA {
             let remainders: Vec<String> = self.args[pos+1..].to_vec();
             let value = match self.spec.aliases.get(arg) {
                 Some(alias) if AKA::use_alias(&alias, pos) => {
+                    self.space = alias.space;
                     let positionals = alias.positionals();
                     let _keywords = alias.keywords();
-                    if !positionals.is_empty() && positionals.len() == remainders.len() {
-                        let mut result = alias.value.to_owned();
-                        let zipped = positionals.iter().zip(remainders.iter());
-                        for (positional, value) in zipped {
-                            result = result.replace(positional, value);
+                    if !positionals.is_empty() {
+                        if positionals.len() == remainders.len() {
+                            let mut result = alias.value.to_owned();
+                            let zipped = positionals.iter().zip(remainders.iter());
+                            for (positional, value) in zipped {
+                                result = result.replace(positional, value);
+                            }
+                            pos += positionals.len();
+                            result
                         }
-                        pos += positionals.len();
-                        result
+                        else {
+                            arg.to_owned()
+                        }
                     }
                     else {
                         alias.value.to_owned()
@@ -122,7 +130,8 @@ fn execute() -> Result<i32> {
     let args = Args::from_args();
     let mut aka = AKA::new(args.cmdline, args.config)?;
     let result = aka.replace();
-    println!("{}", aka.args.join(" "));
+    let space = if aka.space { " " } else { "" };
+    println!("{}{}", aka.args.join(" "), space);
     result
 }
 
