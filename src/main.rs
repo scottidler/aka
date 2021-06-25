@@ -92,6 +92,7 @@ impl AKA {
             let remainders: Vec<String> = args[pos+1..].to_vec();
             let value = match self.spec.aliases.get(arg) {
                 Some(alias) if AKA::use_alias(&alias, pos) => {
+                    replaced = true;
                     space = if alias.space { " " } else { "" };
                     let positionals = alias.positionals();
                     let _keywords = alias.keywords();
@@ -102,11 +103,9 @@ impl AKA {
                             result = result.replace(positional, value);
                         }
                         pos += positionals.len();
-                        replaced = true;
                         result
                     }
                     else {
-                        replaced = true;
                         alias.value.to_owned()
                     }
                 },
@@ -120,7 +119,7 @@ impl AKA {
             Ok(format!("{}{}", args.join(" "), space))
         }
         else {
-            Ok(format!("{}", ""))
+            Ok("".to_owned())
         }
     }
 }
