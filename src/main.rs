@@ -53,15 +53,12 @@ fn test_config(file: &PathBuf) -> Result<PathBuf> {
 
 #[derive(Debug)]
 struct AKA {
-    pub args: Vec<String>,
+    pub cmdline: String,
     pub spec: Spec,
-    pub space: bool,
 }
 
 impl AKA {
-    pub fn new(cmdline: String, config: Option<PathBuf>) -> Result<Self> {
-        let args = split(&cmdline)
-            .ok_or(anyhow!("failed to split cmdline={:?}", cmdline))?;
+    pub fn new(cmdline: &String, config: Option<PathBuf>) -> Result<Self> {
         let config = match &config {
             Some(file) => test_config(file)?,
             None => divine_config()?,
@@ -69,9 +66,8 @@ impl AKA {
         let loader = Loader::new();
         let spec = loader.load(&config).unwrap();
         Ok(Self {
-            args,
+            cmdline: cmdline.to_owned(),
             spec,
-            space: true,
         })
     }
     pub fn use_alias(alias: &Alias, pos: usize) -> bool {
@@ -86,53 +82,55 @@ impl AKA {
         }
     }
 
-    pub fn replace(&mut self) -> Result<i32> {
+    pub fn replace(&self) -> Result<String> {
         let mut pos: usize = 0;
-        let mut args: Vec<String> = vec![];
-        while pos < self.args.len() {
-            let arg = &self.args[pos];
-            let remainders: Vec<String> = self.args[pos+1..].to_vec();
+        let mut space = " ";
+        let mut replaced = false;
+        let mut args = split(&self.cmdline).unwrap_or(vec![]);
+        while pos < args.len() {
+            let arg = &args[pos];
+            let remainders: Vec<String> = args[pos+1..].to_vec();
             let value = match self.spec.aliases.get(arg) {
                 Some(alias) if AKA::use_alias(&alias, pos) => {
-                    self.space = alias.space;
+                    space = if alias.space { " " } else { "" };
                     let positionals = alias.positionals();
                     let _keywords = alias.keywords();
-                    if !positionals.is_empty() {
-                        if positionals.len() == remainders.len() {
-                            let mut result = alias.value.to_owned();
-                            let zipped = positionals.iter().zip(remainders.iter());
-                            for (positional, value) in zipped {
-                                result = result.replace(positional, value);
-                            }
-                            pos += positionals.len();
-                            result
+                    if !positionals.len() == remainders.len() {
+                        let mut result = alias.value.to_owned();
+                        let zipped = positionals.iter().zip(remainders.iter());
+                        for (positional, value) in zipped {
+                            result = result.replace(positional, value);
                         }
-                        else {
-                            arg.to_owned()
-                        }
+                        pos += positionals.len();
+                        replaced = true;
+                        result
                     }
                     else {
+                        replaced = true;
                         alias.value.to_owned()
                     }
                 },
                 Some(_) => arg.to_owned(),
                 None => arg.to_owned(),
             };
-            args.push(value);
+            args[pos] = value;
             pos += 1;
         }
-        self.args = args;
-        Ok(0)
+        if replaced {
+            Ok(format!("{}{}", args.join(" "), space))
+        }
+        else {
+            Ok(format!("{}", ""))
+        }
     }
 }
 
 fn execute() -> Result<i32> {
     let args = Args::from_args();
-    let mut aka = AKA::new(args.cmdline, args.config)?;
-    let result = aka.replace();
-    let space = if aka.space { " " } else { "" };
-    println!("{}{}", aka.args.join(" "), space);
-    result
+    let aka = AKA::new(&args.cmdline, args.config)?;
+    let result = aka.replace()?;
+    println!("{}", result);
+    Ok(0)
 }
 
 fn main() {
