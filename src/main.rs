@@ -74,7 +74,7 @@ impl AKA {
         if pos == 0 {
             true
         }
-        else if !alias.first {
+        else if alias.global {
             true
         }
         else {
@@ -96,17 +96,17 @@ impl AKA {
                     space = if alias.space { " " } else { "" };
                     let positionals = alias.positionals();
                     let _keywords = alias.keywords();
-                    if !positionals.len() == remainders.len() {
+                    if positionals.len() == remainders.len() {
                         let mut result = alias.value.to_owned();
                         let zipped = positionals.iter().zip(remainders.iter());
                         for (positional, value) in zipped {
                             result = result.replace(positional, value);
                         }
-                        pos += positionals.len();
+                        args.drain(pos+1..pos+1+positionals.len());
                         result
                     }
                     else {
-                        alias.value.to_owned()
+                        alias.name.to_owned()
                     }
                 },
                 Some(_) => arg.to_owned(),
