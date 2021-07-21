@@ -6,10 +6,6 @@ use std::str::FromStr;
 use itertools::Itertools;
 use regex::Regex;
 
-fn default_false() -> bool {
-    false
-}
-
 fn default_true() -> bool {
     true
 }
@@ -21,11 +17,11 @@ pub struct Alias {
 
     pub value: String,
 
-    #[serde(default = "default_false")]
-    pub first: bool,
-
     #[serde(default = "default_true")]
     pub space: bool,
+
+    #[serde(default = "default_true")]
+    pub global: bool,
 }
 
 impl Alias {
@@ -53,8 +49,8 @@ impl FromStr for Alias {
         Ok(Alias {
             name: "".to_owned(),
             value: s.to_owned(),
-            first: false,
             space: true,
+            global: true,
         })
     }
 }
