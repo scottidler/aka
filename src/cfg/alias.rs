@@ -10,6 +10,10 @@ fn default_true() -> bool {
     true
 }
 
+fn default_false() -> bool {
+    false
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Deserialize)]
 pub struct Alias {
     #[serde(skip_deserializing)]
@@ -20,7 +24,7 @@ pub struct Alias {
     #[serde(default = "default_true")]
     pub space: bool,
 
-    #[serde(default = "default_true")]
+    #[serde(default = "default_false")]
     pub global: bool,
 }
 
@@ -50,7 +54,7 @@ impl FromStr for Alias {
             name: "".to_owned(),
             value: s.to_owned(),
             space: true,
-            global: true,
+            global: false,
         })
     }
 }
