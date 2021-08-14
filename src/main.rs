@@ -24,6 +24,9 @@ struct Args {
     #[structopt(short, long)]
     config: Option<PathBuf>,
 
+    #[structopt(short, long, help = "is entry an [e]nd [o]f [l]ine?")]
+    eol: bool,
+
     #[structopt(short, long)]
     verbose: bool,
 
@@ -53,12 +56,13 @@ fn test_config(file: &PathBuf) -> Result<PathBuf> {
 
 #[derive(Debug)]
 struct AKA {
-    pub cmdline: String,
     pub spec: Spec,
+    pub cmdline: String,
+    pub eol: bool,
 }
 
 impl AKA {
-    pub fn new(cmdline: &String, config: Option<PathBuf>) -> Result<Self> {
+    pub fn new(cmdline: &String, eol: bool, config: Option<PathBuf>) -> Result<Self> {
         let config = match &config {
             Some(file) => test_config(file)?,
             None => divine_config()?,
@@ -66,8 +70,9 @@ impl AKA {
         let loader = Loader::new();
         let spec = loader.load(&config).unwrap();
         Ok(Self {
-            cmdline: cmdline.to_owned(),
             spec,
+            cmdline: cmdline.to_owned(),
+            eol,
         })
     }
     pub fn use_alias(alias: &Alias, pos: usize) -> bool {
@@ -83,10 +88,10 @@ impl AKA {
     }
 
     pub fn replace(&self) -> Result<String> {
-        let mut pos: usize = 0;
+        let mut args = split(&self.cmdline).unwrap_or(vec![]);
         let mut space = " ";
         let mut replaced = false;
-        let mut args = split(&self.cmdline).unwrap_or(vec![]);
+        let mut pos: usize = 0;
         while pos < args.len() {
             let arg = &args[pos];
             let remainders: Vec<String> = args[pos+1..].to_vec();
@@ -106,7 +111,8 @@ impl AKA {
                         result
                     }
                     else {
-                        alias.name.to_owned()
+                        replaced = false;
+                        arg.to_owned()
                     }
                 },
                 Some(_) => arg.to_owned(),
@@ -126,7 +132,8 @@ impl AKA {
 
 fn execute() -> Result<i32> {
     let args = Args::from_args();
-    let aka = AKA::new(&args.cmdline, args.config)?;
+    let aka = AKA::new(&args.cmdline, args.eol, args.config)?;
+    println!("aka.eol={:?}", aka.eol);
     let result = aka.replace()?;
     println!("{}", result);
     Ok(0)

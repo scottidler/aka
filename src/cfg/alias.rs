@@ -44,6 +44,9 @@ impl Alias {
             .unique()
             .collect()
     }
+    pub fn is_variadic(&self) -> bool {
+        self.value.contains("$@")
+    }
 }
 
 impl FromStr for Alias {
