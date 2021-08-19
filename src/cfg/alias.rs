@@ -68,8 +68,6 @@ impl Alias {
         else {
             result = self.name.to_owned();
         }
-
-        println!("replace: (result={:?}, count={:?})", result, count);
         (result, count)
     }
 }
