@@ -51,33 +51,25 @@ impl Alias {
         self.value.contains("$@")
     }
 
-    fn replace_positionals(&self, remainders: &mut Vec<String>, result: &mut String) -> usize {
-        if self.positionals().len() > 0 {
-            if self.positionals().len() <= remainders.len() {
-                for positional in self.positionals().iter() {
-                    *result = result.replace(positional, &remainders.swap_remove(0));
-                }
-            }
-            return self.positionals().len();
-        }
-        0
-    }
-
-    fn replace_variadic(&self, remainders: &mut Vec<String>, result: &mut String) -> usize {
-        if self.is_variadic() {
-            *result = result.replace("$@", &remainders.join(" "));
-            let count: usize = remainders.len();
-            remainders.drain(0..remainders.len());
-            return count;
-        }
-        0
-    }
-
     pub fn replace(&self, remainders: &mut Vec<String>) -> (String, usize) {
         let mut result = self.value.to_owned();
         let mut count = 0;
-        count += self.replace_positionals(remainders, &mut result);
-        count += self.replace_variadic(remainders, &mut result);
+        if self.positionals().len() == remainders.len() {
+            for positional in self.positionals().iter() {
+                result = result.replace(positional, &remainders.swap_remove(0));
+            count = self.positionals().len();
+            }
+        }
+        else if self.is_variadic() {
+            result = result.replace("$@", &remainders.join(" "));
+            count = remainders.len();
+            remainders.drain(0..remainders.len());
+        }
+        else {
+            result = self.name.to_owned();
+        }
+
+        println!("replace: (result={:?}, count={:?})", result, count);
         (result, count)
     }
 }

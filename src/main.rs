@@ -122,12 +122,18 @@ impl AKA {
                 Some(alias) if self.use_alias(&alias, pos) => {
                     replaced = true;
                     space = if alias.space { " " } else { "" };
-                    alias.replace(&mut remainders)
+                    let (v,c) = alias.replace(&mut remainders);
+                    if v == alias.name {
+                        replaced = false;
+                    }
+                    (v,c)
                 },
                 Some(_) => (arg.to_owned(), 0),
                 None => (arg.to_owned(), 0),
             };
-            args.drain(pos+1..pos+1+count);
+            let beg = pos+1;
+            let end = beg+count;
+            args.drain(beg..end);
             args[pos] = value;
             pos += 1;
         }
