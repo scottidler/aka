@@ -3,10 +3,11 @@
 use eyre::{eyre, Result};
 use std::process::exit;
 use std::path::PathBuf;
-use structopt::StructOpt; //FIXME: consider parsing by hand
+//use structopt::StructOpt; //FIXME: consider parsing by hand
 use shellexpand::tilde;
 use std::fs::OpenOptions;
 use std::io::Write;
+use clap::Parser;
 
 pub mod cfg;
 use cfg::loader::Loader;
@@ -40,36 +41,38 @@ fn test_config(file: &PathBuf) -> Result<PathBuf> {
     Err(eyre!("config {:?} not found!", file))
 }
 
-#[derive(Debug, StructOpt)]
-#[structopt(name = "aka", about = "[a]lso [k]nown [a]s: an aliasing program")]
+#[derive(Parser)]
+#[command(name = "aka", about = "[a]lso [k]nown [a]s: an aliasing program")]
+#[command(version = "0.1.0")]
+#[command(author = "Scott A. Idler <scott.a.idler@gmail.com>")]
+#[command(arg_required_else_help = true)]
 struct AkaOpts {
-    #[structopt(short, long, help = "is entry an [e]nd [o]f [l]ine?")]
+    #[clap(short, long, help = "is entry an [e]nd [o]f [l]ine?")]
     eol: bool,
 
-    #[structopt(short, long)]
+    #[clap(short, long)]
     config: Option<PathBuf>,
 
     // SUBCOMMANDS
-    #[structopt(subcommand)]
+    #[clap(subcommand)]
     command: Option<Command>
 }
 
-#[derive(StructOpt, Debug)]
-#[structopt(name = "command", about = "choose command to run")]
+#[derive(Parser)]
 enum Command {
-    #[structopt(name = "ls", about = "list aka aliases")]
+    #[clap(name = "ls", about = "list aka aliases")]
     List(ListOpts),
 
-    #[structopt(name = "query", about = "query for aka substitutions")]
+    #[clap(name = "query", about = "query for aka substitutions")]
     Query(QueryOpts),
 }
 
-#[derive(Debug, StructOpt)]
+#[derive(Parser)]
 struct QueryOpts {
     cmdline: String,
 }
 
-#[derive(Debug, StructOpt)]
+#[derive(Parser)]
 struct ListOpts {
     patterns: Vec<String>
 }
@@ -156,7 +159,7 @@ impl AKA {
 }
 
 fn execute() -> Result<i32> {
-    let aka_opts = AkaOpts::from_args();
+    let aka_opts = AkaOpts::parse();
     let aka = AKA::new(aka_opts.eol, &aka_opts.config)?;
     if let Some(command) = aka_opts.command {
         match command {
