@@ -28,6 +28,11 @@ pub struct Alias {
 }
 
 impl Alias {
+    /// Return the positional arguments
+    ///
+    /// # Errors
+    ///
+    /// Will return `Err` if there was a problem in processing the positional arguments.
     pub fn positionals(&self) -> Result<Vec<String>> {
         let re = Regex::new(r"(\$[1-9])")?;
         let items = re.find_iter(&self.value)
@@ -38,6 +43,11 @@ impl Alias {
         Ok(items)
     }
 
+    /// Return the keyword arguments
+    ///
+    /// # Errors
+    ///
+    /// Will return `Err` if there was a problem in processing the keyword arguments.
     pub fn keywords(&self) -> Result<Vec<String>> {
         let re = Regex::new(r"(\$[A-z]+)")?;
         let items = re.find_iter(&self.value)
@@ -53,6 +63,11 @@ impl Alias {
         self.value.contains("$@")
     }
 
+    /// replace the remainder of the arguments
+    ///
+    /// # errors
+    ///
+    /// will return `err` if there was a problem replacing the arguments.
     pub fn replace(&self, remainders: &mut Vec<String>) -> Result<(String, usize)> {
         let mut result = self.value.clone();
         let mut count = 0;

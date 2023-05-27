@@ -13,6 +13,11 @@ impl Loader {
         Self {}
     }
 
+    /// Load the configuration from a file
+    ///
+    /// # Errors
+    ///
+    /// Will return `Err` if `filename` does not exist, or the user does not have permission to read it.
     pub fn load(&self, filename: &PathBuf) -> Result<Spec, Error> {
         let content =
             fs::read_to_string(filename).context(format!("Can't load filename={filename:?}"))?;
