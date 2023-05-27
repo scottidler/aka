@@ -54,7 +54,7 @@ where
         where
             E: de::Error,
         {
-            Ok(FromStr::from_str(string).unwrap())
+            Alias::from_str(string).map_err(|_| E::custom("Unexpected Error"))
         }
 
         fn visit_map<M>(self, map: M) -> Result<Alias, M::Error>
