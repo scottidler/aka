@@ -138,8 +138,7 @@ impl AKA {
                     }
                     (v,c)
                 },
-                Some(_) => (arg.clone(), 0),
-                None => (arg.clone(), 0),
+                Some(_) | None => (arg.clone(), 0),
             };
             let beg = pos+1;
             let end = beg+count;
