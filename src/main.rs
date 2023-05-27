@@ -1,13 +1,10 @@
-#![allow(unused_imports, unused_variables, unused_attributes, unused_mut, dead_code)]
+//#![allow(unused_imports, unused_variables, unused_attributes, unused_mut, dead_code)]
 
-use anyhow::{anyhow, Result};
+use eyre::{eyre, Result};
 use std::process::exit;
-//use log::{info, warn};
-
 use std::path::PathBuf;
 use structopt::StructOpt; //FIXME: consider parsing by hand
 use shellexpand::tilde;
-use shlex::split;
 use std::fs::OpenOptions;
 use std::io::Write;
 
@@ -33,14 +30,14 @@ fn divine_config() -> Result<PathBuf> {
             return Ok(config);
         }
     }
-    Err(anyhow!("couldn't divine a config!"))
+    Err(eyre!("couldn't divine a config!"))
 }
 
 fn test_config(file: &PathBuf) -> Result<PathBuf> {
     if file.exists() {
         return Ok(file.to_owned())
     }
-    Err(anyhow!("config {:?} not found!", file))
+    Err(eyre!("config {:?} not found!", file))
 }
 
 #[derive(Debug, StructOpt)]
@@ -51,9 +48,6 @@ struct AkaOpts {
 
     #[structopt(short, long)]
     config: Option<PathBuf>,
-
-    #[structopt(short = "v",  parse(from_occurrences))]
-    verbosity: u8,
 
     // SUBCOMMANDS
     #[structopt(subcommand)]
@@ -77,7 +71,7 @@ struct QueryOpts {
 
 #[derive(Debug, StructOpt)]
 struct ListOpts {
-    params: Vec<String>
+    patterns: Vec<String>
 }
 
 #[derive(Debug)]
@@ -138,7 +132,6 @@ impl AKA {
         let mut pos: usize = 0;
         let mut space = " ";
         let mut replaced = false;
-        //let mut args = split(&cmdline).unwrap_or(vec![]);
         let mut args = Self::split_respecting_quotes(&cmdline);
         while pos < args.len() {
             let arg = &args[pos];
@@ -186,11 +179,19 @@ fn execute() -> Result<i32> {
                 write!(file, "'{}' -> '{}'\n", query_opts.cmdline, result)?;
                 println!("{}", result);
             },
-            Command::List(_list_opts) => {
+            Command::List(list_opts) => {
                 let mut aliases: Vec<Alias> = aka.spec.aliases.values().cloned().collect();
-                aliases.sort_by_key(|a| a.name.to_owned() );
-                for alias in aliases {
-                    println!("{}: {}", alias.name, alias.value);
+                aliases.sort_by_key(|a| a.name.to_owned());
+                if list_opts.patterns.is_empty() {
+                    for alias in aliases {
+                        println!("{}: {}", alias.name, alias.value);
+                    }
+                } else {
+                    for alias in aliases {
+                        if list_opts.patterns.iter().any(|pattern| alias.name.starts_with(pattern)) {
+                            println!("{}: {}", alias.name, alias.value);
+                        }
+                    }
                 }
             },
         }
