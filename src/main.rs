@@ -3,7 +3,6 @@
 use eyre::{eyre, Result};
 use std::process::exit;
 use std::path::PathBuf;
-//use structopt::StructOpt; //FIXME: consider parsing by hand
 use shellexpand::tilde;
 use std::fs::OpenOptions;
 use std::io::Write;
@@ -93,6 +92,7 @@ impl AKA {
         let spec = loader.load(&config)?;
         Ok(Self { eol, spec })
     }
+
     pub fn use_alias(&self, alias: &Alias, pos: usize) -> bool {
         if alias.is_variadic() && !self.eol {
             false
@@ -100,24 +100,33 @@ impl AKA {
         else if pos == 0 {
             true
         }
-        else { alias.global }
+        else {
+            alias.global
+        }
     }
 
     fn split_respecting_quotes(cmdline: &String) -> Vec<String> {
         let mut args = Vec::new();
         let mut start = 0;
         let mut in_quotes = false;
-        for (index, character) in cmdline.chars().enumerate() {
-            if character == '"' {
+        let chars: Vec<char> = cmdline.chars().collect();
+        for index in 0..chars.len() {
+            if chars[index] == '"' {
                 in_quotes = !in_quotes;
-            } else if character == ' ' && !in_quotes {
+            } else if chars[index] == ' ' && !in_quotes {
                 if start != index {
                     args.push(cmdline[start..index].to_string());
                 }
                 start = index + 1;
+            } else if chars[index] == '!' && !in_quotes && index == chars.len() - 1 {
+                if start != index {
+                    args.push(cmdline[start..index].to_string());
+                }
+                args.push(String::from("!"));
+                start = index + 1;
             }
         }
-        if start != cmdline.len() {
+        if start != chars.len() {
             args.push(cmdline[start..].to_string());
         }
         args
@@ -127,7 +136,76 @@ impl AKA {
         let mut pos: usize = 0;
         let mut space = " ";
         let mut replaced = false;
+        let mut sudo = false;
         let mut args = Self::split_respecting_quotes(cmdline);
+
+        // Check if last arg ends with '! ' and eol is true.
+        if self.eol && !args.is_empty() {
+            if let Some(last_arg) = args.last() {
+                if last_arg == "!" {
+                    args.pop(); // Remove '!'
+                    sudo = true;
+                }
+            }
+        }
+
+        while pos < args.len() {
+            let arg = &args[pos];
+            let mut remainders: Vec<String> = args[pos+1..].to_vec();
+            let (value, count) = match self.spec.aliases.get(arg) {
+                Some(alias) if self.use_alias(alias, pos) => {
+                    replaced = true;
+                    space = if alias.space { " " } else { "" };
+                    let (v,c) = alias.replace(&mut remainders)?;
+                    if v == alias.name {
+                        replaced = false;
+                    }
+                    (v,c)
+                },
+                Some(_) | None => (arg.clone(), 0),
+            };
+
+            let beg = pos+1;
+            let end = beg+count;
+            args.drain(beg..end);
+            args.splice(pos..pos+1, Self::split_respecting_quotes(&value));
+            pos += 1;
+        }
+
+        if sudo {
+            // Wrap the first argument's binary name in `$(which arg)`
+            args[0] = format!("$(which {})", args[0]);
+            args.insert(0, "sudo".to_string()); // Insert sudo at the beginning
+        }
+
+        let result = if replaced || sudo {
+            format!("{}{}", args.join(" "), space)
+        } else {
+            String::new()
+        };
+
+        Ok(result)
+    }
+
+
+/*
+    pub fn replace(&self, cmdline: &String) -> Result<String> {
+        let mut pos: usize = 0;
+        let mut space = " ";
+        let mut replaced = false;
+        let mut args = Self::split_respecting_quotes(&cmdline);
+        let mut sudo = false;
+
+        // Check if last arg ends with '! ' and eol is true.
+        if self.eol && !args.is_empty() {
+            if let Some(last_arg) = args.last() {
+                if last_arg == "!" {
+                    args.pop(); // Remove '!'
+                    sudo = true;
+                }
+            }
+        }
+
         while pos < args.len() {
             let arg = &args[pos];
             let mut remainders: Vec<String> = args[pos+1..].to_vec();
@@ -149,13 +227,22 @@ impl AKA {
             args[pos] = value;
             pos += 1;
         }
-        if replaced {
-            Ok(format!("{}{}", args.join(" "), space))
+
+        if sudo {
+            // Wrap the first argument in `$(which arg)`
+            args[0] = format!("$(which {})", args[0]);
+            args.insert(0, "sudo".to_string()); // Insert sudo at the beginning
         }
-        else {
-            Ok(String::new())
-        }
+
+        let result = if replaced || sudo {
+            format!("{}{}", args.join(" "), space)
+        } else {
+            String::new()
+        };
+
+        Ok(result)
     }
+*/
 }
 
 fn execute() -> Result<i32> {
