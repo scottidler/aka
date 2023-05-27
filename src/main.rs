@@ -120,7 +120,7 @@ impl AKA {
         args
     }
 
-    pub fn replace(&self, cmdline: &String) -> Result<String> {
+    pub fn replace(&self, cmdline: &String) -> String {
         let mut pos: usize = 0;
         let mut space = " ";
         let mut replaced = false;
@@ -148,10 +148,10 @@ impl AKA {
             pos += 1;
         }
         if replaced {
-            Ok(format!("{}{}", args.join(" "), space))
+            format!("{}{}", args.join(" "), space)
         }
         else {
-            Ok(String::new())
+            String::new()
         }
     }
 }
@@ -167,7 +167,7 @@ fn execute() -> Result<i32> {
                     .write(true)
                     .append(true)
                     .open("/home/saidler/aka.txt")?;
-                let result = aka.replace(&query_opts.cmdline)?;
+                let result = aka.replace(&query_opts.cmdline);
                 writeln!(file, "'{}' -> '{}'", query_opts.cmdline, result)?;
                 println!("{result}");
             },

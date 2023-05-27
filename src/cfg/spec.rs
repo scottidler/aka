@@ -14,7 +14,7 @@ const fn default_version() -> i32 {
     1
 }
 
-fn default_defaults() -> Defaults {
+const fn default_defaults() -> Defaults {
     Defaults {
         version: default_version(),
     }
