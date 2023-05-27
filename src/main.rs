@@ -87,7 +87,7 @@ impl AKA {
             None => divine_config()?,
         };
         let loader = Loader::new();
-        let spec = loader.load(&config).unwrap();
+        let spec = loader.load(&config)?;
         Ok(Self { eol, spec })
     }
     pub fn use_alias(&self, alias: &Alias, pos: usize) -> bool {
