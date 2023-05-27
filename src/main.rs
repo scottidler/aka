@@ -1,3 +1,5 @@
+#![allow(unused_imports, unused_variables, unused_attributes, unused_mut, dead_code)]
+
 use anyhow::{anyhow, Result};
 use std::process::exit;
 //use log::{info, warn};
@@ -6,6 +8,8 @@ use std::path::PathBuf;
 use structopt::StructOpt; //FIXME: consider parsing by hand
 use shellexpand::tilde;
 use shlex::split;
+use std::fs::OpenOptions;
+use std::io::Write;
 
 pub mod cfg;
 use cfg::loader::Loader;
@@ -110,11 +114,32 @@ impl AKA {
         }
     }
 
+    fn split_respecting_quotes(cmdline: &String) -> Vec<String> {
+        let mut args = Vec::new();
+        let mut start = 0;
+        let mut in_quotes = false;
+        for (index, character) in cmdline.chars().enumerate() {
+            if character == '"' {
+                in_quotes = !in_quotes;
+            } else if character == ' ' && !in_quotes {
+                if start != index {
+                    args.push(cmdline[start..index].to_string());
+                }
+                start = index + 1;
+            }
+        }
+        if start != cmdline.len() {
+            args.push(cmdline[start..].to_string());
+        }
+        args
+    }
+
     pub fn replace(&self, cmdline: &String) -> Result<String> {
         let mut pos: usize = 0;
         let mut space = " ";
         let mut replaced = false;
-        let mut args = split(&cmdline).unwrap_or(vec![]);
+        //let mut args = split(&cmdline).unwrap_or(vec![]);
+        let mut args = Self::split_respecting_quotes(&cmdline);
         while pos < args.len() {
             let arg = &args[pos];
             let mut remainders: Vec<String> = args[pos+1..].to_vec();
@@ -152,7 +177,13 @@ fn execute() -> Result<i32> {
     if let Some(command) = aka_opts.command {
         match command {
             Command::Query(query_opts) => {
+                let mut file = OpenOptions::new()
+                    .create(true)
+                    .write(true)
+                    .append(true)
+                    .open("/home/saidler/aka.txt")?;
                 let result = aka.replace(&query_opts.cmdline)?;
+                write!(file, "'{}' -> '{}'\n", query_opts.cmdline, result)?;
                 println!("{}", result);
             },
             Command::List(_list_opts) => {
