@@ -105,7 +105,7 @@ impl AKA {
         }
     }
 
-    fn split_respecting_quotes(cmdline: &String) -> Vec<String> {
+    fn split_respecting_quotes(cmdline: &str) -> Vec<String> {
         let mut args = Vec::new();
         let mut start = 0;
         let mut in_quotes = false;
@@ -168,7 +168,7 @@ impl AKA {
             let beg = pos+1;
             let end = beg+count;
             args.drain(beg..end);
-            args.splice(pos..pos+1, Self::split_respecting_quotes(&value));
+            args.splice(pos..=pos, Self::split_respecting_quotes(&value));
             pos += 1;
         }
 

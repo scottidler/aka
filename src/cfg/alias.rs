@@ -28,7 +28,6 @@ pub struct Alias {
 }
 
 impl Alias {
-    #[must_use]
     pub fn positionals(&self) -> Result<Vec<String>> {
         let re = Regex::new(r"(\$[1-9])")?;
         let items = re.find_iter(&self.value)
@@ -39,7 +38,6 @@ impl Alias {
         Ok(items)
     }
 
-    #[must_use]
     pub fn keywords(&self) -> Result<Vec<String>> {
         let re = Regex::new(r"(\$[A-z]+)")?;
         let items = re.find_iter(&self.value)
