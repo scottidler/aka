@@ -63,11 +63,13 @@ impl Alias {
         self.value.contains("$@")
     }
 
-    /// replace the remainder of the arguments
+    /// Replace the remainder of the arguments.
     ///
-    /// # errors
+    /// # Errors
     ///
-    /// will return `err` if there was a problem replacing the arguments.
+    /// Returns `Err` under the following conditions:
+    /// - If there was a problem retrieving positional parameters.
+    /// - If the alias is not variadic and the number of positional parameters doesn't match the number of remaining arguments.
     pub fn replace(&self, remainders: &mut Vec<String>) -> Result<(String, usize)> {
         let mut result = self.value.clone();
         let mut count = 0;
