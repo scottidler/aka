@@ -30,23 +30,25 @@ pub struct Alias {
 
 impl Alias {
     #[must_use]
-    pub fn positionals(&self) -> Vec<String> {
-        let re = Regex::new(r"(\$[1-9])").unwrap();
-        re.find_iter(&self.value)
+    pub fn positionals(&self) -> Result<Vec<String>> {
+        let re = Regex::new(r"(\$[1-9])")?;
+        let items = re.find_iter(&self.value)
             .filter_map(|m| m.as_str().parse().ok())
             .unique()
             .sorted()
-            .collect()
+            .collect();
+        Ok(items)
     }
 
     #[must_use]
-    pub fn keywords(&self) -> Vec<String> {
-        let re = Regex::new(r"(\$[A-z]+)").unwrap();
-        re.find_iter(&self.value)
+    pub fn keywords(&self) -> Result<Vec<String>> {
+        let re = Regex::new(r"(\$[A-z]+)")?;
+        let items = re.find_iter(&self.value)
             .filter_map(|m| m.as_str().parse().ok())
             .unique()
             .sorted()
-            .collect()
+            .collect();
+        Ok(items)
     }
 
     #[must_use]
@@ -54,13 +56,14 @@ impl Alias {
         self.value.contains("$@")
     }
 
-    pub fn replace(&self, remainders: &mut Vec<String>) -> (String, usize) {
+    pub fn replace(&self, remainders: &mut Vec<String>) -> Result<(String, usize)> {
         let mut result = self.value.clone();
         let mut count = 0;
-        if self.positionals().len() == remainders.len() {
-            for positional in &self.positionals() {
+        let positionals = self.positionals()?;
+        if positionals.len() == remainders.len() {
+            for positional in &positionals {
                 result = result.replace(positional, &remainders.swap_remove(0));
-            count = self.positionals().len();
+            count = positionals.len();
             }
         }
         else if self.is_variadic() {
@@ -71,7 +74,7 @@ impl Alias {
         else {
             result = self.name.clone();
         }
-        (result, count)
+        Ok((result, count))
     }
 }
 
