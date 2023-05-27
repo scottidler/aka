@@ -13,7 +13,7 @@ use cfg::loader::Loader;
 use cfg::spec::Spec;
 use cfg::alias::Alias;
 
-const CONFIGS: &'static [&'static str] = &[
+const CONFIGS: &[&str] = &[
     "./aka.yml",
     "~/.aka.yml",
     "~/.config/aka/aka.yml",
@@ -21,8 +21,8 @@ const CONFIGS: &'static [&'static str] = &[
 
 fn divine_config() -> Result<PathBuf> {
     let configs: Vec<PathBuf> = CONFIGS
-        .into_iter()
-        .map(|file| tilde(file))
+        .iter()
+        .map(tilde)
         .map(|file| PathBuf::from(file.as_ref()))
         .collect();
     for config in configs {
@@ -35,7 +35,7 @@ fn divine_config() -> Result<PathBuf> {
 
 fn test_config(file: &PathBuf) -> Result<PathBuf> {
     if file.exists() {
-        return Ok(file.to_owned())
+        return Ok(file.clone())
     }
     Err(eyre!("config {:?} not found!", file))
 }
@@ -81,17 +81,14 @@ struct AKA {
 }
 
 impl AKA {
-    pub fn new(eol: bool, config: Option<PathBuf>) -> Result<Self> {
+    pub fn new(eol: bool, config: &Option<PathBuf>) -> Result<Self> {
         let config = match &config {
             Some(file) => test_config(file)?,
             None => divine_config()?,
         };
         let loader = Loader::new();
         let spec = loader.load(&config).unwrap();
-        Ok(Self {
-            spec,
-            eol,
-        })
+        Ok(Self { eol, spec })
     }
     pub fn use_alias(&self, alias: &Alias, pos: usize) -> bool {
         if alias.is_variadic() && !self.eol {
@@ -100,12 +97,7 @@ impl AKA {
         else if pos == 0 {
             true
         }
-        else if alias.global {
-            true
-        }
-        else {
-            false
-        }
+        else { alias.global }
     }
 
     fn split_respecting_quotes(cmdline: &String) -> Vec<String> {
@@ -132,12 +124,12 @@ impl AKA {
         let mut pos: usize = 0;
         let mut space = " ";
         let mut replaced = false;
-        let mut args = Self::split_respecting_quotes(&cmdline);
+        let mut args = Self::split_respecting_quotes(cmdline);
         while pos < args.len() {
             let arg = &args[pos];
             let mut remainders: Vec<String> = args[pos+1..].to_vec();
             let (value, count) = match self.spec.aliases.get(arg) {
-                Some(alias) if self.use_alias(&alias, pos) => {
+                Some(alias) if self.use_alias(alias, pos) => {
                     replaced = true;
                     space = if alias.space { " " } else { "" };
                     let (v,c) = alias.replace(&mut remainders);
@@ -146,8 +138,8 @@ impl AKA {
                     }
                     (v,c)
                 },
-                Some(_) => (arg.to_owned(), 0),
-                None => (arg.to_owned(), 0),
+                Some(_) => (arg.clone(), 0),
+                None => (arg.clone(), 0),
             };
             let beg = pos+1;
             let end = beg+count;
@@ -159,7 +151,7 @@ impl AKA {
             Ok(format!("{}{}", args.join(" "), space))
         }
         else {
-            Ok("".to_owned())
+            Ok(String::new())
         }
     }
 }
@@ -176,12 +168,12 @@ fn execute() -> Result<i32> {
                     .append(true)
                     .open("/home/saidler/aka.txt")?;
                 let result = aka.replace(&query_opts.cmdline)?;
-                write!(file, "'{}' -> '{}'\n", query_opts.cmdline, result)?;
-                println!("{}", result);
+                writeln!(file, "'{}' -> '{}'", query_opts.cmdline, result)?;
+                println!("{result}");
             },
             Command::List(list_opts) => {
                 let mut aliases: Vec<Alias> = aka.spec.aliases.values().cloned().collect();
-                aliases.sort_by_key(|a| a.name.to_owned());
+                aliases.sort_by_key(|a| a.name.clone());
                 if list_opts.patterns.is_empty() {
                     for alias in aliases {
                         println!("{}: {}", alias.name, alias.value);
@@ -203,7 +195,7 @@ fn main() {
     exit(match execute() {
         Ok(exitcode) => exitcode,
         Err(err) => {
-            eprintln!("error: {:?}", err);
+            eprintln!("error: {err:?}");
             1
         }
     });

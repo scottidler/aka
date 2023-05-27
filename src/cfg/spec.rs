@@ -10,7 +10,7 @@ use super::alias::Alias;
 
 type Aliases = HashMap<String, Alias>;
 
-fn default_version() -> i32 {
+const fn default_version() -> i32 {
     1
 }
 
@@ -20,13 +20,13 @@ fn default_defaults() -> Defaults {
     }
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize)]
 pub struct Defaults {
     #[serde(default = "default_version")]
     pub version: i32,
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize)]
 pub struct Spec {
     #[serde(default = "default_defaults")]
     pub defaults: Defaults,
@@ -86,8 +86,8 @@ where
         {
             let mut aliases = Aliases::new();
             while let Some((name, AliasStringOrStruct(mut alias))) = map.next_entry::<String, AliasStringOrStruct>()? {
-                alias.name = name.to_owned();
-                aliases.insert(name.to_owned(), alias);
+                alias.name = name.clone();
+                aliases.insert(name.clone(), alias);
             }
             Ok(aliases)
         }

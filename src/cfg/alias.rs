@@ -6,15 +6,15 @@ use std::str::FromStr;
 use itertools::Itertools;
 use regex::Regex;
 
-fn default_true() -> bool {
+const fn default_true() -> bool {
     true
 }
 
-fn default_false() -> bool {
+const fn default_false() -> bool {
     false
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize)]
 pub struct Alias {
     #[serde(skip_deserializing)]
     pub name: String,
@@ -29,6 +29,7 @@ pub struct Alias {
 }
 
 impl Alias {
+    #[must_use]
     pub fn positionals(&self) -> Vec<String> {
         let re = Regex::new(r"(\$[1-9])").unwrap();
         re.find_iter(&self.value)
@@ -38,6 +39,7 @@ impl Alias {
             .collect()
     }
 
+    #[must_use]
     pub fn keywords(&self) -> Vec<String> {
         let re = Regex::new(r"(\$[A-z]+)").unwrap();
         re.find_iter(&self.value)
@@ -47,15 +49,16 @@ impl Alias {
             .collect()
     }
 
+    #[must_use]
     pub fn is_variadic(&self) -> bool {
         self.value.contains("$@")
     }
 
     pub fn replace(&self, remainders: &mut Vec<String>) -> (String, usize) {
-        let mut result = self.value.to_owned();
+        let mut result = self.value.clone();
         let mut count = 0;
         if self.positionals().len() == remainders.len() {
-            for positional in self.positionals().iter() {
+            for positional in &self.positionals() {
                 result = result.replace(positional, &remainders.swap_remove(0));
             count = self.positionals().len();
             }
@@ -66,7 +69,7 @@ impl Alias {
             remainders.drain(0..remainders.len());
         }
         else {
-            result = self.name.to_owned();
+            result = self.name.clone();
         }
         (result, count)
     }
@@ -76,8 +79,8 @@ impl FromStr for Alias {
     type Err = Void;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        Ok(Alias {
-            name: "".to_owned(),
+        Ok(Self {
+            name: String::new(),
             value: s.to_owned(),
             space: true,
             global: false,
