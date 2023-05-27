@@ -158,7 +158,7 @@ impl AKA {
 
 fn execute() -> Result<i32> {
     let aka_opts = AkaOpts::from_args();
-    let aka = AKA::new(aka_opts.eol, aka_opts.config)?;
+    let aka = AKA::new(aka_opts.eol, &aka_opts.config)?;
     if let Some(command) = aka_opts.command {
         match command {
             Command::Query(query_opts) => {
