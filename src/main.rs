@@ -55,7 +55,7 @@ struct AkaOpts {
 }
 
 #[derive(StructOpt, Debug)]
-#[structopt(name = "comand", about = "choose command to run")]
+#[structopt(name = "command", about = "choose command to run")]
 enum Command {
     #[structopt(name = "ls", about = "list aka aliases")]
     List(ListOpts),
