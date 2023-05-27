@@ -132,7 +132,7 @@ impl AKA {
         args
     }
 
-    pub fn replace(&self, cmdline: &String) -> Result<String> {
+    pub fn replace(&self, cmdline: &str) -> Result<String> {
         let mut pos: usize = 0;
         let mut space = " ";
         let mut replaced = false;
