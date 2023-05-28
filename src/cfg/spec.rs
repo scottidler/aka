@@ -93,3 +93,64 @@ where
     }
     deserializer.deserialize_map(AliasMap)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_deserialize_alias_map_success() -> Result<(), eyre::Error> {
+        let yaml = r#"
+defaults:
+  version: 1
+aliases:
+  alias1:
+    value: "echo Hello World"
+    space: true
+    global: false
+        "#;
+        let spec: Spec = serde_yaml::from_str(yaml)?;
+
+        assert_eq!(spec.defaults.version, 1);
+        assert_eq!(spec.aliases.len(), 1);
+        assert_eq!(spec.aliases.get("alias1").unwrap().value, "echo Hello World");
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_deserialize_alias_map_empty_file() -> Result<(), eyre::Error> {
+        let yaml = r#"{}"#;
+        let spec: Spec = serde_yaml::from_str(yaml)?;
+
+        assert_eq!(spec.defaults.version, 1); // default value
+        assert_eq!(spec.aliases.len(), 0);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_deserialize_alias_map_invalid_content() {
+        let yaml = r#"invalid YAML content"#;
+        let result: Result<Spec, _> = serde_yaml::from_str(yaml);
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_deserialize_alias_map_with_string_alias() -> Result<(), eyre::Error> {
+        let yaml = r#"
+defaults:
+  version: 1
+aliases:
+  alias1: "echo Hello World"
+        "#;
+        let spec: Spec = serde_yaml::from_str(yaml)?;
+
+        assert_eq!(spec.defaults.version, 1);
+        assert_eq!(spec.aliases.len(), 1);
+        assert_eq!(spec.aliases.get("alias1").unwrap().value, "echo Hello World");
+
+        Ok(())
+    }
+}

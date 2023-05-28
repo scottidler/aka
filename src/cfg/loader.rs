@@ -32,3 +32,78 @@ impl Default for Loader {
         Self::new()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write;
+    use std::path::PathBuf;
+    use tempfile::NamedTempFile;
+    use std::collections::HashMap;
+
+    use crate::Alias;
+
+    #[test]
+    fn test_load_success() -> Result<(), Error> {
+        // Create a mock spec file.
+        let mut file = NamedTempFile::new()?;
+        let content = r#"
+defaults:
+  version: 1
+aliases:
+  alias1:
+    value: "echo Hello World"
+    space: true
+    global: false
+"#;
+        file.write_all(content.as_bytes())?;
+
+        // Use the loader to load the file.
+        let loader = Loader::new();
+        let spec = loader.load(&file.path().to_path_buf())?;
+
+        // Assert the spec was loaded correctly.
+        let expected_aliases = {
+            let mut map = HashMap::new();
+            map.insert("alias1".to_string(), Alias {
+                name: "alias1".to_string(),
+                value: "echo Hello World".to_string(),
+                space: true,
+                global: false,
+            });
+            map
+        };
+
+        assert_eq!(spec.aliases, expected_aliases);
+        assert_eq!(spec.defaults.version, 1);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_load_nonexistent_file() {
+        // Create a path to a file that doesn't exist.
+        let path = PathBuf::from("/path/to/nonexistent/file");
+
+        let loader = Loader::new();
+        let result = loader.load(&path);
+
+        assert!(result.is_err());
+        // You can be more specific about the error if you want.
+    }
+
+    #[test]
+    fn test_load_invalid_content() -> Result<(), Error> {
+        // Create a mock spec file with invalid content.
+        let mut file = NamedTempFile::new()?;
+        writeln!(file, "This is not valid YAML content")?;
+
+        let loader = Loader::new();
+        let result = loader.load(&file.path().to_path_buf());
+
+        assert!(result.is_err());
+        // You can be more specific about the error if you want.
+
+        Ok(())
+    }
+}

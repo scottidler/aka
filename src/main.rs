@@ -235,3 +235,66 @@ fn main() {
         }
     });
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use pretty_assertions::assert_eq;
+    use tempfile::NamedTempFile;
+    use eyre::{Result, Error};
+    use std::collections::HashMap;
+
+    #[test]
+    fn test_spec_deserialize_alias_map_success() -> Result<(), eyre::Error> {
+        let yaml = r#"
+defaults:
+  version: 1
+aliases:
+  alias1:
+    value: "echo Hello World"
+    space: true
+    global: false
+        "#;
+        let spec: Spec = serde_yaml::from_str(yaml)?;
+
+        assert_eq!(spec.defaults.version, 1);
+        assert_eq!(spec.aliases.len(), 1);
+        assert_eq!(spec.aliases.get("alias1").unwrap().value, "echo Hello World");
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_loader_load_success() -> Result<(), Error> {
+        let mut file = NamedTempFile::new()?;
+        let content = r#"
+defaults:
+  version: 1
+aliases:
+  alias1:
+    value: "echo Hello World"
+    space: true
+    global: false
+"#;
+        file.write_all(content.as_bytes())?;
+
+        let loader = Loader::new();
+        let spec = loader.load(&file.path().to_path_buf())?;
+
+        let expected_aliases = {
+            let mut map = HashMap::new();
+            map.insert("alias1".to_string(), Alias {
+                name: "alias1".to_string(),
+                value: "echo Hello World".to_string(),
+                space: true,
+                global: false,
+            });
+            map
+        };
+
+        assert_eq!(spec.aliases, expected_aliases);
+        assert_eq!(spec.defaults.version, 1);
+
+        Ok(())
+    }
+}
