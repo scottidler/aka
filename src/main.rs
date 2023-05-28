@@ -198,7 +198,7 @@ fn execute() -> Result<i32> {
             Command::Query(query_opts) => {
                 let result = aka.replace(&query_opts.cmdline)?;
                 // check for the existence of the AKA_LOG environment variable
-                if let Ok(_) = std::env::var("AKA_LOG") {
+                if std::env::var("AKA_LOG").is_ok() {
                     let mut file = OpenOptions::new()
                         .create(true)
                         .write(true)
@@ -206,7 +206,7 @@ fn execute() -> Result<i32> {
                         .open("/home/saidler/aka.txt")?;
                     writeln!(file, "'{}' -> '{}'", query_opts.cmdline, result)?;
                 }
-                println!("{}", result);
+                println!("{result}");
             },
             Command::List(list_opts) => {
                 let mut aliases: Vec<Alias> = aka.spec.aliases.values().cloned().collect();
