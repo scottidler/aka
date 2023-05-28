@@ -1,5 +1,3 @@
-//#![allow(unused_imports, unused_variables, unused_attributes, unused_mut, dead_code)]
-
 use eyre::{eyre, Result};
 use std::process::exit;
 use std::path::PathBuf;
