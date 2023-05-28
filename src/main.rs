@@ -45,6 +45,7 @@ fn test_config(file: &PathBuf) -> Result<PathBuf> {
 #[command(version = "0.1.0")]
 #[command(author = "Scott A. Idler <scott.a.idler@gmail.com>")]
 #[command(arg_required_else_help = true)]
+#[command(after_help = "set env var AKA_LOG to turn on logging to ~/aka.txt")]
 struct AkaOpts {
     #[clap(short, long, help = "is entry an [e]nd [o]f [l]ine?")]
     eol: bool,
@@ -187,62 +188,6 @@ impl AKA {
         Ok(result)
     }
 
-
-/*
-    pub fn replace(&self, cmdline: &String) -> Result<String> {
-        let mut pos: usize = 0;
-        let mut space = " ";
-        let mut replaced = false;
-        let mut args = Self::split_respecting_quotes(&cmdline);
-        let mut sudo = false;
-
-        // Check if last arg ends with '! ' and eol is true.
-        if self.eol && !args.is_empty() {
-            if let Some(last_arg) = args.last() {
-                if last_arg == "!" {
-                    args.pop(); // Remove '!'
-                    sudo = true;
-                }
-            }
-        }
-
-        while pos < args.len() {
-            let arg = &args[pos];
-            let mut remainders: Vec<String> = args[pos+1..].to_vec();
-            let (value, count) = match self.spec.aliases.get(arg) {
-                Some(alias) if self.use_alias(alias, pos) => {
-                    replaced = true;
-                    space = if alias.space { " " } else { "" };
-                    let (v,c) = alias.replace(&mut remainders)?;
-                    if v == alias.name {
-                        replaced = false;
-                    }
-                    (v,c)
-                },
-                Some(_) | None => (arg.clone(), 0),
-            };
-            let beg = pos+1;
-            let end = beg+count;
-            args.drain(beg..end);
-            args[pos] = value;
-            pos += 1;
-        }
-
-        if sudo {
-            // Wrap the first argument in `$(which arg)`
-            args[0] = format!("$(which {})", args[0]);
-            args.insert(0, "sudo".to_string()); // Insert sudo at the beginning
-        }
-
-        let result = if replaced || sudo {
-            format!("{}{}", args.join(" "), space)
-        } else {
-            String::new()
-        };
-
-        Ok(result)
-    }
-*/
 }
 
 fn execute() -> Result<i32> {
@@ -251,14 +196,17 @@ fn execute() -> Result<i32> {
     if let Some(command) = aka_opts.command {
         match command {
             Command::Query(query_opts) => {
-                let mut file = OpenOptions::new()
-                    .create(true)
-                    .write(true)
-                    .append(true)
-                    .open("/home/saidler/aka.txt")?;
                 let result = aka.replace(&query_opts.cmdline)?;
-                writeln!(file, "'{}' -> '{}'", query_opts.cmdline, result)?;
-                println!("{result}");
+                // check for the existence of the AKA_LOG environment variable
+                if let Ok(_) = std::env::var("AKA_LOG") {
+                    let mut file = OpenOptions::new()
+                        .create(true)
+                        .write(true)
+                        .append(true)
+                        .open("/home/saidler/aka.txt")?;
+                    writeln!(file, "'{}' -> '{}'", query_opts.cmdline, result)?;
+                }
+                println!("{}", result);
             },
             Command::List(list_opts) => {
                 let mut aliases: Vec<Alias> = aka.spec.aliases.values().cloned().collect();
