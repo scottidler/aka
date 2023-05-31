@@ -167,7 +167,7 @@ impl AKA {
                     if v != alias.name {
                         replaced = true;
                     }
-                    (v,c)
+                    (v, c)
                 },
                 Some(_) | None => (arg.clone(), 0),
             };
@@ -355,8 +355,9 @@ aliases:
         let spec: Spec = serde_yaml::from_str(yaml).unwrap();
         let mut aka = AKA::new(false, &None).unwrap();
         aka.spec = spec;
+        aka.eol = true;
         let result = aka.replace("vim /some/file !cat").unwrap();
-        let expect = "bat -p /some/file";
+        let expect = "bat -p /some/file ";
         println!("expect: {} result: '{}'", expect, result);
         assert_eq!(expect, result);
     }
