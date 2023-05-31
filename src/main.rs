@@ -51,7 +51,6 @@ struct AkaOpts {
     #[clap(short, long)]
     config: Option<PathBuf>,
 
-    // SUBCOMMANDS
     #[clap(subcommand)]
     command: Option<Command>
 }
@@ -176,7 +175,7 @@ impl AKA {
             let end = beg + count;
 
             if space.is_empty() {
-                args.drain(beg..=end); // Adjust the end index by adding 1
+                args.drain(beg..end);
             } else {
                 args.drain(beg..end);
             }
@@ -213,7 +212,7 @@ fn execute() -> Result<i32> {
                         .create(true)
                         .write(true)
                         .append(true)
-                        .open("/home/saidler/aka.txt")?;
+                        .open("/home/saidler/aka.log")?;
                     writeln!(file, "'{}' -> '{}'", query_opts.cmdline, result)?;
                 }
                 println!("{result}");
