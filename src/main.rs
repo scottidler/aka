@@ -96,6 +96,7 @@ impl AKA {
         if alias.is_variadic() && !self.eol {
             false
         }
+        // check the position of the alias for non-global aliases (aka they will always be first)
         else if pos == 0 {
             true
         }
@@ -138,26 +139,27 @@ impl AKA {
         let mut sudo = false;
         let mut args = Self::split_respecting_quotes(cmdline);
 
-        // Check if last arg ends with '! ' and eol is true.
         if self.eol && !args.is_empty() {
             if let Some(last_arg) = args.last() {
-                // sudoify if last arg ends with '!'
+                // sudoify the args by placing sudo at the beginning
                 if last_arg == "!" || last_arg.ends_with("!") {
+                    args.pop();
                     sudo = true;
-                // if the last arg starts with !arg, then we need to remove it
-                // the first arg will be replaced with the arg after the !
+                // replace the first arg with the next_arg after the !
                 } else if last_arg.starts_with("!") {
-                    // replace first arg with the value after the !
-                    args[0] = last_arg[1..].to_string();
-                    replaced = true;
+                    let next_arg = last_arg[1..].to_string();
+                    if let Some(first_arg) = args.first_mut() {
+                        *first_arg = next_arg;
+                        replaced = true;
+                    }
+                    args.pop();
                 }
-                args.pop();
             }
         }
 
         while pos < args.len() {
             let arg = &args[pos];
-            let mut remainders: Vec<String> = args[pos+1..].to_vec();
+            let mut remainders: Vec<String> = args[pos + 1..].to_vec();
             let (value, count) = match self.spec.aliases.get(arg) {
                 Some(alias) if self.use_alias(alias, pos) => {
                     space = if alias.space { " " } else { "" };
@@ -170,9 +172,14 @@ impl AKA {
                 Some(_) | None => (arg.clone(), 0),
             };
 
-            let beg = pos+1;
-            let end = beg+count;
-            args.drain(beg..end);
+            let beg = pos + 1;
+            let end = beg + count;
+
+            if space.is_empty() {
+                args.drain(beg..=end); // Adjust the end index by adding 1
+            } else {
+                args.drain(beg..end);
+            }
             args.splice(pos..=pos, Self::split_respecting_quotes(&value));
             pos += 1;
         }
@@ -191,7 +198,6 @@ impl AKA {
 
         Ok(result)
     }
-
 }
 
 fn execute() -> Result<i32> {
@@ -303,4 +309,56 @@ aliases:
 
         Ok(())
     }
+
+    #[test]
+    fn test_no_exclamation_mark() {
+        let yaml = r#"
+        defaults:
+            version: 1
+        aliases:
+            cat: "bat -p"
+        "#;
+        let spec: Spec = serde_yaml::from_str(yaml).unwrap();
+        let mut aka = AKA::new(false, &None).unwrap();
+        aka.spec = spec;
+        let result = aka.replace("cat /some/file").unwrap();
+        let expect = "bat -p /some/file ";
+        println!("expect: {} result: '{}'", expect, result);
+        assert_eq!(expect, result);
+    }
+
+    #[test]
+    fn test_exclamation_mark_at_end() {
+        let yaml = r#"
+        defaults:
+            version: 1
+        aliases:
+            cat: "bat -p"
+        "#;
+        let spec: Spec = serde_yaml::from_str(yaml).unwrap();
+        let mut aka = AKA::new(true, &None).unwrap();
+        aka.spec = spec;
+        let result = aka.replace("vim /some/file !").unwrap();
+        let expect = "sudo $(which vim) /some/file ";
+        println!("expect: {} result: '{}'", expect, result);
+        assert_eq!(expect, result);
+    }
+
+    #[test]
+    fn test_exclamation_mark_with_alias() {
+        let yaml = r#"
+        defaults:
+            version: 1
+        aliases:
+            cat: "bat -p"
+        "#;
+        let spec: Spec = serde_yaml::from_str(yaml).unwrap();
+        let mut aka = AKA::new(false, &None).unwrap();
+        aka.spec = spec;
+        let result = aka.replace("vim /some/file !cat").unwrap();
+        let expect = "bat -p /some/file";
+        println!("expect: {} result: '{}'", expect, result);
+        assert_eq!(expect, result);
+    }
+
 }
