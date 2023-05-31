@@ -1,0 +1,45 @@
+{
+    // Use IntelliSense to learn about possible attributes.
+    // Hover to view descriptions of existing attributes.
+    // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Debug executable 'aka'",
+            "cargo": {
+                "args": [
+                    "build",
+                    "--bin=aka",
+                    "--package=aka"
+                ],
+                "filter": {
+                    "name": "aka",
+                    "kind": "bin"
+                }
+            },
+            "args": ["query", "lah"],
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Debug unit tests in executable 'aka'",
+            "cargo": {
+                "args": [
+                    "test",
+                    "--no-run",
+                    "--bin=aka",
+                    "--package=aka"
+                ],
+                "filter": {
+                    "name": "aka",
+                    "kind": "bin"
+                }
+            },
+            "args": [],
+            "cwd": "${workspaceFolder}"
+        }
+    ]
+}

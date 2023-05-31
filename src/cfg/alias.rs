@@ -74,19 +74,20 @@ impl Alias {
         let mut result = self.value.clone();
         let mut count = 0;
         let positionals = self.positionals()?;
-        if positionals.len() == remainders.len() {
-            for positional in &positionals {
-                result = result.replace(positional, &remainders.swap_remove(0));
-            count = positionals.len();
+        if positionals.len() > 0 {
+            if positionals.len() == remainders.len() {
+                for positional in &positionals {
+                    result = result.replace(positional, &remainders.swap_remove(0));
+                }
+                count = positionals.len();
+            } else {
+                result = self.name.clone();
             }
         }
         else if self.is_variadic() {
             result = result.replace("$@", &remainders.join(" "));
             count = remainders.len();
             remainders.drain(0..remainders.len());
-        }
-        else {
-            result = self.name.clone();
         }
         Ok((result, count))
     }

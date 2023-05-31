@@ -141,10 +141,17 @@ impl AKA {
         // Check if last arg ends with '! ' and eol is true.
         if self.eol && !args.is_empty() {
             if let Some(last_arg) = args.last() {
-                if last_arg == "!" {
-                    args.pop(); // Remove '!'
+                // sudoify if last arg ends with '!'
+                if last_arg == "!" || last_arg.ends_with("!") {
                     sudo = true;
+                // if the last arg starts with !arg, then we need to remove it
+                // the first arg will be replaced with the arg after the !
+                } else if last_arg.starts_with("!") {
+                    // replace first arg with the value after the !
+                    args[0] = last_arg[1..].to_string();
+                    replaced = true;
                 }
+                args.pop();
             }
         }
 
@@ -153,11 +160,10 @@ impl AKA {
             let mut remainders: Vec<String> = args[pos+1..].to_vec();
             let (value, count) = match self.spec.aliases.get(arg) {
                 Some(alias) if self.use_alias(alias, pos) => {
-                    replaced = true;
                     space = if alias.space { " " } else { "" };
                     let (v,c) = alias.replace(&mut remainders)?;
-                    if v == alias.name {
-                        replaced = false;
+                    if v != alias.name {
+                        replaced = true;
                     }
                     (v,c)
                 },
