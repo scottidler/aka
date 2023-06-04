@@ -1,21 +1,17 @@
+use clap::Parser;
 use eyre::{eyre, Result};
-use std::process::exit;
-use std::path::PathBuf;
 use shellexpand::tilde;
 use std::fs::OpenOptions;
 use std::io::Write;
-use clap::Parser;
+use std::path::PathBuf;
+use std::process::exit;
 
 pub mod cfg;
+use cfg::alias::Alias;
 use cfg::loader::Loader;
 use cfg::spec::Spec;
-use cfg::alias::Alias;
 
-const CONFIGS: &[&str] = &[
-    "./aka.yml",
-    "~/.aka.yml",
-    "~/.config/aka/aka.yml",
-];
+const CONFIGS: &[&str] = &["./aka.yml", "~/.aka.yml", "~/.config/aka/aka.yml"];
 
 fn divine_config() -> Result<PathBuf> {
     let configs: Vec<PathBuf> = CONFIGS
@@ -33,7 +29,7 @@ fn divine_config() -> Result<PathBuf> {
 
 fn test_config(file: &PathBuf) -> Result<PathBuf> {
     if file.exists() {
-        return Ok(file.clone())
+        return Ok(file.clone());
     }
     Err(eyre!("config {:?} not found!", file))
 }
@@ -43,7 +39,7 @@ fn test_config(file: &PathBuf) -> Result<PathBuf> {
 #[command(version = "0.1.0")]
 #[command(author = "Scott A. Idler <scott.a.idler@gmail.com>")]
 #[command(arg_required_else_help = true)]
-#[command(after_help = "set env var AKA_LOG to turn on logging to ~/aka.txt")]
+#[command(after_help = "set env var AKA_LOG to turn on logging to ~/aka.log")]
 struct AkaOpts {
     #[clap(short, long, help = "is entry an [e]nd [o]f [l]ine?")]
     eol: bool,
@@ -52,7 +48,7 @@ struct AkaOpts {
     config: Option<PathBuf>,
 
     #[clap(subcommand)]
-    command: Option<Command>
+    command: Option<Command>,
 }
 
 #[derive(Parser)]
@@ -71,7 +67,7 @@ struct QueryOpts {
 
 #[derive(Parser)]
 struct ListOpts {
-    patterns: Vec<String>
+    patterns: Vec<String>,
 }
 
 #[derive(Debug)]
@@ -98,8 +94,7 @@ impl AKA {
         // check the position of the alias for non-global aliases (aka they will always be first)
         else if pos == 0 {
             true
-        }
-        else {
+        } else {
             alias.global
         }
     }
@@ -162,12 +157,12 @@ impl AKA {
             let (value, count) = match self.spec.aliases.get(arg) {
                 Some(alias) if self.use_alias(alias, pos) => {
                     space = if alias.space { " " } else { "" };
-                    let (v,c) = alias.replace(&mut remainders)?;
+                    let (v, c) = alias.replace(&mut remainders)?;
                     if v != alias.name {
                         replaced = true;
                     }
                     (v, c)
-                },
+                }
                 Some(_) | None => (arg.clone(), 0),
             };
 
@@ -216,7 +211,7 @@ fn execute() -> Result<i32> {
                     writeln!(file, "'{}' -> '{}'", query_opts.cmdline, result)?;
                 }
                 println!("{result}");
-            },
+            }
             Command::List(list_opts) => {
                 let mut aliases: Vec<Alias> = aka.spec.aliases.values().cloned().collect();
                 aliases.sort_by_key(|a| a.name.clone());
@@ -231,7 +226,7 @@ fn execute() -> Result<i32> {
                         }
                     }
                 }
-            },
+            }
         }
     }
     Ok(0)
@@ -250,10 +245,10 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use eyre::{Error, Result};
     use pretty_assertions::assert_eq;
-    use tempfile::NamedTempFile;
-    use eyre::{Result, Error};
     use std::collections::HashMap;
+    use tempfile::NamedTempFile;
 
     #[test]
     fn test_spec_deserialize_alias_map_success() -> Result<(), eyre::Error> {
@@ -294,12 +289,15 @@ aliases:
 
         let expected_aliases = {
             let mut map = HashMap::new();
-            map.insert("alias1".to_string(), Alias {
-                name: "alias1".to_string(),
-                value: "echo Hello World".to_string(),
-                space: true,
-                global: false,
-            });
+            map.insert(
+                "alias1".to_string(),
+                Alias {
+                    name: "alias1".to_string(),
+                    value: "echo Hello World".to_string(),
+                    space: true,
+                    global: false,
+                },
+            );
             map
         };
 
@@ -360,5 +358,4 @@ aliases:
         println!("expect: {} result: '{}'", expect, result);
         assert_eq!(expect, result);
     }
-
 }
