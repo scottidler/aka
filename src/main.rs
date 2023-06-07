@@ -67,6 +67,10 @@ struct QueryOpts {
 
 #[derive(Parser)]
 struct ListOpts {
+
+    #[clap(short, long, help = "list global aliases only")]
+    global: bool,
+
     patterns: Vec<String>,
 }
 
@@ -225,6 +229,14 @@ fn execute() -> Result<i32> {
             Command::List(list_opts) => {
                 let mut aliases: Vec<Alias> = aka.spec.aliases.values().cloned().collect();
                 aliases.sort_by_key(|a| a.name.clone());
+
+                if list_opts.global {
+                    aliases = aliases
+                        .into_iter()
+                        .filter(|alias| alias.global)
+                        .collect();
+                }
+
                 if list_opts.patterns.is_empty() {
                     for alias in aliases {
                         println!("{}: {}", alias.name, alias.value);
@@ -237,6 +249,7 @@ fn execute() -> Result<i32> {
                     }
                 }
             }
+
         }
     }
     Ok(0)
