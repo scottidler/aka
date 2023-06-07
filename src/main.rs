@@ -139,12 +139,22 @@ impl AKA {
                 if last_arg == "!" || last_arg.ends_with("!") {
                     args.pop();
                     sudo = true;
+
                 // replace the first arg with the next_arg after the !
                 } else if last_arg.starts_with("!") {
                     let next_arg = last_arg[1..].to_string();
-                    if let Some(first_arg) = args.first_mut() {
-                        *first_arg = next_arg;
-                        replaced = true;
+                    args[0] = next_arg;
+                    replaced = true;
+
+                    let mut i = 1;
+                    while i < args.len() {
+                        if args[i].starts_with("-") {
+                            args.remove(i);
+                        } else if args[i] == "|" || args[i] == ">" || args[i] == "<" {
+                            break;
+                        } else {
+                            i += 1;
+                        }
                     }
                     args.pop();
                 }
