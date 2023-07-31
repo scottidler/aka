@@ -239,17 +239,16 @@ fn execute() -> Result<i32> {
 
                 if list_opts.patterns.is_empty() {
                     for alias in aliases {
-                        println!("{}: {}", alias.name, alias.value);
+                        println!("{}: |\n  {}", alias.name, alias.value.replace("\n", "\n  "));
                     }
                 } else {
                     for alias in aliases {
                         if list_opts.patterns.iter().any(|pattern| alias.name.starts_with(pattern)) {
-                            println!("{}: {}", alias.name, alias.value);
+                            println!("{}: |\n  {}", alias.name, alias.value.replace("\n", "\n  "));
                         }
                     }
                 }
             }
-
         }
     }
     Ok(0)
