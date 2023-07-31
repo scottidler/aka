@@ -85,8 +85,12 @@ where
         {
             let mut aliases = Aliases::new();
             while let Some((name, AliasStringOrStruct(mut alias))) = map.next_entry::<String, AliasStringOrStruct>()? {
-                alias.name = name.clone();
-                aliases.insert(name.clone(), alias);
+                let names: Vec<&str> = name.split('|').collect();
+                for name in names {
+                    let name = name.to_string();
+                    alias.name = name.clone();
+                    aliases.insert(name.clone(), alias.clone());
+                }
             }
             Ok(aliases)
         }
