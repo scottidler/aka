@@ -34,9 +34,13 @@ fn test_config(file: &PathBuf) -> Result<PathBuf> {
     Err(eyre!("config {:?} not found!", file))
 }
 
+mod built_info {
+    include!(concat!(env!("OUT_DIR"), "/git_describe.rs"));
+}
+
 #[derive(Parser)]
 #[command(name = "aka", about = "[a]lso [k]nown [a]s: an aliasing program")]
-#[command(version = "0.1.0")]
+#[command(version = built_info::GIT_DESCRIBE)]
 #[command(author = "Scott A. Idler <scott.a.idler@gmail.com>")]
 #[command(arg_required_else_help = true)]
 #[command(after_help = "set env var AKA_LOG to turn on logging to ~/aka.log")]
