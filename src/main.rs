@@ -208,6 +208,14 @@ impl AKA {
     }
 }
 
+fn print_alias(alias: &Alias) {
+    if alias.value.contains('\n') {
+        println!("{}: |\n  {}", alias.name, alias.value.replace("\n", "\n  "));
+    } else {
+        println!("{}: {}", alias.name, alias.value);
+    }
+}
+
 fn execute() -> Result<i32> {
     let aka_opts = AkaOpts::parse();
     let aka = AKA::new(aka_opts.eol, &aka_opts.config)?;
@@ -239,12 +247,12 @@ fn execute() -> Result<i32> {
 
                 if list_opts.patterns.is_empty() {
                     for alias in aliases {
-                        println!("{}: |\n  {}", alias.name, alias.value.replace("\n", "\n  "));
+                        print_alias(&alias);
                     }
                 } else {
                     for alias in aliases {
                         if list_opts.patterns.iter().any(|pattern| alias.name.starts_with(pattern)) {
-                            println!("{}: |\n  {}", alias.name, alias.value.replace("\n", "\n  "));
+                            print_alias(&alias);
                         }
                     }
                 }
