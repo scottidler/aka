@@ -1,8 +1,8 @@
-use std::process::Command;
-use std::fs::{File, write, read_to_string};
+use std::env;
+use std::fs::{read_to_string, write, File};
 use std::io::Write;
 use std::path::Path;
-use std::env;
+use std::process::Command;
 
 fn git_describe_value() -> String {
     // Get the output of `git describe` or the GIT_DESCRIBE environment variable
