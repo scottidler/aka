@@ -26,6 +26,7 @@ fn main() {
     let new_value = git_describe_value();
 
     if new_value != old_value {
+        println!("BUILD_RS: Version changed from '{}' to '{}'", old_value, new_value);
         write(&git_describe_path, &new_value).unwrap();
 
         let git_describe_rs = Path::new(&out_dir).join("git_describe.rs");
