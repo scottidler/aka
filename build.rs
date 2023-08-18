@@ -17,16 +17,16 @@ fn git_describe_value() -> String {
 
 fn main() {
     let out_dir = env::var("OUT_DIR").unwrap();
-    let git_describe = Path::new(&out_dir).join("GIT_DESCRIBE");
+    let git_describe_path = Path::new(&out_dir).join("GIT_DESCRIBE");
 
-    let old_value = read_to_string(&git_describe)
+    let old_value = read_to_string(&git_describe_path)
         .unwrap_or_default()
         .trim()
         .to_string();
     let new_value = git_describe_value();
 
     if new_value != old_value {
-        write(&git_describe, &new_value).unwrap();
+        write(&git_describe_path, &new_value).unwrap();
 
         let git_describe_rs = Path::new(&out_dir).join("git_describe.rs");
         let mut f = File::create(&git_describe_rs).unwrap();
@@ -34,4 +34,5 @@ fn main() {
     }
 
     println!("cargo:rerun-if-env-changed=GIT_DESCRIBE");
+    println!("cargo:rerun-if-changed={}", git_describe_path.display());
 }
