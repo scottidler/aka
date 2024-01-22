@@ -98,7 +98,6 @@ impl AKA {
         if alias.is_variadic() && !self.eol {
             false
         }
-        // check the position of the alias for non-global aliases (aka they will always be first)
         else if pos == 0 {
             true
         } else {
@@ -142,12 +141,9 @@ impl AKA {
 
         if self.eol && !args.is_empty() {
             if let Some(last_arg) = args.last() {
-                // sudoify the args by placing sudo at the beginning
                 if last_arg == "!" || last_arg.ends_with("!") {
                     args.pop();
                     sudo = true;
-
-                // replace the first arg with the next_arg after the !
                 } else if last_arg.starts_with("!") {
                     let next_arg = last_arg[1..].to_string();
                     args[0] = next_arg;
@@ -196,9 +192,8 @@ impl AKA {
         }
 
         if sudo {
-            // Wrap the first argument's binary name in `$(which arg)`
             args[0] = format!("$(which {})", args[0]);
-            args.insert(0, "sudo".to_string()); // Insert sudo at the beginning
+            args.insert(0, "sudo".to_string());
         }
 
         let result = if replaced || sudo {
@@ -226,7 +221,6 @@ fn execute() -> Result<i32> {
         match command {
             Command::Query(query_opts) => {
                 let result = aka.replace(&query_opts.cmdline)?;
-                // check for the existence of the AKA_LOG environment variable
                 if std::env::var("AKA_LOG").is_ok() {
                     let mut file = OpenOptions::new()
                         .create(true)
