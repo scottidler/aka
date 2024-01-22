@@ -383,3 +383,171 @@ aliases:
         assert_eq!(expect, result);
     }
 }
+
+#[cfg(test)]
+mod replace_tests {
+    use super::*;
+    use eyre::Result;
+    //use std::collections::HashMap;
+
+    fn setup_aka(eol: bool, yaml: &str) -> Result<AKA> {
+        let spec: Spec = serde_yaml::from_str(yaml)?;
+        let mut aka = AKA::new(eol, &None)?;
+        aka.spec = spec;
+        Ok(aka)
+    }
+
+    #[test]
+    fn test_simple_substitution() -> Result<()> {
+        let yaml = r#"
+        defaults:
+            version: 1
+        aliases:
+            cat: "bat -p"
+        "#;
+        let aka = setup_aka(false, yaml)?;
+        let result = aka.replace("cat file.txt")?;
+        let expect = "bat -p file.txt ";
+        assert_eq!(expect, result);
+        Ok(())
+    }
+
+    #[test]
+    fn test_multiple_substitutions() -> Result<()> {
+        let yaml = r#"
+        defaults:
+            version: 1
+        aliases:
+            cat: "bat -p"
+            '|c':
+                value: '| xclip -sel clip'
+                global: true
+        "#;
+        let aka = setup_aka(false, yaml)?;
+        let result = aka.replace("cat file.txt |c && echo test")?;
+        let expect = "bat -p file.txt | xclip -sel clip && echo test "; // Corrected expectation
+        assert_eq!(expect, result);
+        Ok(())
+    }
+
+    #[test]
+    fn test_exclamation_mark_handling() -> Result<()> {
+        let yaml = r#"
+        defaults:
+            version: 1
+        aliases:
+            vim: "nvim"
+        "#;
+        let aka = setup_aka(true, yaml)?;
+        let result = aka.replace("vim file.txt !")?;
+        let expect = "sudo $(which nvim) file.txt ";
+        assert_eq!(expect, result);
+        Ok(())
+    }
+
+    #[test]
+    fn test_quotes_handling() -> Result<()> {
+        let yaml = r#"
+        defaults:
+            version: 1
+        aliases:
+            grep: "rg"
+        "#;
+        let aka = setup_aka(false, yaml)?;
+        let result = aka.replace("grep \"pattern\" file.txt")?;
+        let expect = "rg \"pattern\" file.txt ";
+        assert_eq!(expect, result);
+        Ok(())
+    }
+
+    #[test]
+    fn test_sudo_handling() -> Result<()> {
+        let yaml = r#"
+        defaults:
+            version: 1
+        aliases:
+            vim: "nvim"
+        "#;
+        let aka = setup_aka(true, yaml)?;
+        let result = aka.replace("vim file.txt !")?;
+        let expect = "sudo $(which nvim) file.txt ";
+        assert_eq!(expect, result);
+        Ok(())
+    }
+
+    #[test]
+    fn test_variadic_alias_handling() -> Result<()> {
+        let yaml = r#"
+        defaults:
+            version: 1
+        aliases:
+            git: "git --verbose"
+        "#;
+        let aka = setup_aka(false, yaml)?;
+        let result = aka.replace("git commit")?;
+        let expect = "git --verbose commit ";
+        assert_eq!(expect, result);
+        Ok(())
+    }
+
+    #[test]
+    fn test_global_alias_handling() -> Result<()> {
+        let yaml = r#"
+        defaults:
+            version: 1
+        aliases:
+            ls: "exa"
+        "#;
+        let aka = setup_aka(false, yaml)?;
+        let result = aka.replace("ls -l")?;
+        let expect = "exa -l ";
+        assert_eq!(expect, result);
+        Ok(())
+    }
+
+    #[test]
+    fn test_special_characters_handling() -> Result<()> {
+        let yaml = r#"
+        defaults:
+            version: 1
+        aliases:
+            ls: "exa"
+        "#;
+        let aka = setup_aka(false, yaml)?;
+        let result = aka.replace("ls -l | grep pattern")?;
+        let expect = "exa -l | grep pattern ";
+        assert_eq!(expect, result);
+        Ok(())
+    }
+
+    #[test]
+    fn test_error_scenario() -> Result<()> {
+        let yaml = r#"
+        defaults:
+            version: 1
+        aliases:
+            cat: "bat -p"
+        "#;
+        let aka = setup_aka(false, yaml)?;
+        let cmdline = "undefined_alias file.txt";
+        let result = aka.replace(cmdline)?;
+        assert_eq!("", result); // Expecting an empty string for undefined alias
+        Ok(())
+    }
+
+    #[test]
+    fn test_no_substitution() -> Result<()> {
+        let yaml = r#"
+        defaults:
+            version: 1
+        aliases:
+            ls: "exa"
+        "#;
+        let aka = setup_aka(false, yaml)?;
+        let result = aka.replace("cat file.txt")?;
+        let expect = ""; // Adjusted expectation
+        assert_eq!(expect, result);
+        Ok(())
+    }
+}
+
