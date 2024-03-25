@@ -269,14 +269,15 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::HashMap;
     use eyre::{Error, Result};
     use pretty_assertions::assert_eq;
-    use std::collections::HashMap;
+    use tempfile::NamedTempFile;
 
     fn setup_aka(eol: bool, yaml: &str) -> Result<AKA> {
-        let spec: Spec = serde_yaml::from_str(yaml)?;
-        let mut aka = AKA::new(eol, &None)?;
-        aka.spec = spec;
+        let mut temp_file = NamedTempFile::new()?;
+        writeln!(temp_file, "{}", yaml)?;
+        let aka = AKA::new(eol, &Some(temp_file.path().to_path_buf()))?;
         Ok(aka)
     }
 
