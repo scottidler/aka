@@ -272,123 +272,6 @@ mod tests {
     use eyre::{Error, Result};
     use pretty_assertions::assert_eq;
     use std::collections::HashMap;
-    use tempfile::NamedTempFile;
-
-    #[test]
-    fn test_spec_deserialize_alias_map_success() -> Result<(), eyre::Error> {
-        let yaml = r#"
-defaults:
-  version: 1
-aliases:
-  alias1:
-    value: "echo Hello World"
-    space: true
-    global: false
-        "#;
-        let spec: Spec = serde_yaml::from_str(yaml)?;
-
-        assert_eq!(spec.defaults.version, 1);
-        assert_eq!(spec.aliases.len(), 1);
-        assert_eq!(spec.aliases.get("alias1").unwrap().value, "echo Hello World");
-
-        Ok(())
-    }
-
-    #[test]
-    fn test_loader_load_success() -> Result<(), Error> {
-        let mut file = NamedTempFile::new()?;
-        let content = r#"
-defaults:
-  version: 1
-aliases:
-  alias1:
-    value: "echo Hello World"
-    space: true
-    global: false
-"#;
-        file.write_all(content.as_bytes())?;
-
-        let loader = Loader::new();
-        let spec = loader.load(&file.path().to_path_buf())?;
-
-        let expected_aliases = {
-            let mut map = HashMap::new();
-            map.insert(
-                "alias1".to_string(),
-                Alias {
-                    name: "alias1".to_string(),
-                    value: "echo Hello World".to_string(),
-                    space: true,
-                    global: false,
-                },
-            );
-            map
-        };
-
-        assert_eq!(spec.aliases, expected_aliases);
-        assert_eq!(spec.defaults.version, 1);
-
-        Ok(())
-    }
-
-    #[test]
-    fn test_no_exclamation_mark() {
-        let yaml = r#"
-        defaults:
-            version: 1
-        aliases:
-            cat: "bat -p"
-        "#;
-        let spec: Spec = serde_yaml::from_str(yaml).unwrap();
-        let mut aka = AKA::new(false, &None).unwrap();
-        aka.spec = spec;
-        let result = aka.replace("cat /some/file").unwrap();
-        let expect = "bat -p /some/file ";
-        println!("expect: {} result: '{}'", expect, result);
-        assert_eq!(expect, result);
-    }
-
-    #[test]
-    fn test_exclamation_mark_at_end() {
-        let yaml = r#"
-        defaults:
-            version: 1
-        aliases:
-            cat: "bat -p"
-        "#;
-        let spec: Spec = serde_yaml::from_str(yaml).unwrap();
-        let mut aka = AKA::new(true, &None).unwrap();
-        aka.spec = spec;
-        let result = aka.replace("vim /some/file !").unwrap();
-        let expect = "sudo $(which vim) /some/file ";
-        println!("expect: {} result: '{}'", expect, result);
-        assert_eq!(expect, result);
-    }
-
-    #[test]
-    fn test_exclamation_mark_with_alias() {
-        let yaml = r#"
-        defaults:
-            version: 1
-        aliases:
-            cat: "bat -p"
-        "#;
-        let spec: Spec = serde_yaml::from_str(yaml).unwrap();
-        let mut aka = AKA::new(false, &None).unwrap();
-        aka.spec = spec;
-        aka.eol = true;
-        let result = aka.replace("vim /some/file !cat").unwrap();
-        let expect = "bat -p /some/file ";
-        println!("expect: {} result: '{}'", expect, result);
-        assert_eq!(expect, result);
-    }
-}
-
-#[cfg(test)]
-mod replace_tests {
-    use super::*;
-    use eyre::Result;
-    //use std::collections::HashMap;
 
     fn setup_aka(eol: bool, yaml: &str) -> Result<AKA> {
         let spec: Spec = serde_yaml::from_str(yaml)?;
@@ -411,6 +294,107 @@ mod replace_tests {
         assert_eq!(expect, result);
         Ok(())
     }
+
+    #[test]
+    fn test_spec_deserialize_alias_map_success() -> Result<(), eyre::Error> {
+        let yaml = r#"
+    defaults:
+      version: 1
+    aliases:
+      alias1:
+        value: "echo Hello World"
+        space: true
+        global: false
+        "#;
+        let aka = setup_aka(false, yaml)?;
+        let spec = &aka.spec;
+
+        assert_eq!(spec.defaults.version, 1);
+        assert_eq!(spec.aliases.len(), 1);
+        assert_eq!(spec.aliases.get("alias1").unwrap().value, "echo Hello World");
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_loader_load_success() -> Result<(), Error> {
+        let yaml = r#"
+    defaults:
+      version: 1
+    aliases:
+      alias1:
+        value: "echo Hello World"
+        space: true
+        global: false
+    "#;
+        let aka = setup_aka(false, yaml)?;
+        let spec = &aka.spec;
+
+        let expected_aliases = {
+            let mut map = HashMap::new();
+            map.insert(
+                "alias1".to_string(),
+                Alias {
+                    name: "alias1".to_string(),
+                    value: "echo Hello World".to_string(),
+                    space: true,
+                    global: false,
+                },
+            );
+            map
+        };
+
+        assert_eq!(spec.aliases, expected_aliases);
+        assert_eq!(spec.defaults.version, 1);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_no_exclamation_mark() -> Result<()> {
+        let yaml = r#"
+        defaults:
+            version: 1
+        aliases:
+            cat: "bat -p"
+        "#;
+        let aka = setup_aka(false, yaml)?;
+        let result = aka.replace("cat /some/file")?;
+        let expect = "bat -p /some/file ";
+        assert_eq!(expect, result);
+        Ok(())
+    }
+
+    #[test]
+    fn test_exclamation_mark_at_end() -> Result<()> {
+        let yaml = r#"
+        defaults:
+            version: 1
+        aliases:
+            cat: "bat -p"
+        "#;
+        let aka = setup_aka(true, yaml)?;
+        let result = aka.replace("vim /some/file !")?;
+        let expect = "sudo $(which vim) /some/file ";
+        assert_eq!(expect, result);
+        Ok(())
+    }
+
+    #[test]
+    fn test_exclamation_mark_with_alias() -> Result<()> {
+        let yaml = r#"
+        defaults:
+            version: 1
+        aliases:
+            cat: "bat -p"
+        "#;
+        let aka = setup_aka(true, yaml)?;
+        let result = aka.replace("vim /some/file !cat")?;
+        let expect = "bat -p /some/file ";
+        assert_eq!(expect, result);
+        Ok(())
+    }
+
 
     #[test]
     fn test_multiple_substitutions() -> Result<()> {
