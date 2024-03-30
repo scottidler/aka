@@ -1,4 +1,3 @@
-# default.nix
 { lib, stdenv, fetchFromGitHub, rustPlatform, installShellFiles }:
 
 rustPlatform.buildRustPackage rec {
@@ -17,14 +16,14 @@ rustPlatform.buildRustPackage rec {
   nativeBuildInputs = [ installShellFiles ];
 
   postInstall = ''
-    mkdir -p $out/share/aka
-    cp $src/HOME/.expand-aka $out/share/aka/.expand-aka
+    install -D ./target/x86_64-unknown-linux-gnu/release/aka $out/bin/aka
+    install -D ${src}/HOME/.expand-aka $out/share/aka/.expand-aka
   '';
 
   meta = with lib; {
-    description = "A description of the aka program";
-    homepage = "https://github.com/your-github-username/aka";
+    description = "[a]lso [k]nown [a]s: an aliasing program";
+    homepage = "https://github.com/scottidler/aka";
     license = licenses.mit;
-    maintainers = with maintainers; [ your-maintainer-name ];
+    maintainers = with maintainers; [ lib.maintainers.scottidler ];
   };
 }
