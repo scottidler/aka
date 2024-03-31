@@ -50,7 +50,10 @@ jobs:
       - name: Build for ${{ matrix.target }}
         env:
           GIT_DESCRIBE: ${{ env.GIT_DESCRIBE }}
-        run: cargo build --release --target ${{ matrix.target }}
+        run: |
+          echo "GIT_DESCRIBE=$GIT_DESCRIBE"
+          cargo build --release --target ${{ matrix.target }}
+          target/release aka --version || true
 
       - name: Package binary
         run: |
