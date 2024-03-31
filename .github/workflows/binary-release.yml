@@ -22,15 +22,15 @@ jobs:
             target: x86_64-apple-darwin
             suffix: macos
     steps:
-      - name: Set GIT_DESCRIBE environment variable
-        run: |
-          GIT_DESCRIBE=$(git describe --tags --dirty --always)
-          echo "GIT_DESCRIBE=$GIT_DESCRIBE" >> $GITHUB_ENV
-
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
           fetch-tags: true
+
+      - name: Set GIT_DESCRIBE environment variable
+        run: |
+          GIT_DESCRIBE=$(git describe --tags --dirty --always)
+          echo "GIT_DESCRIBE=$GIT_DESCRIBE" >> $GITHUB_ENV
 
       - name: Cache cargo registry
         uses: actions/cache@v4
