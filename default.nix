@@ -1,12 +1,12 @@
 # default.nix
 
-{ stdenv, fetchurl, autoPatchelfHook, glibc, lib, ... }:
+{ stdenv, fetchurl, autoPatchelfHook, gcc, glibc, lib, libgcc, ... }:
 
 let
   version = "0.3.15";
   owner = "scottidler";
   repo = "aka";
-  suffix = "linux"; # Adjust based on the target OS, e.g., "macos" for macOS builds
+  suffix = "linux";
   tarball = fetchurl {
     url = "https://github.com/${owner}/${repo}/releases/download/v${version}/aka-v${version}-${suffix}.tar.gz";
     sha256 = "082wk31b2ybs63rxib7ym54jly4ywwiyiz7shnxda18hl0ijsrxd";
@@ -18,6 +18,7 @@ in stdenv.mkDerivation rec {
   src = tarball;
 
   nativeBuildInputs = [ autoPatchelfHook ];
+  buildInputs = [ gcc glibc libgcc ];
 
   dontBuild = true;
 
@@ -30,6 +31,12 @@ in stdenv.mkDerivation rec {
   installPhase = ''
     mv $out/bin/_aka $out/share/zsh/site-functions/
   '';
+
+  #postFixup = ''
+  #  echo "Manually patching RPATH for aka..."
+  #  patchelf --set-rpath "${lib.makeLibraryPath [ gcc glibc libgcc ]}" $out/bin/aka
+  #'';
+
 
   meta = with lib; {
     description = "Aka - a friendly command aliasing program with Zsh integration";
