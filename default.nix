@@ -33,11 +33,11 @@ in stdenv.mkDerivation rec {
   '';
 
   meta = with lib; {
-    description = "Aka - a friendly command aliasing program with Zsh integration";
+    description = "[a]lso [k]nown [a]s: an aliasing program";
     homepage = "https://github.com/${owner}/${repo}";
     license = licenses.mit;
     platforms = platforms.linux ++ platforms.darwin;
-    maintainers = with maintainers; [ maintainers.saidler ];
+    maintainers = with maintainers; [ maintainers.scottidler ];
   };
 }
 
