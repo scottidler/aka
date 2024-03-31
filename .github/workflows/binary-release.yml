@@ -48,22 +48,18 @@ jobs:
           rustup target add ${{ matrix.target }}
 
       - name: Build for ${{ matrix.target }}
-        env:
-          GIT_DESCRIBE: ${{ env.GIT_DESCRIBE }}
         run: |
-          echo "GIT_DESCRIBE=$GIT_DESCRIBE"
           cargo build --release --target ${{ matrix.target }}
-          target/${{ matrix.target }}/release/aka --version
-          target/${{ matrix.target }}/release/aka --help
 
-      - name: Package binary
+      - name: Package binary and script
         run: |
           mkdir -p artifacts/
+          cp aka.zsh artifacts/
           cp target/${{ matrix.target }}/release/aka artifacts/
 
       - name: Archive artifacts
         run: |
-          tar -czvf aka-${{ github.ref_name }}-${{ matrix.suffix }}.tar.gz -C artifacts aka
+          tar -czvf aka-${{ github.ref_name }}-${{ matrix.suffix }}.tar.gz -C artifacts aka.zsh aka
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
