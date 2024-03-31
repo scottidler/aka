@@ -1,29 +1,43 @@
-{ lib, stdenv, fetchFromGitHub, rustPlatform, installShellFiles }:
+# default.nix
 
-rustPlatform.buildRustPackage rec {
-  pname = "aka";
-  version = "0.3.6";
+{ stdenv, fetchurl, lib, ... }:
 
-  src = fetchFromGitHub {
-    owner = "scottidler";
-    repo = pname;
-    rev = "v${version}";
-    sha256 = "sha256-5m+boXqZZ6iYtvz9icsq0hMmTMXrvR2ThgqKckarRL4=";
+let
+  version = "0.3.15";
+  owner = "scottidler";
+  repo = "aka";
+  suffix = "linux"; # Adjust based on the target OS, e.g., "macos" for macOS builds
+
+  # URL and sha256 for the release tarball
+  tarball = fetchurl {
+    url = "https://github.com/${owner}/${repo}/releases/download/v${version}/aka-v${version}-${suffix}.tar.gz";
+    sha256 = "082wk31b2ybs63rxib7ym54jly4ywwiyiz7shnxda18hl0ijsrxd"; # Use `nix-prefetch-url` to obtain this
   };
 
-  cargoSha256 = "sha256-mc5FeU+OIqsOIyid2Y8QBpHVDvwXMU62j4Tj+QPLwiM=";
+in stdenv.mkDerivation rec {
+  pname = "aka";
+  inherit version;
 
-  nativeBuildInputs = [ installShellFiles ];
+  src = tarball;
 
-  postInstall = ''
-    install -D ./target/x86_64-unknown-linux-gnu/release/aka $out/bin/aka
-    install -D ${src}/HOME/.expand-aka $out/share/aka/.expand-aka
+  dontBuild = true;
+
+  unpackPhase = ''
+    mkdir -p $out/bin
+    mkdir -p $out/share/zsh/site-functions
+    tar -xzf $src -C $out/bin --strip-components=0
+  '';
+
+  installPhase = ''
+    mv $out/bin/_aka $out/share/zsh/site-functions/
   '';
 
   meta = with lib; {
-    description = "[a]lso [k]nown [a]s: an aliasing program";
-    homepage = "https://github.com/scottidler/aka";
+    description = "Aka - a friendly command aliasing program with Zsh integration";
+    homepage = "https://github.com/${owner}/${repo}";
     license = licenses.mit;
-    maintainers = with maintainers; [ lib.maintainers.scottidler ];
+    platforms = platforms.linux ++ platforms.darwin;
+    maintainers = with maintainers; [ maintainers.saidler ];
   };
 }
+
