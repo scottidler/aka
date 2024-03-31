@@ -54,12 +54,12 @@ jobs:
       - name: Package binary and script
         run: |
           mkdir -p artifacts/
-          cp aka.zsh artifacts/
+          cp _aka artifacts/
           cp target/${{ matrix.target }}/release/aka artifacts/
 
       - name: Archive artifacts
         run: |
-          tar -czvf aka-${{ github.ref_name }}-${{ matrix.suffix }}.tar.gz -C artifacts aka.zsh aka
+          tar -czvf aka-${{ github.ref_name }}-${{ matrix.suffix }}.tar.gz -C artifacts _aka aka
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
