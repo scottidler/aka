@@ -32,12 +32,6 @@ in stdenv.mkDerivation rec {
     mv $out/bin/_aka $out/share/zsh/site-functions/
   '';
 
-  #postFixup = ''
-  #  echo "Manually patching RPATH for aka..."
-  #  patchelf --set-rpath "${lib.makeLibraryPath [ gcc glibc libgcc ]}" $out/bin/aka
-  #'';
-
-
   meta = with lib; {
     description = "Aka - a friendly command aliasing program with Zsh integration";
     homepage = "https://github.com/${owner}/${repo}";
