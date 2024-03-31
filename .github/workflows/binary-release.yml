@@ -53,7 +53,8 @@ jobs:
         run: |
           echo "GIT_DESCRIBE=$GIT_DESCRIBE"
           cargo build --release --target ${{ matrix.target }}
-          target/release/aka --version || true
+          target/${{ matrix.target }}/release/aka --version
+          target/${{ matrix.target }}/release/aka --help
 
       - name: Package binary
         run: |
