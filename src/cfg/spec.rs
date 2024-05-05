@@ -83,19 +83,6 @@ where
         where
             M: MapAccess<'de>,
         {
-/*
-            let mut aliases = Aliases::new();
-            while let Some((name, AliasStringOrStruct(mut alias))) = map.next_entry::<String, AliasStringOrStruct>()? {
-                let names: Vec<&str> = name.split('|').collect();
-                for name in names {
-                    let name = name.to_string();
-                    alias.name = name.clone();
-                    aliases.insert(name.clone(), alias.clone());
-                }
-            }
-            Ok(aliases)
-*/
-
             let mut aliases = Aliases::new();
             while let Some((name, AliasStringOrStruct(mut alias))) = map.next_entry::<String, AliasStringOrStruct>()? {
                 let names = if name.starts_with('|') || name.ends_with('|') {
@@ -145,7 +132,7 @@ aliases:
         let yaml = r#"{}"#;
         let spec: Spec = serde_yaml::from_str(yaml)?;
 
-        assert_eq!(spec.defaults.version, 1); // default value
+        assert_eq!(spec.defaults.version, 1);
         assert_eq!(spec.aliases.len(), 0);
 
         Ok(())
