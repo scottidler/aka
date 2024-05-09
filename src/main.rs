@@ -8,6 +8,7 @@ use std::io::Write;
 use std::path::PathBuf;
 use std::process::exit;
 use log::{info, debug, warn, error};
+use shlex::split;
 
 pub mod cfg;
 use cfg::alias::Alias;
@@ -319,7 +320,9 @@ fn execute() -> Result<i32> {
     if let Some(command) = aka_opts.command {
         match command {
             Command::Query(query_opts) => {
-                let result = aka.replace(&query_opts.cmdline)?;
+                let args = split(&query_opts.cmdline).ok_or(eyre!("something"))?;
+                let result = aka.replace2(args)?;
+                let result = result.join(" ");
                 if std::env::var("AKA_LOG").is_ok() {
                     let mut file = OpenOptions::new()
                         .create(true)
@@ -708,7 +711,6 @@ mod tests2 {
         let aka = setup_aka2(false, yaml)?;
         let cmdline = vos!["cat", "/some/file"];
         let result = aka.replace2(cmdline)?;
-        let expect = vec!["bat".to_string(), "-p".to_string(), "/some/file".to_string()];
         let expect = vos!["bat", "-p", "/some/file", ""];
         assert_eq!(expect, result);
         Ok(())
@@ -758,7 +760,7 @@ mod tests2 {
             cat: "bat -p"
         "#;
         let aka = setup_aka2(false, yaml)?;
-        let cmdline = vec!["undefined_alias".to_string(), "file.txt".to_string()];
+        let cmdline = vos!["undefined_alias", "file.txt"];
         let result = aka.replace2(cmdline)?;
         let expect = Vec::<String>::new();
         assert_eq!(expect, result);
