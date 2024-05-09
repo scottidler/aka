@@ -164,6 +164,7 @@ impl FromStr for Alias {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use pretty_assertions::assert_eq;
 
     #[test]
     fn test_positionals() -> Result<()> {
@@ -288,6 +289,8 @@ mod tests {
 #[cfg(test)]
 mod tests2 {
     use super::*;
+    use pretty_assertions::assert_eq;
+    use crate::vos;
 
     #[test]
     fn test_positionals2() -> Result<()> {
@@ -413,6 +416,54 @@ mod tests2 {
         let (result, count) = alias.replace2(&mut remainders)?;
         assert_eq!(result, vec!["alias"]);
         assert_eq!(count, 0);
+        Ok(())
+    }
+
+    #[test]
+    fn test_single_simple_substitution() -> Result<()> {
+        let alias = Alias {
+            name: "printr".to_string(),
+            value: "print -r -- =$1".to_string(),
+            space: true,
+            global: false,
+        };
+
+        let cmdline = vos!["printr", "variable"];
+        let expected_result = vos!["print", "-r", "--", "=variable"];
+        let result = alias.replace2(&mut cmdline[1..].to_vec())?;
+        assert_eq!(result, (expected_result, 1));
+        Ok(())
+    }
+
+    #[test]
+    fn test_double_positional_substitution() -> Result<()> {
+        let alias = Alias {
+            name: "pp".to_string(),
+            value: "prepend $1 $2".to_string(),
+            space: true,
+            global: false,
+        };
+
+        let cmdline = vos!["pp", "text", "file.txt"];
+        let expected_result = vos!["prepend", "text", "file.txt"];
+        let result = alias.replace2(&mut cmdline[1..].to_vec())?;
+        assert_eq!(result, (expected_result, 2));
+        Ok(())
+    }
+
+    #[test]
+    fn test_repeated_positional_substitution() -> Result<()> {
+        let alias = Alias {
+            name: "sorted".to_string(),
+            value: "bat -p $1 | sort -u > $1.new; mv $1.new $1".to_string(),
+            space: true,
+            global: false,
+        };
+
+        let cmdline = vos!["sorted", "file.txt"];
+        let expected_result = vos!["bat", "-p", "file.txt", "|", "sort", "-u", ">", "file.txt.new;", "mv", "file.txt.new", "file.txt"];
+        let result = alias.replace2(&mut cmdline[1..].to_vec())?;
+        assert_eq!(result, (expected_result, 1));
         Ok(())
     }
 }
