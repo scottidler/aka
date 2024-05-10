@@ -251,39 +251,20 @@ impl AKA {
 
         while pos < cmdline.len() {
             let arg = &cmdline[pos].clone();
-            debug!("7 Processing arg - pos={}, arg={}", pos, arg);
-            debug!("8 spec.apliases={:?}", self.spec.aliases);
             let remainders = cmdline[pos + 1..].to_vec();
-            debug!("9 Remainders before split - remainders={:?}", remainders);
             let (values, count) = match self.spec.aliases.get(arg) {
                 Some(alias) if self.use_alias(alias, pos) => {
-                    space = alias.space;
-                    debug!("10 Checking alias applicability - Alias: {:?}, Position: {}, Applicable: {}", alias, pos, self.use_alias(alias, pos));
                     let (v, c) = alias.replace2(&mut remainders.clone())?;
-                    debug!("11 Alias applied - Alias: {}, Replaced Values: {:?}, Used Count: {}", alias.name, v, c);
                     if v != vec![alias.name.clone()] {
-                        debug!("11.1 replace=true");
                         replaced = true;
-                    } else {
-                        debug!("11.2 !replaced: v.len()={} v[0]={} alias.name={}", v.len(), v[0], alias.name);
                     }
                     (v, c)
                 },
-                Some(_) | None => {
-                    debug!("12 Alias not applied or not found for argument: {}", arg);
-                    (vec![arg.clone()], 0)
-                },
+                Some(_) | None => (vec![arg.clone()], 0),
             };
-            debug!("13 values={:?} count={}", values, count);
-            debug!("14 before truncate: cmdline={:?}", cmdline);
-            cmdline.truncate(pos);
-            pos += values.len() - 1;
-            debug!("15 before values extend: cmdline={:?}", cmdline);
-            cmdline.extend(values.clone());
-            debug!("16 before remainders extend: cmdline={:?}", cmdline);
-            cmdline.extend(remainders);
-            debug!("17 Cmdline after processing arg - Updated cmdline={:?}", cmdline);
-            pos += 1;
+
+            cmdline.splice(pos..pos + 1 + count, values.iter().cloned());
+            pos += values.len();
         }
         if sudo {
             let command = format!("$(which {})", cmdline.remove(0));

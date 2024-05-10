@@ -97,53 +97,37 @@ impl Alias {
     }
 
     pub fn replace2(&self, remainders: &mut Vec<String>) -> Result<(Vec<String>, usize)> {
-        debug!("Alias::replace2: remainders={:?}", remainders);
         let mut value: Vec<String> = split(&self.value).expect("Failed to split the alias value.");
         let mut count = 0;
-        debug!("value={:?}", value);
         let positionals = self.positionals()?;
-        debug!("positionals={:?}", positionals);
 
         if positionals.len() > 0 {
             if positionals.len() == remainders.len() {
-                debug!("Positionals and remainders are of equal length.");
-                for (index, positional) in positionals.iter().enumerate() {
-                    debug!("index={} positional={}", index, positional);
-                    let indices = value.iter().enumerate().filter_map(|(i, item)| {
-                        debug!("i={} item={}", i, item);
-                        if item == positional { Some(i) } else { None }
-                    }).collect::<Vec<usize>>();
-                    debug!("indices={:?}", indices);
-                    let item = remainders[index].clone();
-                    debug!("item={}", item);
-                    for i in indices {
-                        debug!("i={}", i);
-                        value[i] = item.clone();
-                        debug!("value={:?}", value);
+                value = value.into_iter().map(|part| {
+                    let mut modified_part = part.clone();
+                    for (positional, replacement) in positionals.iter().zip(remainders.iter()) {
+                        modified_part = modified_part.replace(positional, replacement);
                     }
-                }
+                    modified_part
+                }).collect();
                 count = positionals.len();
-                debug!("count={}", count);
-                debug!("remainders={:?} to be cleared", remainders);
                 remainders.clear();
-                debug!("Alias: (value={:?} count={}) to be returned", value, count);
             } else {
-                debug!("Mismatch in the number of positionals and remainders.");
                 value = vec![self.name.clone()];
-                debug!("Defaulting to alias name due to mismatch, value={:?}", value);
             }
         } else if self.is_variadic() {
-            debug!("is_variadic");
-            let index = value.iter().position(|r| r == "$@").unwrap();
-            debug!("index={}", index);
-            value.remove(index);
-            value.splice(index..index, remainders.iter().cloned());
-            debug!("after removing '$@' and splicing remainders={:?} into value={:?}", remainders, value);
-            count = remainders.len();
-            debug!("count={}", count);
-            remainders.clear();
-            debug!("(value={:?} count={}) to be returned", value, count);
+            let mut i = 0;
+            while i < value.len() {
+                if value[i] == "$@" {
+                    value.splice(i..i + 1, remainders.iter().cloned());
+                    count = remainders.len();
+                    remainders.clear();
+                    break;
+                }
+                i += 1;
+            }
         }
+        debug!("about return (value={:?}, count={}) remainders={:?}", value, count, remainders);
         Ok((value, count))
     }
 }
