@@ -1,3 +1,5 @@
+// src/main.rs
+
 #![cfg_attr(debug_assertions, allow(unused_imports, unused_variables, unused_mut, dead_code))]
 
 use clap::Parser;
@@ -112,31 +114,22 @@ impl AKA {
         }
     }
 
-    fn split_respecting_quotes(cmdline: &str) -> Vec<String> {
-        let mut args = Vec::new();
-        let mut start = 0;
-        let mut in_quotes = false;
-        let chars: Vec<char> = cmdline.chars().collect();
-        for index in 0..chars.len() {
-            if chars[index] == '"' {
-                in_quotes = !in_quotes;
-            } else if chars[index] == ' ' && !in_quotes {
-                if start != index {
-                    args.push(cmdline[start..index].to_string());
-                }
-                start = index + 1;
-            } else if chars[index] == '!' && !in_quotes && index == chars.len() - 1 {
-                if start != index {
-                    args.push(cmdline[start..index].to_string());
-                }
-                args.push(String::from("!"));
-                start = index + 1;
+    pub fn use_alias2(&self, alias: &Alias, cmdline: &Vec<String>, pos: usize) -> bool {
+        // Check if the command line starting at the current position begins with the alias value
+        debug!("cmdline={:?} alias.value={:?}", cmdline, alias.value);
+        if cmdline.len() >= pos + alias.value.len() &&
+           cmdline[pos..pos + alias.value.len()].starts_with(&alias.value) {
+            false  // If the beginning of the command line at pos matches the alias value, return false
+        } else {
+            // Apply the original logic
+            if alias.is_variadic() && !self.eol {
+                false
+            } else if pos == 0 {
+                true
+            } else {
+                alias.global
             }
         }
-        if start != chars.len() {
-            args.push(cmdline[start..].to_string());
-        }
-        args
     }
 
     pub fn replace2(&self, mut cmdline: Vec<String>) -> Result<Vec<String>> {
@@ -180,7 +173,7 @@ impl AKA {
             let arg = &cmdline[pos].clone();
             let remainders = cmdline[pos + 1..].to_vec();
             let (values, count) = match self.spec.aliases.get(arg) {
-                Some(alias) if self.use_alias(alias, pos) => {
+                Some(alias) if self.use_alias2(alias, &cmdline, pos) => {
                     let (v, c) = alias.replace2(&mut remainders.clone())?;
                     if v != vec![alias.name.clone()] {
                         replaced = true;
