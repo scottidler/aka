@@ -55,20 +55,25 @@ impl Alias {
         let mut value = self.value.clone();
         let mut count = 0;
         let positionals = self.positionals()?;
+        debug!("replace: remainders={:?} value={:?} positionals={:?}", remainders, value, positionals);
 
         if positionals.len() > 0 {
             if positionals.len() == remainders.len() {
                 value = value.into_iter().map(|part| {
+                    debug!("part={}", part);
                     let mut modified_part = part.clone();
                     for (positional, replacement) in positionals.iter().zip(remainders.iter()) {
                         modified_part = modified_part.replace(positional, replacement);
                     }
+                    debug!("modified_part={}", modified_part);
                     modified_part
                 }).collect();
                 count = positionals.len();
+                debug!("count={}", count);
                 remainders.clear();
             } else {
                 value = vec![self.name.clone()];
+                debug!("no positionals; return value={:?}", value);
             }
         } else if self.is_variadic() {
             let mut i = 0;
@@ -81,6 +86,7 @@ impl Alias {
                 }
                 i += 1;
             }
+            debug!("is_variadic: value={:?}", value);
         }
         debug!("about return (value={:?}, count={}) remainders={:?}", value, count, remainders);
         Ok((value, count))

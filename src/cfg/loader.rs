@@ -1,3 +1,5 @@
+// src/cfg/loader.rs
+
 use eyre::{Result, WrapErr, Error};
 use std::fs;
 use std::path::PathBuf;

@@ -118,20 +118,20 @@ impl AKA {
     }
 
     pub fn replace(&self, mut cmdline: Vec<String>) -> Result<Vec<String>> {
-        debug!("AKA::replace2: Start - cmdline={:?}", cmdline);
+        debug!("AKA::replace: cmdline={:?} eol={}", cmdline, self.eol);
         let mut pos: usize = 0;
         let mut space = true;
         let mut sudo = false;
         let mut replaced = false;
 
         if self.eol && !cmdline.is_empty() {
-            debug!("1 Handling EOL - Initial cmdline={:?}", cmdline);
+            debug!("1 EOL cmdline={:?}", cmdline);
             if let Some(last_arg) = cmdline.last().cloned() {
-                debug!("2 AKA: Handling EOL - Last Argument={}", last_arg);
+                debug!("2 last_arg={}", last_arg);
                 if last_arg == "!" || last_arg.ends_with("!") {
                     cmdline.pop();
                     sudo = true;
-                    debug!("3 AKA: Sudo Flag Set - cmdline after pop={:?}, sudo={}", cmdline, sudo);
+                    debug!("3 cmdline after pop={:?}, sudo={}", cmdline, sudo);
                 } else if last_arg.starts_with("!") {
                     let next_arg = last_arg[1..].to_string();
                     cmdline[0] = next_arg.clone();
@@ -155,13 +155,18 @@ impl AKA {
         }
 
         while pos < cmdline.len() {
+            debug!("pos={} < cmdline.len()={}", pos, cmdline.len());
             let arg = &cmdline[pos].clone();
+            debug!("arg={}", arg);
             let remainders = cmdline[pos + 1..].to_vec();
+            debug!("remainders={:?}", remainders);
             let (values, count) = match self.spec.aliases.get(arg) {
                 Some(alias) if self.use_alias(alias, &cmdline, pos) => {
+                    debug!("alias={:?}", alias);
                     space = alias.space;
                     let (v, c) = alias.replace(&mut remainders.clone())?;
                     if v != vec![alias.name.clone()] {
+                        debug!("replaced=true");
                         replaced = true;
                     }
                     (v, c)
@@ -170,6 +175,7 @@ impl AKA {
             };
 
             cmdline.splice(pos..pos + 1 + count, values.iter().cloned());
+            debug!("after splice cmdline={:?}", cmdline);
             pos += values.len();
         }
         if sudo {
@@ -404,6 +410,60 @@ mod tests {
         let cmdline = vos!["undefined_alias", "file.txt"];
         let result = aka.replace(cmdline)?;
         let expect = Vec::<String>::new();
+        assert_eq!(result, expect);
+        Ok(())
+    }
+
+    #[test]
+    fn test_no_space_appended_if_space_false() -> Result<()> {
+        let yaml = r#"
+            defaults:
+                version: 1
+            aliases:
+                ping10:
+                    value: "ping 10.10.10.10"
+                    space: false
+        "#;
+        let aka = setup_aka(false, yaml)?;
+        let cmdline = vos!["ping10"];
+        let result = aka.replace(cmdline)?;
+        let expect = vos!["ping", "10.10.10.10"];
+        assert_eq!(result, expect);
+        Ok(())
+    }
+
+    #[test]
+    fn test_global_true_handling() -> Result<()> {
+        let yaml = r#"
+            defaults:
+                version: 1
+            aliases:
+                ls:
+                    value: "exa -l"
+                    global: true
+        "#;
+        let aka = setup_aka(false, yaml)?;
+        let cmdline = vos!["some", "random", "ls"];
+        let result = aka.replace(cmdline)?;
+        let expect = vos!["some", "random", "exa", "-l", ""];
+        assert_eq!(result, expect);
+        Ok(())
+    }
+
+    #[test]
+    fn test_alias_with_quotation_mark() -> Result<()> {
+        let yaml = r#"
+            defaults:
+                version: 1
+            aliases:
+                gc:
+                    value: 'git commit -m"'
+                    space: false
+        "#;
+        let aka = setup_aka(false, yaml)?;
+        let cmdline = vos!["gc"];
+        let result = aka.replace(cmdline)?;
+        let expect = vos!["git", "commit", "-m\""];
         assert_eq!(result, expect);
         Ok(())
     }
