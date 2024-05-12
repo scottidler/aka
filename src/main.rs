@@ -1,7 +1,5 @@
 // src/main.rs
 
-#![cfg_attr(debug_assertions, allow(unused_imports, unused_variables, unused_mut, dead_code))]
-
 use clap::Parser;
 use eyre::{eyre, Result};
 use shellexpand::tilde;
@@ -9,7 +7,7 @@ use std::fs::OpenOptions;
 use std::io::Write;
 use std::path::PathBuf;
 use std::process::exit;
-use log::{info, debug, warn, error};
+use log::{info, debug};
 use shlex::split;
 
 pub mod cfg;
@@ -103,25 +101,12 @@ impl AKA {
         Ok(Self { eol, spec })
     }
 
-    pub fn use_alias(&self, alias: &Alias, pos: usize) -> bool {
-        if alias.is_variadic() && !self.eol {
-            false
-        }
-        else if pos == 0 {
-            true
-        } else {
-            alias.global
-        }
-    }
-
     pub fn use_alias2(&self, alias: &Alias, cmdline: &Vec<String>, pos: usize) -> bool {
-        // Check if the command line starting at the current position begins with the alias value
         debug!("cmdline={:?} alias.value={:?}", cmdline, alias.value);
         if cmdline.len() >= pos + alias.value.len() &&
            cmdline[pos..pos + alias.value.len()].starts_with(&alias.value) {
-            false  // If the beginning of the command line at pos matches the alias value, return false
+            false
         } else {
-            // Apply the original logic
             if alias.is_variadic() && !self.eol {
                 false
             } else if pos == 0 {
@@ -174,6 +159,7 @@ impl AKA {
             let remainders = cmdline[pos + 1..].to_vec();
             let (values, count) = match self.spec.aliases.get(arg) {
                 Some(alias) if self.use_alias2(alias, &cmdline, pos) => {
+                    space = alias.space;
                     let (v, c) = alias.replace2(&mut remainders.clone())?;
                     if v != vec![alias.name.clone()] {
                         replaced = true;
@@ -271,12 +257,10 @@ fn main() {
 #[cfg(test)]
 mod tests2 {
     use super::*;
-    use std::collections::HashMap;
-    use eyre::{Result, WrapErr};
-    use pretty_assertions::assert_eq;
-    use tempfile::NamedTempFile;
+    use eyre::Result;
     use std::sync::Once;
     use log::LevelFilter;
+    use tempfile::NamedTempFile;
 
     static INIT: Once = Once::new();
     pub fn initialize_logging() {
@@ -294,159 +278,133 @@ mod tests2 {
     }
 
     #[test]
-    fn test_spec_deserialize_alias_map_success() -> Result<(), eyre::Error> {
+    fn test_spec_deserialize_alias_map_success() -> Result<()> {
         let yaml = r#"
-    defaults:
-      version: 1
-    aliases:
-      alias1:
-        value: "echo Hello World"
-        space: true
-        global: false
+            defaults:
+                version: 1
+            aliases:
+                alias1:
+                    value: echo Hello World
+                    space: true
+                    global: false
         "#;
-        let aka = setup_aka(false, yaml)?;
-        let spec = &aka.spec;
-
-        assert_eq!(spec.defaults.version, 1);
-        assert_eq!(spec.aliases.len(), 1);
-        assert_eq!(spec.aliases.get("alias1").unwrap().value, "echo Hello World");
-
+        let aka = setup_aka2(false, yaml)?;
+        assert_eq!(aka.spec.aliases.get("alias1").unwrap().value, vos!["echo", "Hello", "World"]);
         Ok(())
     }
 
     #[test]
-    fn test_loader_load_success() -> Result<(), Error> {
+    fn test_loader_load_success() -> Result<()> {
         let yaml = r#"
-    defaults:
-      version: 1
-    aliases:
-      alias1:
-        value: "echo Hello World"
-        space: true
-        global: false
-    "#;
-        let aka = setup_aka(false, yaml)?;
-        let spec = &aka.spec;
-
-        let expected_aliases = {
-            let mut map = HashMap::new();
-            map.insert(
-                "alias1".to_string(),
-                Alias {
-                    name: "alias1".to_string(),
-                    value: "echo Hello World".to_string(),
-                    space: true,
-                    global: false,
-                },
-            );
-            map
-        };
-
-        assert_eq!(spec.aliases, expected_aliases);
-        assert_eq!(spec.defaults.version, 1);
-
+            defaults:
+                version: 1
+            aliases:
+                alias1:
+                    value: echo Hello World
+                    space: true
+                    global: false
+        "#;
+        let aka = setup_aka2(false, yaml)?;
+        let alias = aka.spec.aliases.get("alias1").unwrap();
+        assert_eq!(alias.value, vos!["echo", "Hello", "World"]);
+        assert!(alias.space);
+        assert!(!alias.global);
         Ok(())
     }
 
     #[test]
     fn test_simple_substitution2() -> Result<()> {
-        initialize_logging();
         let yaml = r#"
-        defaults:
-            version: 1
-        aliases:
-            cat: "bat -p"
+            defaults:
+                version: 1
+            aliases:
+                cat: bat -p
         "#;
         let aka = setup_aka2(false, yaml)?;
         let cmdline = vos!["cat", "file.txt"];
         let result = aka.replace2(cmdline)?;
         let expect = vos!["bat", "-p", "file.txt", ""];
-        assert_eq!(expect, result);
+        assert_eq!(result, expect);
         Ok(())
     }
 
     #[test]
     fn test_exclamation_mark_handling2() -> Result<()> {
-        initialize_logging();
         let yaml = r#"
-        defaults:
-            version: 1
-        aliases:
-            vim: "nvim"
+            defaults:
+                version: 1
+            aliases:
+                vim: nvim
         "#;
         let aka = setup_aka2(true, yaml)?;
         let cmdline = vos!["vim", "file.txt", "!"];
         let result = aka.replace2(cmdline)?;
         let expect = vos!["sudo", "$(which nvim)", "file.txt", ""];
-        assert_eq!(expect, result);
+        assert_eq!(result, expect);
         Ok(())
     }
 
     #[test]
     fn test_no_exclamation_mark2() -> Result<()> {
-        initialize_logging();
         let yaml = r#"
-        defaults:
-            version: 1
-        aliases:
-            cat: "bat -p"
+            defaults:
+                version: 1
+            aliases:
+                cat: bat -p
         "#;
         let aka = setup_aka2(false, yaml)?;
         let cmdline = vos!["cat", "/some/file"];
         let result = aka.replace2(cmdline)?;
         let expect = vos!["bat", "-p", "/some/file", ""];
-        assert_eq!(expect, result);
+        assert_eq!(result, expect);
         Ok(())
     }
 
     #[test]
     fn test_variadic_alias_handling2() -> Result<()> {
-        initialize_logging();
         let yaml = r#"
-        defaults:
-            version: 1
-        aliases:
-            git: "git --verbose"
+            defaults:
+                version: 1
+            aliases:
+                git: git --verbose
         "#;
         let aka = setup_aka2(false, yaml)?;
         let cmdline = vos!["git", "commit"];
         let result = aka.replace2(cmdline)?;
         let expect = vos!["git", "--verbose", "commit", ""];
-        assert_eq!(expect, result);
+        assert_eq!(result, expect);
         Ok(())
     }
 
     #[test]
     fn test_global_alias_handling2() -> Result<()> {
-        initialize_logging();
         let yaml = r#"
-        defaults:
-            version: 1
-        aliases:
-            ls: "exa"
+            defaults:
+                version: 1
+            aliases:
+                ls: exa
         "#;
         let aka = setup_aka2(false, yaml)?;
         let cmdline = vos!["ls", "-l"];
         let result = aka.replace2(cmdline)?;
         let expect = vos!["exa", "-l", ""];
-        assert_eq!(expect, result);
+        assert_eq!(result, expect);
         Ok(())
     }
 
     #[test]
     fn test_error_scenario2() -> Result<()> {
-        initialize_logging();
         let yaml = r#"
-        defaults:
-            version: 1
-        aliases:
-            cat: "bat -p"
+            defaults:
+                version: 1
+            aliases:
+                cat: bat -p
         "#;
         let aka = setup_aka2(false, yaml)?;
         let cmdline = vos!["undefined_alias", "file.txt"];
         let result = aka.replace2(cmdline)?;
         let expect = Vec::<String>::new();
-        assert_eq!(expect, result);
+        assert_eq!(result, expect);
         Ok(())
     }
 }

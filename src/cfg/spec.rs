@@ -2,9 +2,8 @@
 
 use eyre::Result;
 use serde::{Deserialize, Deserializer};
-use serde::de::{self, MapAccess,Visitor, Error as SerdeError};
+use serde::de::{MapAccess,Visitor, Error as SerdeError};
 use std::collections::HashMap;
-use std::str::FromStr;
 use std::fmt;
 use shlex::split;
 
@@ -129,6 +128,7 @@ impl<'de> Deserialize<'de> for Alias {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::vos;
 
     #[test]
     fn test_deserialize_alias_map_success() -> Result<(), eyre::Error> {
@@ -142,10 +142,10 @@ aliases:
     global: false
         "#;
         let spec: Spec = serde_yaml::from_str(yaml)?;
-
+        let expect = vos!["echo", "Hello", "World"];
         assert_eq!(spec.defaults.version, 1);
         assert_eq!(spec.aliases.len(), 1);
-        assert_eq!(spec.aliases.get("alias1").unwrap().value, "echo Hello World");
+        assert_eq!(spec.aliases.get("alias1").unwrap().value, expect);
 
         Ok(())
     }
@@ -178,10 +178,10 @@ aliases:
   alias1: "echo Hello World"
         "#;
         let spec: Spec = serde_yaml::from_str(yaml)?;
-
+        let expect = vos!["echo", "Hello", "World"];
         assert_eq!(spec.defaults.version, 1);
         assert_eq!(spec.aliases.len(), 1);
-        assert_eq!(spec.aliases.get("alias1").unwrap().value, "echo Hello World");
+        assert_eq!(spec.aliases.get("alias1").unwrap().value, expect);
 
         Ok(())
     }

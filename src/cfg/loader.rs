@@ -40,12 +40,11 @@ mod tests {
     use std::path::PathBuf;
     use tempfile::NamedTempFile;
     use std::collections::HashMap;
-
+    use crate::vos;
     use crate::Alias;
 
     #[test]
     fn test_load_success() -> Result<(), Error> {
-        // Create a mock spec file.
         let mut file = NamedTempFile::new()?;
         let content = r#"
 defaults:
@@ -58,16 +57,14 @@ aliases:
 "#;
         file.write_all(content.as_bytes())?;
 
-        // Use the loader to load the file.
         let loader = Loader::new();
         let spec = loader.load(&file.path().to_path_buf())?;
 
-        // Assert the spec was loaded correctly.
         let expected_aliases = {
             let mut map = HashMap::new();
             map.insert("alias1".to_string(), Alias {
-                name: "alias1".to_string(),
-                value: "echo Hello World".to_string(),
+                name: String::new(), //this is because the name is determined by the key later
+                value: vos!["echo", "Hello", "World"],
                 space: true,
                 global: false,
             });
@@ -82,19 +79,16 @@ aliases:
 
     #[test]
     fn test_load_nonexistent_file() {
-        // Create a path to a file that doesn't exist.
         let path = PathBuf::from("/path/to/nonexistent/file");
 
         let loader = Loader::new();
         let result = loader.load(&path);
 
         assert!(result.is_err());
-        // You can be more specific about the error if you want.
     }
 
     #[test]
     fn test_load_invalid_content() -> Result<(), Error> {
-        // Create a mock spec file with invalid content.
         let mut file = NamedTempFile::new()?;
         writeln!(file, "This is not valid YAML content")?;
 
@@ -102,7 +96,6 @@ aliases:
         let result = loader.load(&file.path().to_path_buf());
 
         assert!(result.is_err());
-        // You can be more specific about the error if you want.
 
         Ok(())
     }
