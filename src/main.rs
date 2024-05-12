@@ -139,79 +139,6 @@ impl AKA {
         args
     }
 
-    pub fn replace(&self, cmdline: &str) -> Result<String> {
-        let mut pos: usize = 0;
-        let mut space = " ";
-        let mut replaced = false;
-        let mut sudo = false;
-        let mut args = Self::split_respecting_quotes(cmdline);
-
-        if self.eol && !args.is_empty() {
-            if let Some(last_arg) = args.last() {
-                if last_arg == "!" || last_arg.ends_with("!") {
-                    args.pop();
-                    sudo = true;
-                } else if last_arg.starts_with("!") {
-                    let next_arg = last_arg[1..].to_string();
-                    args[0] = next_arg;
-                    replaced = true;
-
-                    let mut i = 1;
-                    while i < args.len() {
-                        if args[i].starts_with("-") {
-                            args.remove(i);
-                        } else if args[i] == "|" || args[i] == ">" || args[i] == "<" {
-                            break;
-                        } else {
-                            i += 1;
-                        }
-                    }
-                    args.pop();
-                }
-            }
-        }
-
-        while pos < args.len() {
-            let arg = &args[pos];
-            let mut remainders: Vec<String> = args[pos + 1..].to_vec();
-            let (value, count) = match self.spec.aliases.get(arg) {
-                Some(alias) if self.use_alias(alias, pos) => {
-                    space = if alias.space { " " } else { "" };
-                    let (v, c) = alias.replace(&mut remainders)?;
-                    if v != alias.name {
-                        replaced = true;
-                    }
-                    (v, c)
-                }
-                Some(_) | None => (arg.clone(), 0),
-            };
-
-            let beg = pos + 1;
-            let end = beg + count;
-
-            if space.is_empty() {
-                args.drain(beg..end);
-            } else {
-                args.drain(beg..end);
-            }
-            args.splice(pos..=pos, Self::split_respecting_quotes(&value));
-            pos += 1;
-        }
-
-        if sudo {
-            args[0] = format!("$(which {})", args[0]);
-            args.insert(0, "sudo".to_string());
-        }
-
-        let result = if replaced || sudo {
-            format!("{}{}", args.join(" "), space)
-        } else {
-            String::new()
-        };
-
-        Ok(result)
-    }
-
     pub fn replace2(&self, mut cmdline: Vec<String>) -> Result<Vec<String>> {
         debug!("AKA::replace2: Start - cmdline={:?}", cmdline);
         let mut pos: usize = 0;
@@ -288,11 +215,8 @@ impl AKA {
 }
 
 fn print_alias(alias: &Alias) {
-    if alias.value.contains('\n') {
-        println!("{}: |\n  {}", alias.name, alias.value.replace("\n", "\n  "));
-    } else {
-        println!("{}: {}", alias.name, alias.value);
-    }
+    // FIXME: is most certainly not correct; but good enough for now
+    println!("{}: {:?}", alias.name, alias.value);
 }
 
 fn execute() -> Result<i32> {
@@ -352,33 +276,28 @@ fn main() {
 }
 
 #[cfg(test)]
-mod tests {
+mod tests2 {
     use super::*;
     use std::collections::HashMap;
-    use eyre::{Error, Result};
+    use eyre::{Result, WrapErr};
     use pretty_assertions::assert_eq;
     use tempfile::NamedTempFile;
+    use std::sync::Once;
+    use log::LevelFilter;
 
-    fn setup_aka(eol: bool, yaml: &str) -> Result<AKA> {
+    static INIT: Once = Once::new();
+    pub fn initialize_logging() {
+        INIT.call_once(|| {
+            let _ = env_logger::builder().is_test(true).filter_level(LevelFilter::Debug).try_init();
+        });
+    }
+
+    fn setup_aka2(eol: bool, yaml: &str) -> Result<AKA> {
+        initialize_logging();
         let mut temp_file = NamedTempFile::new()?;
         writeln!(temp_file, "{}", yaml)?;
         let aka = AKA::new(eol, &Some(temp_file.path().to_path_buf()))?;
         Ok(aka)
-    }
-
-    #[test]
-    fn test_simple_substitution() -> Result<()> {
-        let yaml = r#"
-        defaults:
-            version: 1
-        aliases:
-            cat: "bat -p"
-        "#;
-        let aka = setup_aka(false, yaml)?;
-        let result = aka.replace("cat file.txt")?;
-        let expect = "bat -p file.txt ";
-        assert_eq!(expect, result);
-        Ok(())
     }
 
     #[test]
@@ -434,216 +353,6 @@ mod tests {
         assert_eq!(spec.defaults.version, 1);
 
         Ok(())
-    }
-
-    #[test]
-    fn test_no_exclamation_mark() -> Result<()> {
-        let yaml = r#"
-        defaults:
-            version: 1
-        aliases:
-            cat: "bat -p"
-        "#;
-        let aka = setup_aka(false, yaml)?;
-        let result = aka.replace("cat /some/file")?;
-        let expect = "bat -p /some/file ";
-        assert_eq!(expect, result);
-        Ok(())
-    }
-
-    #[test]
-    fn test_exclamation_mark_at_end() -> Result<()> {
-        let yaml = r#"
-        defaults:
-            version: 1
-        aliases:
-            cat: "bat -p"
-        "#;
-        let aka = setup_aka(true, yaml)?;
-        let result = aka.replace("vim /some/file !")?;
-        let expect = "sudo $(which vim) /some/file ";
-        assert_eq!(expect, result);
-        Ok(())
-    }
-
-    #[test]
-    fn test_exclamation_mark_with_alias() -> Result<()> {
-        let yaml = r#"
-        defaults:
-            version: 1
-        aliases:
-            cat: "bat -p"
-        "#;
-        let aka = setup_aka(true, yaml)?;
-        let result = aka.replace("vim /some/file !cat")?;
-        let expect = "bat -p /some/file ";
-        assert_eq!(expect, result);
-        Ok(())
-    }
-
-
-    #[test]
-    fn test_multiple_substitutions() -> Result<()> {
-        let yaml = r#"
-        defaults:
-            version: 1
-        aliases:
-            cat: "bat -p"
-            '|c':
-                value: '| xclip -sel clip'
-                global: true
-        "#;
-        let aka = setup_aka(false, yaml)?;
-        let result = aka.replace("cat file.txt |c && echo test")?;
-        let expect = "bat -p file.txt | xclip -sel clip && echo test ";
-        assert_eq!(expect, result);
-        Ok(())
-    }
-
-    #[test]
-    fn test_exclamation_mark_handling() -> Result<()> {
-        let yaml = r#"
-        defaults:
-            version: 1
-        aliases:
-            vim: "nvim"
-        "#;
-        let aka = setup_aka(true, yaml)?;
-        let result = aka.replace("vim file.txt !")?;
-        let expect = "sudo $(which nvim) file.txt ";
-        assert_eq!(expect, result);
-        Ok(())
-    }
-
-    #[test]
-    fn test_quotes_handling() -> Result<()> {
-        let yaml = r#"
-        defaults:
-            version: 1
-        aliases:
-            grep: "rg"
-        "#;
-        let aka = setup_aka(false, yaml)?;
-        let result = aka.replace("grep \"pattern\" file.txt")?;
-        let expect = "rg \"pattern\" file.txt ";
-        assert_eq!(expect, result);
-        Ok(())
-    }
-
-    #[test]
-    fn test_sudo_handling() -> Result<()> {
-        let yaml = r#"
-        defaults:
-            version: 1
-        aliases:
-            vim: "nvim"
-        "#;
-        let aka = setup_aka(true, yaml)?;
-        let result = aka.replace("vim file.txt !")?;
-        let expect = "sudo $(which nvim) file.txt ";
-        assert_eq!(expect, result);
-        Ok(())
-    }
-
-    #[test]
-    fn test_variadic_alias_handling() -> Result<()> {
-        let yaml = r#"
-        defaults:
-            version: 1
-        aliases:
-            git: "git --verbose"
-        "#;
-        let aka = setup_aka(false, yaml)?;
-        let result = aka.replace("git commit")?;
-        let expect = "git --verbose commit ";
-        assert_eq!(expect, result);
-        Ok(())
-    }
-
-    #[test]
-    fn test_global_alias_handling() -> Result<()> {
-        let yaml = r#"
-        defaults:
-            version: 1
-        aliases:
-            ls: "exa"
-        "#;
-        let aka = setup_aka(false, yaml)?;
-        let result = aka.replace("ls -l")?;
-        let expect = "exa -l ";
-        assert_eq!(expect, result);
-        Ok(())
-    }
-
-    #[test]
-    fn test_special_characters_handling() -> Result<()> {
-        let yaml = r#"
-        defaults:
-            version: 1
-        aliases:
-            ls: "exa"
-        "#;
-        let aka = setup_aka(false, yaml)?;
-        let result = aka.replace("ls -l | grep pattern")?;
-        let expect = "exa -l | grep pattern ";
-        assert_eq!(expect, result);
-        Ok(())
-    }
-
-    #[test]
-    fn test_error_scenario() -> Result<()> {
-        let yaml = r#"
-        defaults:
-            version: 1
-        aliases:
-            cat: "bat -p"
-        "#;
-        let aka = setup_aka(false, yaml)?;
-        let cmdline = "undefined_alias file.txt";
-        let result = aka.replace(cmdline)?;
-        assert_eq!("", result);
-        Ok(())
-    }
-
-    #[test]
-    fn test_no_substitution() -> Result<()> {
-        let yaml = r#"
-        defaults:
-            version: 1
-        aliases:
-            ls: "exa"
-        "#;
-        let aka = setup_aka(false, yaml)?;
-        let result = aka.replace("cat file.txt")?;
-        let expect = "";
-        assert_eq!(expect, result);
-        Ok(())
-    }
-}
-
-#[cfg(test)]
-mod tests2 {
-    use super::*;
-    use std::collections::HashMap;
-    use eyre::{Result, WrapErr};
-    use pretty_assertions::assert_eq;
-    use tempfile::NamedTempFile;
-    use std::sync::Once;
-    use log::LevelFilter;
-
-    static INIT: Once = Once::new();
-    pub fn initialize_logging() {
-        INIT.call_once(|| {
-            let _ = env_logger::builder().is_test(true).filter_level(LevelFilter::Debug).try_init();
-        });
-    }
-
-    fn setup_aka2(eol: bool, yaml: &str) -> Result<AKA> {
-        initialize_logging();
-        let mut temp_file = NamedTempFile::new()?;
-        writeln!(temp_file, "{}", yaml)?;
-        let aka = AKA::new(eol, &Some(temp_file.path().to_path_buf()))?;
-        Ok(aka)
     }
 
     #[test]

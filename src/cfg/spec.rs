@@ -1,12 +1,16 @@
+// src/cfg/spec.rs
+
 use eyre::Result;
 use serde::{Deserialize, Deserializer};
-use serde::de::{self, MapAccess,Visitor};
+use serde::de::{self, MapAccess,Visitor, Error as SerdeError};
 use std::collections::HashMap;
 use std::str::FromStr;
 use std::fmt;
+use shlex::split;
 
 use super::alias::Alias;
 
+static FIELDS: &'static [&'static str] = &["value", "space", "global"];
 type Aliases = HashMap<String, Alias>;
 
 const fn default_version() -> i32 {
@@ -34,49 +38,18 @@ pub struct Spec {
     pub aliases: Aliases,
 }
 
+
 fn deserialize_alias_map<'de, D>(deserializer: D) -> Result<Aliases, D::Error>
 where
     D: Deserializer<'de>,
 {
     struct AliasMap;
 
-    struct AliasVisitor;
-    impl<'de> Visitor<'de> for AliasVisitor
-    {
-        type Value = Alias;
-
-        fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-            formatter.write_str("string or map")
-        }
-
-        fn visit_str<E>(self, string: &str) -> Result<Alias, E>
-        where
-            E: de::Error,
-        {
-            Alias::from_str(string).map_err(|_| E::custom("Unexpected Error"))
-        }
-
-        fn visit_map<M>(self, map: M) -> Result<Alias, M::Error>
-        where
-            M: MapAccess<'de>
-        {
-            Deserialize::deserialize(de::value::MapAccessDeserializer::new(map))
-        }
-    }
-
-    fn alias_string_or_struct<'de, D>(deserializer: D) -> Result<Alias, D::Error>
-        where D: Deserializer<'de> {
-        deserializer.deserialize_any(AliasVisitor)
-    }
-
-    #[derive(Debug, Deserialize)]
-    struct AliasStringOrStruct(#[serde(deserialize_with="alias_string_or_struct")] Alias);
-
     impl<'de> Visitor<'de> for AliasMap {
         type Value = Aliases;
 
         fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-            formatter.write_str("a map of name to Alias")
+            formatter.write_str("a map of names to aliases")
         }
 
         fn visit_map<M>(self, mut map: M) -> Result<Self::Value, M::Error>
@@ -84,23 +57,73 @@ where
             M: MapAccess<'de>,
         {
             let mut aliases = Aliases::new();
-            while let Some((name, AliasStringOrStruct(mut alias))) = map.next_entry::<String, AliasStringOrStruct>()? {
-                let names = if name.starts_with('|') || name.ends_with('|') {
-                    vec![&name[..]]
-                } else {
-                    name.split('|').collect::<Vec<&str>>()
-                };
-
-                for name in names {
-                    let name = name.to_string();
-                    alias.name = name.clone();
-                    aliases.insert(name.clone(), alias.clone());
-                }
+            while let Some((name, alias)) = map.next_entry::<String, Alias>()? {
+                aliases.insert(name.clone(), alias);
             }
             Ok(aliases)
         }
     }
+
     deserializer.deserialize_map(AliasMap)
+}
+
+impl<'de> Deserialize<'de> for Alias {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        struct AliasVisitor;
+
+        impl<'de> Visitor<'de> for AliasVisitor {
+            type Value = Alias;
+
+            fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+                formatter.write_str("a string or a map")
+            }
+
+            fn visit_str<E>(self, value: &str) -> Result<Self::Value, E>
+            where
+                E: SerdeError,
+            {
+                Ok(Alias {
+                    name: String::new(),
+                    value: split(value).unwrap_or_default(),
+                    space: true,
+                    global: false,
+                })
+            }
+
+            fn visit_map<M>(self, mut map: M) -> Result<Self::Value, M::Error>
+            where
+                M: MapAccess<'de>,
+            {
+                let mut value = None;
+                let mut space = true;
+                let mut global = false;
+
+                while let Some(key) = map.next_key::<String>()? {
+                    match key.as_str() {
+                        "value" => {
+                            let v: String = map.next_value()?;
+                            value = Some(split(&v).unwrap_or_default());
+                        },
+                        "space" => space = map.next_value()?,
+                        "global" => global = map.next_value()?,
+                        _ => return Err(M::Error::unknown_field(&key, FIELDS)),
+                    }
+                }
+
+                Ok(Alias {
+                    name: String::new(),
+                    value: value.ok_or_else(|| M::Error::missing_field("value"))?,
+                    space,
+                    global,
+                })
+            }
+        }
+
+        deserializer.deserialize_any(AliasVisitor)
+    }
 }
 
 #[cfg(test)]
