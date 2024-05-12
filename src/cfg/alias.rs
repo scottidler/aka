@@ -51,7 +51,7 @@ impl Alias {
         self.value.iter().any(|s| s.contains("$@"))
     }
 
-    pub fn replace2(&self, remainders: &mut Vec<String>) -> Result<(Vec<String>, usize)> {
+    pub fn replace(&self, remainders: &mut Vec<String>) -> Result<(Vec<String>, usize)> {
         let mut value = self.value.clone();
         let mut count = 0;
         let positionals = self.positionals()?;
@@ -88,13 +88,13 @@ impl Alias {
 }
 
 #[cfg(test)]
-mod tests2 {
+mod tests {
     use super::*;
     use pretty_assertions::assert_eq;
     use crate::vos;
 
     #[test]
-    fn test_positionals2() -> Result<()> {
+    fn test_positionals() -> Result<()> {
         let alias = Alias {
             name: "alias1".to_string(),
             value: vos!["echo", "$1", "$2"],

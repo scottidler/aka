@@ -101,7 +101,7 @@ impl AKA {
         Ok(Self { eol, spec })
     }
 
-    pub fn use_alias2(&self, alias: &Alias, cmdline: &Vec<String>, pos: usize) -> bool {
+    pub fn use_alias(&self, alias: &Alias, cmdline: &Vec<String>, pos: usize) -> bool {
         debug!("cmdline={:?} alias.value={:?}", cmdline, alias.value);
         if cmdline.len() >= pos + alias.value.len() &&
            cmdline[pos..pos + alias.value.len()].starts_with(&alias.value) {
@@ -117,7 +117,7 @@ impl AKA {
         }
     }
 
-    pub fn replace2(&self, mut cmdline: Vec<String>) -> Result<Vec<String>> {
+    pub fn replace(&self, mut cmdline: Vec<String>) -> Result<Vec<String>> {
         debug!("AKA::replace2: Start - cmdline={:?}", cmdline);
         let mut pos: usize = 0;
         let mut space = true;
@@ -158,9 +158,9 @@ impl AKA {
             let arg = &cmdline[pos].clone();
             let remainders = cmdline[pos + 1..].to_vec();
             let (values, count) = match self.spec.aliases.get(arg) {
-                Some(alias) if self.use_alias2(alias, &cmdline, pos) => {
+                Some(alias) if self.use_alias(alias, &cmdline, pos) => {
                     space = alias.space;
-                    let (v, c) = alias.replace2(&mut remainders.clone())?;
+                    let (v, c) = alias.replace(&mut remainders.clone())?;
                     if v != vec![alias.name.clone()] {
                         replaced = true;
                     }
@@ -205,7 +205,7 @@ fn execute() -> Result<i32> {
         match command {
             Command::Query(query_opts) => {
                 let args = split(&query_opts.cmdline).ok_or(eyre!("something"))?;
-                let result = aka.replace2(args)?;
+                let result = aka.replace(args)?;
                 let result = result.join(" ");
                 if std::env::var("AKA_LOG").is_ok() {
                     let mut file = OpenOptions::new()
@@ -255,7 +255,7 @@ fn main() {
 }
 
 #[cfg(test)]
-mod tests2 {
+mod tests {
     use super::*;
     use eyre::Result;
     use std::sync::Once;
@@ -269,7 +269,7 @@ mod tests2 {
         });
     }
 
-    fn setup_aka2(eol: bool, yaml: &str) -> Result<AKA> {
+    fn setup_aka(eol: bool, yaml: &str) -> Result<AKA> {
         initialize_logging();
         let mut temp_file = NamedTempFile::new()?;
         writeln!(temp_file, "{}", yaml)?;
@@ -288,7 +288,7 @@ mod tests2 {
                     space: true
                     global: false
         "#;
-        let aka = setup_aka2(false, yaml)?;
+        let aka = setup_aka(false, yaml)?;
         assert_eq!(aka.spec.aliases.get("alias1").unwrap().value, vos!["echo", "Hello", "World"]);
         Ok(())
     }
@@ -304,7 +304,7 @@ mod tests2 {
                     space: true
                     global: false
         "#;
-        let aka = setup_aka2(false, yaml)?;
+        let aka = setup_aka(false, yaml)?;
         let alias = aka.spec.aliases.get("alias1").unwrap();
         assert_eq!(alias.value, vos!["echo", "Hello", "World"]);
         assert!(alias.space);
@@ -313,96 +313,96 @@ mod tests2 {
     }
 
     #[test]
-    fn test_simple_substitution2() -> Result<()> {
+    fn test_simple_substitution() -> Result<()> {
         let yaml = r#"
             defaults:
                 version: 1
             aliases:
                 cat: bat -p
         "#;
-        let aka = setup_aka2(false, yaml)?;
+        let aka = setup_aka(false, yaml)?;
         let cmdline = vos!["cat", "file.txt"];
-        let result = aka.replace2(cmdline)?;
+        let result = aka.replace(cmdline)?;
         let expect = vos!["bat", "-p", "file.txt", ""];
         assert_eq!(result, expect);
         Ok(())
     }
 
     #[test]
-    fn test_exclamation_mark_handling2() -> Result<()> {
+    fn test_exclamation_mark_handling() -> Result<()> {
         let yaml = r#"
             defaults:
                 version: 1
             aliases:
                 vim: nvim
         "#;
-        let aka = setup_aka2(true, yaml)?;
+        let aka = setup_aka(true, yaml)?;
         let cmdline = vos!["vim", "file.txt", "!"];
-        let result = aka.replace2(cmdline)?;
+        let result = aka.replace(cmdline)?;
         let expect = vos!["sudo", "$(which nvim)", "file.txt", ""];
         assert_eq!(result, expect);
         Ok(())
     }
 
     #[test]
-    fn test_no_exclamation_mark2() -> Result<()> {
+    fn test_no_exclamation_mark() -> Result<()> {
         let yaml = r#"
             defaults:
                 version: 1
             aliases:
                 cat: bat -p
         "#;
-        let aka = setup_aka2(false, yaml)?;
+        let aka = setup_aka(false, yaml)?;
         let cmdline = vos!["cat", "/some/file"];
-        let result = aka.replace2(cmdline)?;
+        let result = aka.replace(cmdline)?;
         let expect = vos!["bat", "-p", "/some/file", ""];
         assert_eq!(result, expect);
         Ok(())
     }
 
     #[test]
-    fn test_variadic_alias_handling2() -> Result<()> {
+    fn test_variadic_alias_handling() -> Result<()> {
         let yaml = r#"
             defaults:
                 version: 1
             aliases:
                 git: git --verbose
         "#;
-        let aka = setup_aka2(false, yaml)?;
+        let aka = setup_aka(false, yaml)?;
         let cmdline = vos!["git", "commit"];
-        let result = aka.replace2(cmdline)?;
+        let result = aka.replace(cmdline)?;
         let expect = vos!["git", "--verbose", "commit", ""];
         assert_eq!(result, expect);
         Ok(())
     }
 
     #[test]
-    fn test_global_alias_handling2() -> Result<()> {
+    fn test_global_alias_handling() -> Result<()> {
         let yaml = r#"
             defaults:
                 version: 1
             aliases:
                 ls: exa
         "#;
-        let aka = setup_aka2(false, yaml)?;
+        let aka = setup_aka(false, yaml)?;
         let cmdline = vos!["ls", "-l"];
-        let result = aka.replace2(cmdline)?;
+        let result = aka.replace(cmdline)?;
         let expect = vos!["exa", "-l", ""];
         assert_eq!(result, expect);
         Ok(())
     }
 
     #[test]
-    fn test_error_scenario2() -> Result<()> {
+    fn test_error_scenario() -> Result<()> {
         let yaml = r#"
             defaults:
                 version: 1
             aliases:
                 cat: bat -p
         "#;
-        let aka = setup_aka2(false, yaml)?;
+        let aka = setup_aka(false, yaml)?;
         let cmdline = vos!["undefined_alias", "file.txt"];
-        let result = aka.replace2(cmdline)?;
+        let result = aka.replace(cmdline)?;
         let expect = Vec::<String>::new();
         assert_eq!(result, expect);
         Ok(())
