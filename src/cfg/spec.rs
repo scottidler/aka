@@ -125,67 +125,6 @@ impl<'de> Deserialize<'de> for Alias {
     }
 }
 
-/*
-impl<'de> Deserialize<'de> for Alias {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        struct AliasVisitor;
-
-        impl<'de> Visitor<'de> for AliasVisitor {
-            type Value = Alias;
-
-            fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-                formatter.write_str("a string or a map")
-            }
-
-            fn visit_str<E>(self, value: &str) -> Result<Self::Value, E>
-            where
-                E: SerdeError,
-            {
-                Ok(Alias {
-                    name: String::new(),
-                    value: split(value).unwrap_or_default(),
-                    space: true,
-                    global: false,
-                })
-            }
-
-            fn visit_map<M>(self, mut map: M) -> Result<Self::Value, M::Error>
-            where
-                M: MapAccess<'de>,
-            {
-                let mut value = None;
-                let mut space = true;
-                let mut global = false;
-
-                while let Some(key) = map.next_key::<String>()? {
-                    match key.as_str() {
-                        "value" => {
-                            let v: String = map.next_value()?;
-                            value = Some(split(&v).unwrap_or_default());
-                        },
-                        "space" => space = map.next_value()?,
-                        "global" => global = map.next_value()?,
-                        _ => return Err(M::Error::unknown_field(&key, FIELDS)),
-                    }
-                }
-
-                Ok(Alias {
-                    name: String::new(),
-                    value: value.ok_or_else(|| M::Error::missing_field("value"))?,
-                    space,
-                    global,
-                })
-            }
-        }
-
-        deserializer.deserialize_any(AliasVisitor)
-    }
-}
-*/
-
 #[cfg(test)]
 mod tests {
     use super::*;
