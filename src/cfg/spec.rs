@@ -56,7 +56,8 @@ where
             M: MapAccess<'de>,
         {
             let mut aliases = Aliases::new();
-            while let Some((name, alias)) = map.next_entry::<String, Alias>()? {
+            while let Some((name, mut alias)) = map.next_entry::<String, Alias>()? {
+            alias.name = name.clone();
                 aliases.insert(name.clone(), alias);
             }
             Ok(aliases)
@@ -104,7 +105,7 @@ impl<'de> Deserialize<'de> for Alias {
                     match key.as_str() {
                         "value" => {
                             let v: String = map.next_value()?;
-                            value = Some(split(&v).unwrap_or_default());
+                            value = Some(split(&v).unwrap_or_else(|| v.split_whitespace().map(String::from).collect()));
                         },
                         "space" => space = map.next_value()?,
                         "global" => global = map.next_value()?,

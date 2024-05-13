@@ -195,7 +195,7 @@ impl AKA {
 
 fn print_alias(alias: &Alias) {
     // FIXME: is most certainly not correct; but good enough for now
-    println!("{}: {:?}", alias.name, alias.value);
+    println!("{}: {:?}", alias.name, alias.value.join(" "));
 }
 
 fn execute() -> Result<i32> {
@@ -405,6 +405,28 @@ mod tests {
         let result = aka.replace(cmdline)?;
         let expect = Vec::<String>::new();
         assert_eq!(result, expect);
+        Ok(())
+    }
+
+    #[test]
+    fn test_alias_with_unmatched_quote() -> Result<()> {
+        let yaml = r#"---
+            value: "git commit -m\""
+            space: false
+        "#;
+        let alias: Alias = serde_yaml::from_str(yaml)?;
+        assert_eq!(alias.value, vec!["git", "commit", "-m\""]);
+        Ok(())
+    }
+
+    #[test]
+    fn test_alias_without_quotes() -> Result<()> {
+        let yaml = r#"---
+            value: "git commit -a -m Fix the issue"
+            space: true
+        "#;
+        let alias: Alias = serde_yaml::from_str(yaml)?;
+        assert_eq!(alias.value, vec!["git", "commit", "-a", "-m", "Fix", "the", "issue"]);
         Ok(())
     }
 }
