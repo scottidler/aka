@@ -8,7 +8,6 @@ use std::io::Write;
 use std::path::PathBuf;
 use std::process::exit;
 use log::{info, debug};
-use shlex::split;
 
 pub mod cfg;
 use cfg::alias::Alias;
@@ -198,13 +197,40 @@ fn print_alias(alias: &Alias) {
     println!("{}: {:?}", alias.name, alias.value.join(" "));
 }
 
+fn split_respecting_quotes(cmdline: &str) -> Vec<String> {
+    let mut args = Vec::new();
+    let mut start = 0;
+    let mut in_quotes = false;
+    let chars: Vec<char> = cmdline.chars().collect();
+    for index in 0..chars.len() {
+        if chars[index] == '"' {
+            in_quotes = !in_quotes;
+        } else if chars[index] == ' ' && !in_quotes {
+            if start != index {
+                args.push(cmdline[start..index].to_string());
+            }
+            start = index + 1;
+        } else if chars[index] == '!' && !in_quotes && index == chars.len() - 1 {
+            if start != index {
+                args.push(cmdline[start..index].to_string());
+            }
+            args.push(String::from("!"));
+            start = index + 1;
+        }
+    }
+    if start != chars.len() {
+        args.push(cmdline[start..].to_string());
+    }
+    args
+}
+
 fn execute() -> Result<i32> {
     let aka_opts = AkaOpts::parse();
     let aka = AKA::new(aka_opts.eol, &aka_opts.config)?;
     if let Some(command) = aka_opts.command {
         match command {
             Command::Query(query_opts) => {
-                let args = split(&query_opts.cmdline).ok_or(eyre!("something"))?;
+                let args = split_respecting_quotes(&query_opts.cmdline);
                 let result = aka.replace(args)?;
                 let result = result.join(" ");
                 if std::env::var("AKA_LOG").is_ok() {
