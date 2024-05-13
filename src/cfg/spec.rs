@@ -56,7 +56,10 @@ where
         {
             let mut aliases = Aliases::new();
             while let Some((name, mut alias)) = map.next_entry::<String, Alias>()? {
-                if name.contains('|') {
+                if name.starts_with('|') || name.ends_with('|') {
+                    alias.name = name.clone();
+                    aliases.insert(name, alias);
+                } else {
                     let names = name.split('|').collect::<Vec<&str>>();
                     for name in names {
                         let name = name.trim().to_string();
@@ -64,9 +67,6 @@ where
                         alias_cloned.name = name.clone();
                         aliases.insert(name, alias_cloned);
                     }
-                } else {
-                    alias.name = name.clone();
-                    aliases.insert(name, alias);
                 }
             }
             Ok(aliases)
