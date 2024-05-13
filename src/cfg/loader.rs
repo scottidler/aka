@@ -63,7 +63,7 @@ aliases:
         let expected_aliases = {
             let mut map = HashMap::new();
             map.insert("alias1".to_string(), Alias {
-                name: String::new(), //this is because the name is determined by the key later
+                name: "alias1".to_string(),
                 value: vos!["echo", "Hello", "World"],
                 space: true,
                 global: false,
