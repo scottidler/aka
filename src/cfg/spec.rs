@@ -37,7 +37,6 @@ pub struct Spec {
     pub aliases: Aliases,
 }
 
-
 fn deserialize_alias_map<'de, D>(deserializer: D) -> Result<Aliases, D::Error>
 where
     D: Deserializer<'de>,
@@ -57,8 +56,18 @@ where
         {
             let mut aliases = Aliases::new();
             while let Some((name, mut alias)) = map.next_entry::<String, Alias>()? {
-            alias.name = name.clone();
-                aliases.insert(name.clone(), alias);
+                if name.contains('|') {
+                    let names = name.split('|').collect::<Vec<&str>>();
+                    for name in names {
+                        let name = name.trim().to_string();
+                        let mut alias_cloned = alias.clone();
+                        alias_cloned.name = name.clone();
+                        aliases.insert(name, alias_cloned);
+                    }
+                } else {
+                    alias.name = name.clone();
+                    aliases.insert(name, alias);
+                }
             }
             Ok(aliases)
         }
