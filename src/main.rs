@@ -169,12 +169,18 @@ impl AKA {
             let mut remainders: Vec<String> = args[pos + 1..].to_vec();
             let (value, count) = match self.spec.aliases.get(arg) {
                 Some(alias) if self.use_alias(alias, pos) => {
-                    space = if alias.space { " " } else { "" };
-                    let (v, c) = alias.replace(&mut remainders)?;
-                    if v != alias.name {
-                        replaced = true;
+                    if (alias.global && cmdline.contains(&alias.value))
+                        || (!alias.global && pos == 0 && cmdline.starts_with(&alias.value))
+                    {
+                        (arg.clone(), 0)
+                    } else {
+                        space = if alias.space { " " } else { "" };
+                        let (v, c) = alias.replace(&mut remainders)?;
+                        if v != alias.name {
+                            replaced = true;
+                        }
+                        (v, c)
                     }
-                    (v, c)
                 }
                 Some(_) | None => (arg.clone(), 0),
             };
