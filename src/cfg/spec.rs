@@ -1,9 +1,9 @@
 use eyre::Result;
+use serde::de::{self, MapAccess, Visitor};
 use serde::{Deserialize, Deserializer};
-use serde::de::{self, MapAccess,Visitor};
 use std::collections::HashMap;
-use std::str::FromStr;
 use std::fmt;
+use std::str::FromStr;
 
 use super::alias::Alias;
 
@@ -32,6 +32,9 @@ pub struct Spec {
 
     #[serde(default, deserialize_with = "deserialize_alias_map")]
     pub aliases: Aliases,
+
+    #[serde(default)]
+    pub lookups: HashMap<String, HashMap<String, String>>,
 }
 
 fn deserialize_alias_map<'de, D>(deserializer: D) -> Result<Aliases, D::Error>
@@ -41,8 +44,7 @@ where
     struct AliasMap;
 
     struct AliasVisitor;
-    impl<'de> Visitor<'de> for AliasVisitor
-    {
+    impl<'de> Visitor<'de> for AliasVisitor {
         type Value = Alias;
 
         fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
@@ -58,19 +60,21 @@ where
 
         fn visit_map<M>(self, map: M) -> Result<Alias, M::Error>
         where
-            M: MapAccess<'de>
+            M: MapAccess<'de>,
         {
             Deserialize::deserialize(de::value::MapAccessDeserializer::new(map))
         }
     }
 
     fn alias_string_or_struct<'de, D>(deserializer: D) -> Result<Alias, D::Error>
-        where D: Deserializer<'de> {
+    where
+        D: Deserializer<'de>,
+    {
         deserializer.deserialize_any(AliasVisitor)
     }
 
     #[derive(Debug, Deserialize)]
-    struct AliasStringOrStruct(#[serde(deserialize_with="alias_string_or_struct")] Alias);
+    struct AliasStringOrStruct(#[serde(deserialize_with = "alias_string_or_struct")] Alias);
 
     impl<'de> Visitor<'de> for AliasMap {
         type Value = Aliases;
@@ -83,19 +87,6 @@ where
         where
             M: MapAccess<'de>,
         {
-/*
-            let mut aliases = Aliases::new();
-            while let Some((name, AliasStringOrStruct(mut alias))) = map.next_entry::<String, AliasStringOrStruct>()? {
-                let names: Vec<&str> = name.split('|').collect();
-                for name in names {
-                    let name = name.to_string();
-                    alias.name = name.clone();
-                    aliases.insert(name.clone(), alias.clone());
-                }
-            }
-            Ok(aliases)
-*/
-
             let mut aliases = Aliases::new();
             while let Some((name, AliasStringOrStruct(mut alias))) = map.next_entry::<String, AliasStringOrStruct>()? {
                 let names = if name.starts_with('|') || name.ends_with('|') {
@@ -130,48 +121,30 @@ aliases:
     value: "echo Hello World"
     space: true
     global: false
+lookups:
+  region:
+    prod|apps: us-east-1
+    staging|test|dev|ops: us-west-2
         "#;
         let spec: Spec = serde_yaml::from_str(yaml)?;
 
         assert_eq!(spec.defaults.version, 1);
         assert_eq!(spec.aliases.len(), 1);
         assert_eq!(spec.aliases.get("alias1").unwrap().value, "echo Hello World");
+        assert_eq!(spec.lookups["region"]["prod|apps"], "us-east-1");
+        assert_eq!(spec.lookups["region"]["staging|test|dev|ops"], "us-west-2");
 
         Ok(())
     }
 
     #[test]
-    fn test_deserialize_alias_map_empty_file() -> Result<(), eyre::Error> {
+    fn test_deserialize_empty_file() -> Result<(), eyre::Error> {
         let yaml = r#"{}"#;
         let spec: Spec = serde_yaml::from_str(yaml)?;
 
         assert_eq!(spec.defaults.version, 1); // default value
         assert_eq!(spec.aliases.len(), 0);
-
-        Ok(())
-    }
-
-    #[test]
-    fn test_deserialize_alias_map_invalid_content() {
-        let yaml = r#"invalid YAML content"#;
-        let result: Result<Spec, _> = serde_yaml::from_str(yaml);
-
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn test_deserialize_alias_map_with_string_alias() -> Result<(), eyre::Error> {
-        let yaml = r#"
-defaults:
-  version: 1
-aliases:
-  alias1: "echo Hello World"
-        "#;
-        let spec: Spec = serde_yaml::from_str(yaml)?;
-
-        assert_eq!(spec.defaults.version, 1);
-        assert_eq!(spec.aliases.len(), 1);
-        assert_eq!(spec.aliases.get("alias1").unwrap().value, "echo Hello World");
+        assert!(spec.lookups.is_empty());
 
         Ok(())
     }

@@ -1,4 +1,4 @@
-use eyre::{Result, WrapErr, Error};
+use eyre::{Error, Result, WrapErr};
 use std::fs;
 use std::path::PathBuf;
 
@@ -19,10 +19,8 @@ impl Loader {
     ///
     /// Will return `Err` if `filename` does not exist, or the user does not have permission to read it.
     pub fn load(&self, filename: &PathBuf) -> Result<Spec, Error> {
-        let content =
-            fs::read_to_string(filename).context(format!("Can't load filename={filename:?}"))?;
-        let spec: Spec =
-            serde_yaml::from_str(&content).context(format!("Can't load content={content:?}"))?;
+        let content = fs::read_to_string(filename).context(format!("Can't load filename={filename:?}"))?;
+        let spec: Spec = serde_yaml::from_str(&content).context(format!("Can't load content={content:?}"))?;
         Ok(spec)
     }
 }
@@ -36,10 +34,9 @@ impl Default for Loader {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::io::Write;
-    use std::path::PathBuf;
-    use tempfile::NamedTempFile;
     use std::collections::HashMap;
+    use std::io::Write;
+    use tempfile::NamedTempFile;
 
     use crate::Alias;
 
@@ -55,6 +52,10 @@ aliases:
     value: "echo Hello World"
     space: true
     global: false
+lookups:
+  region:
+    prod|apps: us-east-1
+    staging|test|dev|ops: us-west-2
 "#;
         file.write_all(content.as_bytes())?;
 
@@ -65,17 +66,21 @@ aliases:
         // Assert the spec was loaded correctly.
         let expected_aliases = {
             let mut map = HashMap::new();
-            map.insert("alias1".to_string(), Alias {
-                name: "alias1".to_string(),
-                value: "echo Hello World".to_string(),
-                space: true,
-                global: false,
-            });
+            map.insert(
+                "alias1".to_string(),
+                Alias {
+                    name: "alias1".to_string(),
+                    value: "echo Hello World".to_string(),
+                    space: true,
+                    global: false,
+                },
+            );
             map
         };
 
         assert_eq!(spec.aliases, expected_aliases);
         assert_eq!(spec.defaults.version, 1);
+        assert_eq!(spec.lookups["region"]["prod|apps"], "us-east-1");
 
         Ok(())
     }
@@ -89,7 +94,6 @@ aliases:
         let result = loader.load(&path);
 
         assert!(result.is_err());
-        // You can be more specific about the error if you want.
     }
 
     #[test]
@@ -102,7 +106,6 @@ aliases:
         let result = loader.load(&file.path().to_path_buf());
 
         assert!(result.is_err());
-        // You can be more specific about the error if you want.
 
         Ok(())
     }
