@@ -1,9 +1,9 @@
 use eyre::Result;
-use serde::Deserialize;
-use void::Void;
-use std::str::FromStr;
 use itertools::Itertools;
 use regex::Regex;
+use serde::Deserialize;
+use std::str::FromStr;
+use void::Void;
 
 const fn default_true() -> bool {
     true
@@ -35,7 +35,8 @@ impl Alias {
     /// Will return `Err` if there was a problem in processing the positional arguments.
     pub fn positionals(&self) -> Result<Vec<String>> {
         let re = Regex::new(r"(\$[1-9])")?;
-        let items = re.find_iter(&self.value)
+        let items = re
+            .find_iter(&self.value)
             .filter_map(|m| m.as_str().parse().ok())
             .unique()
             .sorted()
@@ -50,7 +51,8 @@ impl Alias {
     /// Will return `Err` if there was a problem in processing the keyword arguments.
     pub fn keywords(&self) -> Result<Vec<String>> {
         let re = Regex::new(r"(\$[A-z]+)")?;
-        let items = re.find_iter(&self.value)
+        let items = re
+            .find_iter(&self.value)
             .filter_map(|m| m.as_str().parse().ok())
             .unique()
             .sorted()
@@ -83,8 +85,7 @@ impl Alias {
             } else {
                 result = self.name.clone();
             }
-        }
-        else if self.is_variadic() {
+        } else if self.is_variadic() {
             result = result.replace("$@", &remainders.join(" "));
             count = remainders.len();
             remainders.drain(0..remainders.len());
@@ -156,22 +157,25 @@ mod tests {
             space: true,
             global: false,
         };
-    
+
         let mut remainders = vec!["Hello".to_string(), "World".to_string()];
         assert_eq!(alias.replace(&mut remainders)?, ("echo Hello World".to_string(), 2));
-        assert_eq!(remainders, Vec::<String>::new());  // Corrected this line
-    
+        assert_eq!(remainders, Vec::<String>::new()); // Corrected this line
+
         let alias_variadic = Alias {
             name: "alias5".to_string(),
             value: "echo $@".to_string(),
             space: true,
             global: false,
         };
-    
+
         let mut remainders_variadic = vec!["Hello".to_string(), "from".to_string(), "Rust".to_string()];
-        assert_eq!(alias_variadic.replace(&mut remainders_variadic)?, ("echo Hello from Rust".to_string(), 3));
-        assert_eq!(remainders_variadic, Vec::<String>::new());  // Corrected this line
-    
+        assert_eq!(
+            alias_variadic.replace(&mut remainders_variadic)?,
+            ("echo Hello from Rust".to_string(), 3)
+        );
+        assert_eq!(remainders_variadic, Vec::<String>::new()); // Corrected this line
+
         Ok(())
     }
 
@@ -185,7 +189,7 @@ mod tests {
         assert!(!alias.global);
         Ok(())
     }
-   
+
     #[test]
     fn test_no_arguments() -> Result<()> {
         let alias = Alias {
@@ -194,12 +198,12 @@ mod tests {
             space: true,
             global: false,
         };
-    
+
         assert_eq!(alias.positionals()?, Vec::<String>::new());
         assert_eq!(alias.keywords()?, Vec::<String>::new());
         Ok(())
     }
-   
+
     #[test]
     fn test_replace_no_positional_with_variadic() -> Result<()> {
         let alias = Alias {
@@ -208,13 +212,13 @@ mod tests {
             space: true,
             global: false,
         };
-    
+
         let mut remainders = vec!["Hello".to_string(), "World".to_string()];
         assert_eq!(alias.replace(&mut remainders)?, ("echo Hello World".to_string(), 2));
         assert_eq!(remainders, Vec::<String>::new());
         Ok(())
     }
-   
+
     #[test]
     fn test_replace_mismatch_remainders() -> Result<()> {
         let alias = Alias {
@@ -223,7 +227,7 @@ mod tests {
             space: true,
             global: false,
         };
-    
+
         let mut remainders = vec!["Hello".to_string(), "World".to_string()];
         assert_eq!(alias.replace(&mut remainders)?, ("alias".to_string(), 0)); // Alias name is returned when not enough arguments.
         Ok(())

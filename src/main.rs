@@ -1,6 +1,7 @@
 use clap::Parser;
 use eyre::{eyre, Result};
 use shellexpand::tilde;
+use std::collections::HashMap;
 use std::fs::OpenOptions;
 use std::io::Write;
 use std::path::PathBuf;
@@ -90,15 +91,27 @@ impl AKA {
             None => divine_config()?,
         };
         let loader = Loader::new();
-        let spec = loader.load(&config)?;
+        let mut spec = loader.load(&config)?;
+
+        // Expand keys in lookups
+        for (_, map) in spec.lookups.iter_mut() {
+            let mut expanded = HashMap::new();
+            for (pattern, value) in map.iter() {
+                let keys: Vec<&str> = pattern.split('|').collect();
+                for key in keys {
+                    expanded.insert(key.to_string(), value.clone());
+                }
+            }
+            *map = expanded;
+        }
+
         Ok(Self { eol, spec })
     }
 
     pub fn use_alias(&self, alias: &Alias, pos: usize) -> bool {
         if alias.is_variadic() && !self.eol {
             false
-        }
-        else if pos == 0 {
+        } else if pos == 0 {
             true
         } else {
             alias.global
@@ -130,6 +143,10 @@ impl AKA {
             args.push(cmdline[start..].to_string());
         }
         args
+    }
+
+    fn perform_lookup(&self, key: &str, lookup: &str) -> Option<String> {
+        self.spec.lookups.get(lookup)?.get(key).cloned()
     }
 
     pub fn replace(&self, cmdline: &str) -> Result<String> {
@@ -165,14 +182,27 @@ impl AKA {
         }
 
         while pos < args.len() {
-            let arg = &args[pos];
+            let current_arg = args[pos].clone(); // Clone to avoid borrowing conflicts
+
+            // Perform lookup replacement logic
+            if current_arg.starts_with("lookup:") && current_arg.contains("[") && current_arg.ends_with("]") {
+                let parts: Vec<&str> = current_arg.splitn(2, '[').collect();
+                let lookup = parts[0].trim_start_matches("lookup:");
+                let key = parts[1].trim_end_matches("]");
+                if let Some(replacement) = self.perform_lookup(key, lookup) {
+                    args[pos] = replacement.clone(); // Replace in args
+                    replaced = true;
+                    continue; // Reevaluate the current position after replacement
+                }
+            }
+
             let mut remainders: Vec<String> = args[pos + 1..].to_vec();
-            let (value, count) = match self.spec.aliases.get(arg) {
+            let (value, count) = match self.spec.aliases.get(&current_arg) {
                 Some(alias) if self.use_alias(alias, pos) => {
                     if (alias.global && cmdline.contains(&alias.value))
                         || (!alias.global && pos == 0 && cmdline.starts_with(&alias.value))
                     {
-                        (arg.clone(), 0)
+                        (current_arg.clone(), 0)
                     } else {
                         space = if alias.space { " " } else { "" };
                         let (v, c) = alias.replace(&mut remainders)?;
@@ -182,7 +212,7 @@ impl AKA {
                         (v, c)
                     }
                 }
-                Some(_) | None => (arg.clone(), 0),
+                Some(_) | None => (current_arg.clone(), 0),
             };
 
             let beg = pos + 1;
@@ -275,9 +305,9 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::HashMap;
     use eyre::{Error, Result};
     use pretty_assertions::assert_eq;
+    use std::collections::HashMap;
     use tempfile::NamedTempFile;
 
     fn setup_aka(eol: bool, yaml: &str) -> Result<AKA> {
@@ -401,7 +431,6 @@ mod tests {
         assert_eq!(expect, result);
         Ok(())
     }
-
 
     #[test]
     fn test_multiple_substitutions() -> Result<()> {
@@ -541,4 +570,3 @@ mod tests {
         Ok(())
     }
 }
-
