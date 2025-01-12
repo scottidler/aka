@@ -1,6 +1,6 @@
 [package]
 name = "aka"
-version = "0.1.0"
+version = "0.3.18"
 authors = ["Scott A. Idler <scott.a.idler@gmail.com>"]
 edition = "2021"
 build = "build.rs"
