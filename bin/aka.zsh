@@ -1,8 +1,5 @@
 #!/bin/zsh
 
-# _aka completion script (kinda)
-# it's really more of an alias substitution script
-
 log() {
   if [[ -n $AKA_LOG ]]; then
     echo "$@" >> ~/aka.txt
