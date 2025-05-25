@@ -63,6 +63,9 @@ enum Command {
 
     #[clap(name = "query", about = "query for aka substitutions")]
     Query(QueryOpts),
+
+    #[clap(name = "__complete_aliases", hide = true)]
+    CompleteAliases,
 }
 
 #[derive(Parser)]
@@ -286,6 +289,13 @@ fn execute() -> Result<i32> {
                         }
                     }
                 }
+            }
+
+            Command::CompleteAliases => {
+                for name in aka.spec.aliases.keys() {
+                    println!("{name}");
+                }
+                return Ok(0);
             }
         }
     }
