@@ -1,0 +1,8 @@
+#compdef -command-
+
+_aka_commands() {
+  local -a aka_aliases
+  aka_aliases=(${(f)"$(aka __complete_aliases 2>/dev/null)"})
+  compadd -a aka_aliases
+  return $?
+}
