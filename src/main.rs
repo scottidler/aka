@@ -292,7 +292,13 @@ fn execute() -> Result<i32> {
             }
 
             Command::CompleteAliases => {
-                for name in aka.spec.aliases.keys() {
+                let mut keys: Vec<_> = aka.spec.aliases
+                    .keys()
+                    .filter(|name| name.len() > 1 && !name.starts_with('|'))
+                    .cloned()
+                    .collect();
+                keys.sort();
+                for name in keys {
                     println!("{name}");
                 }
                 return Ok(0);
