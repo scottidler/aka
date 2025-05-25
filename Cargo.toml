@@ -6,7 +6,7 @@ edition = "2021"
 build = "build.rs"
 
 [dependencies]
-clap = { version = "=4.5.26", features = ["derive"] }
+clap = { version = "=4.5.38", features = ["derive"] }
 serde = { version = "1.0", features = ["derive"] }
 void = "1.0.2"
 shellexpand = "3.1.1"
