@@ -6,14 +6,15 @@ edition = "2021"
 build = "build.rs"
 
 [dependencies]
-clap = { version = "=4.5.40", features = ["derive"] }
+clap = { version = "4.5", features = ["derive"] }
 serde = { version = "1.0", features = ["derive"] }
-void = "1.0.2"
-shellexpand = "3.1.1"
-itertools = "0.14.0"
 regex = "1.11.1"
 serde_yaml = "0.9"
 eyre = "0.6.12"
+log = "0.4"
+env_logger = "0.11"
+dirs = "5.0"
+colored = "2.0"
 
 [dev-dependencies]
 tempfile = "3.20.0"

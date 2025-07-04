@@ -1,9 +1,8 @@
 use clap::Parser;
 use eyre::{eyre, Result};
-use shellexpand::tilde;
+use log::{info, debug, error};
 use std::collections::HashMap;
 use std::fs::OpenOptions;
-use std::io::Write;
 use std::path::PathBuf;
 use std::process::exit;
 
@@ -12,20 +11,19 @@ use cfg::alias::Alias;
 use cfg::loader::Loader;
 use cfg::spec::Spec;
 
-const CONFIGS: &[&str] = &["./aka.yml", "~/.aka.yml", "~/.config/aka/aka.yml"];
+fn get_config_path() -> Result<PathBuf> {
+    let config_path = dirs::config_dir()
+        .ok_or_else(|| eyre!("Could not determine config directory"))?
+        .join("aka")
+        .join("aka.yml");
 
-fn divine_config() -> Result<PathBuf> {
-    let configs: Vec<PathBuf> = CONFIGS
-        .iter()
-        .map(tilde)
-        .map(|file| PathBuf::from(file.as_ref()))
-        .collect();
-    for config in configs {
-        if config.exists() {
-            return Ok(config);
-        }
+    if config_path.exists() {
+        Ok(config_path)
+    } else {
+        eprintln!("Error: Config file not found at {:?}", config_path);
+        eprintln!("Please create the config file first.");
+        Err(eyre!("Config file {:?} not found", config_path))
     }
-    Err(eyre!("couldn't divine a config!"))
 }
 
 fn test_config(file: &PathBuf) -> Result<PathBuf> {
@@ -33,6 +31,27 @@ fn test_config(file: &PathBuf) -> Result<PathBuf> {
         return Ok(file.clone());
     }
     Err(eyre!("config {:?} not found!", file))
+}
+
+fn setup_logging() -> Result<()> {
+    let log_dir = dirs::data_local_dir()
+        .ok_or_else(|| eyre!("Could not determine local data directory"))?
+        .join("aka")
+        .join("logs");
+
+    std::fs::create_dir_all(&log_dir)?;
+    let log_file_path = log_dir.join("aka.log");
+
+    let log_file = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&log_file_path)?;
+
+    env_logger::Builder::from_env(env_logger::Env::default().filter_or("RUST_LOG", "info"))
+        .target(env_logger::Target::Pipe(Box::new(log_file)))
+        .init();
+
+    Ok(())
 }
 
 mod built_info {
@@ -44,7 +63,7 @@ mod built_info {
 #[command(version = built_info::GIT_DESCRIBE)]
 #[command(author = "Scott A. Idler <scott.a.idler@gmail.com>")]
 #[command(arg_required_else_help = true)]
-#[command(after_help = "set env var AKA_LOG to turn on logging to ~/aka.log")]
+#[command(after_help = "Logs are written to: ~/.local/share/aka/logs/aka.log")]
 struct AkaOpts {
     #[clap(short, long, help = "is entry an [e]nd [o]f [l]ine?")]
     eol: bool,
@@ -91,10 +110,12 @@ impl AKA {
     pub fn new(eol: bool, config: &Option<PathBuf>) -> Result<Self> {
         let config = match &config {
             Some(file) => test_config(file)?,
-            None => divine_config()?,
+            None => get_config_path()?,
         };
+        info!("Loading config from: {:?}", config);
         let loader = Loader::new();
         let mut spec = loader.load(&config)?;
+        debug!("Loaded spec with {} aliases", spec.aliases.len());
 
         // Expand keys in lookups
         for (_, map) in spec.lookups.iter_mut() {
@@ -153,6 +174,7 @@ impl AKA {
     }
 
     pub fn replace(&self, cmdline: &str) -> Result<String> {
+        debug!("Processing command line: {}", cmdline);
         let mut pos: usize = 0;
         let mut space = " ";
         let mut replaced = false;
@@ -241,6 +263,10 @@ impl AKA {
             String::new()
         };
 
+        if replaced || sudo {
+            info!("Command line transformed: {} -> {}", cmdline, result.trim());
+        }
+
         Ok(result)
     }
 }
@@ -253,21 +279,12 @@ fn print_alias(alias: &Alias) {
     }
 }
 
-fn execute() -> Result<i32> {
-    let aka_opts = AkaOpts::parse();
+fn execute(aka_opts: &AkaOpts) -> Result<i32> {
     let aka = AKA::new(aka_opts.eol, &aka_opts.config)?;
-    if let Some(command) = aka_opts.command {
+    if let Some(ref command) = aka_opts.command {
         match command {
             Command::Query(query_opts) => {
                 let result = aka.replace(&query_opts.cmdline)?;
-                if std::env::var("AKA_LOG").is_ok() {
-                    let mut file = OpenOptions::new()
-                        .create(true)
-                        .write(true)
-                        .append(true)
-                        .open("/home/saidler/aka.log")?;
-                    writeln!(file, "'{}' -> '{}'", query_opts.cmdline, result)?;
-                }
                 println!("{result}");
             }
             Command::List(list_opts) => {
@@ -309,9 +326,19 @@ fn execute() -> Result<i32> {
 }
 
 fn main() {
-    exit(match execute() {
+    let opts = AkaOpts::parse();
+
+    if let Err(e) = setup_logging() {
+        eprintln!("Failed to setup logging: {}", e);
+        exit(1);
+    }
+
+    info!("Starting aka");
+
+    exit(match execute(&opts) {
         Ok(exitcode) => exitcode,
         Err(err) => {
+            error!("Error: {}", err);
             eprintln!("error: {err:?}");
             1
         }
@@ -324,6 +351,7 @@ mod tests {
     use eyre::{Error, Result};
     use pretty_assertions::assert_eq;
     use std::collections::HashMap;
+    use std::io::Write;
     use tempfile::NamedTempFile;
 
     fn setup_aka(eol: bool, yaml: &str) -> Result<AKA> {

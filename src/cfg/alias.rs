@@ -1,9 +1,7 @@
 use eyre::Result;
-use itertools::Itertools;
 use regex::Regex;
 use serde::Deserialize;
 use std::str::FromStr;
-use void::Void;
 
 const fn default_true() -> bool {
     true
@@ -35,12 +33,12 @@ impl Alias {
     /// Will return `Err` if there was a problem in processing the positional arguments.
     pub fn positionals(&self) -> Result<Vec<String>> {
         let re = Regex::new(r"(\$[1-9])")?;
-        let items = re
+        let mut items: Vec<String> = re
             .find_iter(&self.value)
             .filter_map(|m| m.as_str().parse().ok())
-            .unique()
-            .sorted()
             .collect();
+        items.sort();
+        items.dedup();
         Ok(items)
     }
 
@@ -51,12 +49,12 @@ impl Alias {
     /// Will return `Err` if there was a problem in processing the keyword arguments.
     pub fn keywords(&self) -> Result<Vec<String>> {
         let re = Regex::new(r"(\$[A-z]+)")?;
-        let items = re
+        let mut items: Vec<String> = re
             .find_iter(&self.value)
             .filter_map(|m| m.as_str().parse().ok())
-            .unique()
-            .sorted()
             .collect();
+        items.sort();
+        items.dedup();
         Ok(items)
     }
 
@@ -95,7 +93,7 @@ impl Alias {
 }
 
 impl FromStr for Alias {
-    type Err = Void;
+    type Err = std::convert::Infallible;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         Ok(Self {
