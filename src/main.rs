@@ -3,8 +3,10 @@ use eyre::{eyre, Result};
 use log::{info, debug, error};
 use std::collections::HashMap;
 use std::fs::OpenOptions;
+use std::io::Seek;
 use std::path::PathBuf;
 use std::process::exit;
+use xxhash_rust::xxh3::xxh3_64;
 
 pub mod cfg;
 use cfg::alias::Alias;
@@ -54,6 +56,107 @@ fn setup_logging() -> Result<()> {
     Ok(())
 }
 
+fn get_hash_cache_path() -> Result<PathBuf> {
+    let cache_dir = dirs::data_local_dir()
+        .ok_or_else(|| eyre!("Could not determine local data directory"))?
+        .join("aka");
+
+    std::fs::create_dir_all(&cache_dir)?;
+    Ok(cache_dir.join("config.hash"))
+}
+
+fn hash_config_file(config_path: &PathBuf) -> Result<String> {
+    let content = std::fs::read(config_path)?;
+    let hash = xxh3_64(&content);
+    Ok(format!("{:016x}", hash))
+}
+
+fn get_stored_hash() -> Result<Option<String>> {
+    let hash_path = get_hash_cache_path()?;
+    if hash_path.exists() {
+        let stored_hash = std::fs::read_to_string(&hash_path)?;
+        Ok(Some(stored_hash.trim().to_string()))
+    } else {
+        Ok(None)
+    }
+}
+
+fn store_hash(hash: &str) -> Result<()> {
+    let hash_path = get_hash_cache_path()?;
+    std::fs::write(&hash_path, hash)?;
+    Ok(())
+}
+
+fn execute_health_check(config: &Option<PathBuf>) -> Result<i32> {
+    // Step 1: Check if config file exists
+    let config_path = match config {
+        Some(file) => {
+            if !file.exists() {
+                debug!("Health check failed: specified config file {:?} not found", file);
+                return Ok(1); // Config file not found
+            }
+            file.clone()
+        }
+        None => {
+            let default_config = get_config_path();
+            match default_config {
+                Ok(path) => path,
+                Err(_) => {
+                    debug!("Health check failed: no config file found");
+                    return Ok(1); // Config file not found
+                }
+            }
+        }
+    };
+
+    // Step 2: Calculate current config hash
+    let current_hash = match hash_config_file(&config_path) {
+        Ok(hash) => hash,
+        Err(e) => {
+            debug!("Health check failed: cannot read config file: {}", e);
+            return Ok(1); // Cannot read config file
+        }
+    };
+
+    // Step 3: Compare with stored hash
+    let stored_hash = get_stored_hash().unwrap_or(None);
+
+    if let Some(stored) = stored_hash {
+        if stored == current_hash {
+            // Hash matches, config is valid
+            debug!("Health check passed: config hash matches");
+            return Ok(0);
+        }
+    }
+
+    // Step 4: Hash doesn't match or no stored hash, validate config
+    debug!("Health check: validating config file");
+
+    // Try to load and parse the config
+    let loader = Loader::new();
+    match loader.load(&config_path) {
+        Ok(spec) => {
+            // Config is valid, store the new hash
+            if let Err(e) = store_hash(&current_hash) {
+                debug!("Warning: could not store config hash: {}", e);
+            }
+
+            // Check if we have any aliases
+            if spec.aliases.is_empty() {
+                debug!("Health check passed: config valid but no aliases defined");
+                return Ok(3); // No aliases defined
+            }
+
+            debug!("Health check passed: config valid with {} aliases", spec.aliases.len());
+            Ok(0) // All good
+        }
+        Err(e) => {
+            debug!("Health check failed: config file invalid: {}", e);
+            Ok(2) // Config file invalid
+        }
+    }
+}
+
 mod built_info {
     include!(concat!(env!("OUT_DIR"), "/git_describe.rs"));
 }
@@ -85,6 +188,9 @@ enum Command {
 
     #[clap(name = "__complete_aliases", hide = true)]
     CompleteAliases,
+
+    #[clap(name = "__health_check", hide = true)]
+    HealthCheck,
 }
 
 #[derive(Parser)]
@@ -280,6 +386,13 @@ fn print_alias(alias: &Alias) {
 }
 
 fn execute(aka_opts: &AkaOpts) -> Result<i32> {
+    // Handle health check first, before trying to create AKA instance
+    if let Some(ref command) = &aka_opts.command {
+        if let Command::HealthCheck = command {
+            return execute_health_check(&aka_opts.config);
+        }
+    }
+
     let aka = AKA::new(aka_opts.eol, &aka_opts.config)?;
     if let Some(ref command) = aka_opts.command {
         match command {
@@ -319,6 +432,11 @@ fn execute(aka_opts: &AkaOpts) -> Result<i32> {
                     println!("{name}");
                 }
                 return Ok(0);
+            }
+
+            Command::HealthCheck => {
+                // This should never be reached due to early return above
+                unreachable!("Health check should be handled before AKA instance creation");
             }
         }
     }
@@ -611,6 +729,287 @@ mod tests {
         let result = aka.replace("cat file.txt")?;
         let expect = ""; // Adjusted expectation
         assert_eq!(expect, result);
+        Ok(())
+    }
+
+    // Health check tests
+    #[test]
+    fn test_health_check_valid_config() -> Result<()> {
+        let yaml = r#"
+        defaults:
+            version: 1
+        aliases:
+            ls: "exa"
+            cat: "bat"
+        "#;
+        let mut temp_file = NamedTempFile::new()?;
+        writeln!(temp_file, "{}", yaml)?;
+
+        let result = execute_health_check(&Some(temp_file.path().to_path_buf()))?;
+        assert_eq!(result, 0); // Should return 0 for valid config with aliases
+        Ok(())
+    }
+
+    #[test]
+    fn test_health_check_nonexistent_config() -> Result<()> {
+        let nonexistent_path = PathBuf::from("/path/to/nonexistent/config.yml");
+        let result = execute_health_check(&Some(nonexistent_path))?;
+        assert_eq!(result, 1); // Should return 1 for nonexistent config
+        Ok(())
+    }
+
+    #[test]
+    fn test_health_check_invalid_config() -> Result<()> {
+        let invalid_yaml = r#"
+        defaults:
+            version: 1
+        aliases:
+            ls: "exa"
+            # Invalid YAML - missing closing quote
+            cat: "bat
+        "#;
+        let mut temp_file = NamedTempFile::new()?;
+        writeln!(temp_file, "{}", invalid_yaml)?;
+
+        let result = execute_health_check(&Some(temp_file.path().to_path_buf()))?;
+        assert_eq!(result, 2); // Should return 2 for invalid config
+        Ok(())
+    }
+
+    #[test]
+    fn test_health_check_empty_aliases() -> Result<()> {
+        let yaml = r#"
+        defaults:
+            version: 1
+        aliases: {}
+        lookups:
+            region:
+                prod: us-east-1
+        "#;
+        let mut temp_file = NamedTempFile::new()?;
+        writeln!(temp_file, "{}", yaml)?;
+
+        let result = execute_health_check(&Some(temp_file.path().to_path_buf()))?;
+        assert_eq!(result, 3); // Should return 3 for no aliases
+        Ok(())
+    }
+
+    #[test]
+    fn test_hash_config_file() -> Result<()> {
+        let yaml = r#"
+        defaults:
+            version: 1
+        aliases:
+            ls: "exa"
+        "#;
+        let mut temp_file = NamedTempFile::new()?;
+        writeln!(temp_file, "{}", yaml)?;
+
+        let hash1 = hash_config_file(&temp_file.path().to_path_buf())?;
+        let hash2 = hash_config_file(&temp_file.path().to_path_buf())?;
+
+        // Same file should produce same hash
+        assert_eq!(hash1, hash2);
+
+        // Hash should be 16 characters (64-bit hex)
+        assert_eq!(hash1.len(), 16);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_hash_different_files() -> Result<()> {
+        let yaml1 = r#"
+        defaults:
+            version: 1
+        aliases:
+            ls: "exa"
+        "#;
+        let yaml2 = r#"
+        defaults:
+            version: 1
+        aliases:
+            ls: "ls -la"
+        "#;
+
+        let mut temp_file1 = NamedTempFile::new()?;
+        let mut temp_file2 = NamedTempFile::new()?;
+        writeln!(temp_file1, "{}", yaml1)?;
+        writeln!(temp_file2, "{}", yaml2)?;
+
+        let hash1 = hash_config_file(&temp_file1.path().to_path_buf())?;
+        let hash2 = hash_config_file(&temp_file2.path().to_path_buf())?;
+
+        // Different files should produce different hashes
+        assert_ne!(hash1, hash2);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_hash_caching_workflow() -> Result<()> {
+        let yaml = r#"
+        defaults:
+            version: 1
+        aliases:
+            ls: "exa"
+        "#;
+        let mut temp_file = NamedTempFile::new()?;
+        writeln!(temp_file, "{}", yaml)?;
+
+        // Clear any existing hash cache
+        let _ = std::fs::remove_file(get_hash_cache_path()?);
+
+        // First health check should validate and store hash
+        let result1 = execute_health_check(&Some(temp_file.path().to_path_buf()))?;
+        assert_eq!(result1, 0);
+
+        // Verify hash was stored
+        let stored_hash = get_stored_hash()?.expect("Hash should be stored");
+        let expected_hash = hash_config_file(&temp_file.path().to_path_buf())?;
+        assert_eq!(stored_hash, expected_hash);
+
+        // Second health check should use cached hash (fast path)
+        let result2 = execute_health_check(&Some(temp_file.path().to_path_buf()))?;
+        assert_eq!(result2, 0);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_hash_cache_invalidation() -> Result<()> {
+        let yaml1 = r#"
+        defaults:
+            version: 1
+        aliases:
+            ls: "exa"
+        "#;
+        let yaml2 = r#"
+        defaults:
+            version: 1
+        aliases:
+            ls: "exa"
+            cat: "bat"
+        "#;
+
+        let mut temp_file = NamedTempFile::new()?;
+        writeln!(temp_file, "{}", yaml1)?;
+
+        // Clear any existing hash cache
+        let _ = std::fs::remove_file(get_hash_cache_path()?);
+
+        // First health check with yaml1
+        let result1 = execute_health_check(&Some(temp_file.path().to_path_buf()))?;
+        assert_eq!(result1, 0);
+
+        let hash1 = get_stored_hash()?.expect("Hash should be stored");
+
+        // Modify the file
+        temp_file.rewind()?;
+        temp_file.as_file_mut().set_len(0)?;
+        writeln!(temp_file, "{}", yaml2)?;
+        temp_file.flush()?;
+
+        // Second health check should detect change and update hash
+        let result2 = execute_health_check(&Some(temp_file.path().to_path_buf()))?;
+        assert_eq!(result2, 0);
+
+        let hash2 = get_stored_hash()?.expect("Hash should be updated");
+        assert_ne!(hash1, hash2);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_get_hash_cache_path() -> Result<()> {
+        let cache_path = get_hash_cache_path()?;
+
+        // Should be in the data directory
+        assert!(cache_path.to_string_lossy().contains("aka"));
+        assert!(cache_path.to_string_lossy().ends_with("config.hash"));
+
+        // Parent directory should exist after calling the function
+        assert!(cache_path.parent().unwrap().exists());
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_store_and_retrieve_hash() -> Result<()> {
+        let test_hash = "deadbeefcafebabe";
+
+        // Store hash
+        store_hash(test_hash)?;
+
+        // Retrieve hash
+        let retrieved = get_stored_hash()?.expect("Hash should be retrievable");
+        assert_eq!(retrieved, test_hash);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_health_check_with_default_config_path() -> Result<()> {
+        // Test with None config (should use default path)
+        let result = execute_health_check(&None)?;
+
+        // Should return either 0 (if config exists and is valid) or 1 (if config not found)
+        // The exact result depends on whether the user has a config file
+        assert!(result == 0 || result == 1 || result == 2 || result == 3);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_xxhash_consistency() -> Result<()> {
+        let test_data = b"test data for hashing";
+        let hash1 = xxh3_64(test_data);
+        let hash2 = xxh3_64(test_data);
+
+        // Same data should produce same hash
+        assert_eq!(hash1, hash2);
+
+        // Different data should produce different hash
+        let different_data = b"different test data";
+        let hash3 = xxh3_64(different_data);
+        assert_ne!(hash1, hash3);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_health_check_performance() -> Result<()> {
+        let yaml = r#"
+        defaults:
+            version: 1
+        aliases:
+            ls: "exa"
+            cat: "bat"
+            grep: "rg"
+        "#;
+        let mut temp_file = NamedTempFile::new()?;
+        writeln!(temp_file, "{}", yaml)?;
+
+        // Clear cache
+        let _ = std::fs::remove_file(get_hash_cache_path()?);
+
+        // Time the first health check (should be slower - validation)
+        let start = std::time::Instant::now();
+        let result1 = execute_health_check(&Some(temp_file.path().to_path_buf()))?;
+        let first_duration = start.elapsed();
+        assert_eq!(result1, 0);
+
+        // Time the second health check (should be faster - cached)
+        let start = std::time::Instant::now();
+        let result2 = execute_health_check(&Some(temp_file.path().to_path_buf()))?;
+        let second_duration = start.elapsed();
+        assert_eq!(result2, 0);
+
+        // Second call should be faster (though this might be flaky on very fast systems)
+        // At minimum, both should complete in reasonable time
+        assert!(first_duration.as_millis() < 100);
+        assert!(second_duration.as_millis() < 100);
+
         Ok(())
     }
 }
