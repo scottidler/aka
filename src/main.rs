@@ -3,7 +3,6 @@ use eyre::{eyre, Result};
 use log::{info, debug, error};
 use std::collections::HashMap;
 use std::fs::OpenOptions;
-use std::io::Seek;
 use std::path::PathBuf;
 use std::process::exit;
 use xxhash_rust::xxh3::xxh3_64;
