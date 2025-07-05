@@ -3,6 +3,9 @@ use eyre::Result;
 use log::debug;
 use std::path::PathBuf;
 use std::process::exit;
+use std::os::unix::net::UnixStream;
+use std::io::{BufRead, BufReader, Write};
+use serde::{Deserialize, Serialize};
 
 // Import from the shared library
 use aka_lib::{
@@ -12,6 +15,54 @@ use aka_lib::{
 
 mod built_info {
     include!(concat!(env!("OUT_DIR"), "/git_describe.rs"));
+}
+
+// IPC Protocol Messages (shared with daemon)
+#[derive(Serialize, Deserialize, Debug)]
+#[serde(tag = "type")]
+enum DaemonRequest {
+    Query { cmdline: String },
+    List { global: bool, patterns: Vec<String> },
+    Health,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+#[serde(tag = "type")]
+enum DaemonResponse {
+    Success { data: String },
+    Error { message: String },
+    Health { status: String },
+}
+
+// Daemon client for sending requests
+struct DaemonClient;
+
+impl DaemonClient {
+    fn send_request(request: DaemonRequest) -> Result<DaemonResponse> {
+        let socket_path = determine_socket_path()?;
+        let mut stream = UnixStream::connect(&socket_path)
+            .map_err(|e| eyre::eyre!("Failed to connect to daemon: {}", e))?;
+
+        // Send request
+        let request_json = serde_json::to_string(&request)?;
+        writeln!(stream, "{}", request_json)?;
+
+        // Read response
+        let mut reader = BufReader::new(&stream);
+        let mut response_line = String::new();
+        reader.read_line(&mut response_line)?;
+
+        let response: DaemonResponse = serde_json::from_str(&response_line.trim())?;
+        Ok(response)
+    }
+
+    fn is_daemon_available() -> bool {
+        if let Ok(socket_path) = determine_socket_path() {
+            socket_path.exists() && Self::send_request(DaemonRequest::Health).is_ok()
+        } else {
+            false
+        }
+    }
 }
 
 fn get_after_help() -> &'static str {
@@ -588,16 +639,6 @@ fn handle_daemon_command(daemon_opts: &DaemonOpts) -> Result<()> {
 }
 
 fn handle_regular_command(opts: &AkaOpts) -> Result<i32> {
-    // Check if daemon is available (socket file exists)
-    let socket_path = determine_socket_path()?;
-    if socket_path.exists() {
-        debug!("Daemon detected at {:?}, would use fast path (fallback for now)", socket_path);
-        // Daemon is available - in real implementation, this would send requests to daemon
-        // For now, just fall back to existing implementation silently
-    } else {
-        debug!("No daemon detected, using direct implementation");
-    }
-
     // Handle health check first, before trying to create AKA instance
     if let Some(ref command) = &opts.command {
         if let Command::HealthCheck = command {
@@ -605,6 +646,76 @@ fn handle_regular_command(opts: &AkaOpts) -> Result<i32> {
         }
     }
 
+    // Check if daemon is available and try to use it
+    let use_daemon = DaemonClient::is_daemon_available();
+    if use_daemon {
+        debug!("Using daemon for fast processing");
+        return handle_command_via_daemon(opts);
+    } else {
+        debug!("No daemon available, using direct implementation");
+        return handle_command_direct(opts);
+    }
+}
+
+fn handle_command_via_daemon(opts: &AkaOpts) -> Result<i32> {
+    if let Some(ref command) = &opts.command {
+        match command {
+            Command::Query(query_opts) => {
+                let request = DaemonRequest::Query { cmdline: query_opts.cmdline.clone() };
+                match DaemonClient::send_request(request) {
+                    Ok(DaemonResponse::Success { data }) => {
+                        println!("{}", data);
+                        Ok(0)
+                    },
+                    Ok(DaemonResponse::Error { message }) => {
+                        eprintln!("Daemon error: {}", message);
+                        Ok(1)
+                    },
+                    Ok(_) => {
+                        eprintln!("Unexpected daemon response");
+                        Ok(1)
+                    },
+                    Err(e) => {
+                        debug!("Daemon request failed: {}, falling back to direct", e);
+                        handle_command_direct(opts)
+                    }
+                }
+            }
+            Command::List(list_opts) => {
+                let request = DaemonRequest::List { 
+                    global: list_opts.global, 
+                    patterns: list_opts.patterns.clone() 
+                };
+                match DaemonClient::send_request(request) {
+                    Ok(DaemonResponse::Success { data }) => {
+                        println!("{}", data);
+                        Ok(0)
+                    },
+                    Ok(DaemonResponse::Error { message }) => {
+                        eprintln!("Daemon error: {}", message);
+                        Ok(1)
+                    },
+                    Ok(_) => {
+                        eprintln!("Unexpected daemon response");
+                        Ok(1)
+                    },
+                    Err(e) => {
+                        debug!("Daemon request failed: {}, falling back to direct", e);
+                        handle_command_direct(opts)
+                    }
+                }
+            }
+            _ => {
+                // For other commands, fall back to direct implementation
+                handle_command_direct(opts)
+            }
+        }
+    } else {
+        Ok(0)
+    }
+}
+
+fn handle_command_direct(opts: &AkaOpts) -> Result<i32> {
     let aka = AKA::new(opts.eol, &opts.config)?;
     if let Some(ref command) = opts.command {
         match command {
