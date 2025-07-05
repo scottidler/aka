@@ -2,11 +2,12 @@ use clap::Parser;
 use std::path::PathBuf;
 use std::fs;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::io::{BufRead, BufReader, Write};
 use serde::{Deserialize, Serialize};
-use log::{info, error, debug};
+use log::{info, error, debug, warn};
+use notify::{Watcher, RecommendedWatcher, RecursiveMode, Event, EventKind};
 
 // Import from the shared library
 use aka_lib::{determine_socket_path, AKA, setup_logging, ProcessingMode};
@@ -28,6 +29,7 @@ enum Request {
     Query { cmdline: String },
     List { global: bool, patterns: Vec<String> },
     Health,
+    ReloadConfig,
     Shutdown,
 }
 
@@ -37,28 +39,148 @@ enum Response {
     Success { data: String },
     Error { message: String },
     Health { status: String },
+    ConfigReloaded { success: bool, aliases_count: usize, message: String },
 }
 
 struct DaemonServer {
-    aka: AKA,
+    aka: Arc<Mutex<AKA>>,
+    config_path: PathBuf,
+    config_hash: Arc<Mutex<String>>,
     shutdown: Arc<AtomicBool>,
+    _watcher: Option<RecommendedWatcher>,
 }
 
 impl DaemonServer {
     fn new(config: &Option<PathBuf>) -> Result<Self, Box<dyn std::error::Error>> {
         use std::time::Instant;
-
+        use aka_lib::get_config_path;
+        
         let start_daemon_init = Instant::now();
         debug!("🚀 Daemon initializing, loading config...");
-
+        
+        // Determine config path
+        let config_path = match config {
+            Some(path) => path.clone(),
+            None => get_config_path()?,
+        };
+        
         let aka = AKA::new(false, config)?;
+        let aka = Arc::new(Mutex::new(aka));
         let shutdown = Arc::new(AtomicBool::new(false));
-
+        
+        // Calculate initial config hash
+        let config_hash = {
+            use aka_lib::hash_config_file;
+            hash_config_file(&config_path).unwrap_or_else(|_| "0".to_string())
+        };
+        let config_hash = Arc::new(Mutex::new(config_hash));
+        
         let daemon_init_duration = start_daemon_init.elapsed();
         debug!("✅ Daemon initialization complete: {:.3}ms", daemon_init_duration.as_secs_f64() * 1000.0);
-        debug!("📦 Daemon has {} aliases cached in memory", aka.spec.aliases.len());
+        debug!("📦 Daemon has {} aliases cached in memory", aka.lock().unwrap().spec.aliases.len());
+        debug!("🔑 Config hash: {}", config_hash.lock().unwrap());
+        
+        let mut server = DaemonServer { 
+            aka, 
+            config_path,
+            config_hash,
+            shutdown,
+            _watcher: None,
+        };
+        
+        // Set up file watcher
+        server.setup_file_watcher()?;
+        
+        Ok(server)
+    }
 
-        Ok(DaemonServer { aka, shutdown })
+    fn setup_file_watcher(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+        let (tx, rx) = std::sync::mpsc::channel();
+        let mut watcher = RecommendedWatcher::new(move |res| {
+            let _ = tx.send(res);
+        }, notify::Config::default())?;
+        
+        // Watch the config file for changes
+        watcher.watch(&self.config_path, RecursiveMode::NonRecursive)?;
+        info!("👁️  Watching config file: {:?}", self.config_path);
+        
+        // Set up background thread to handle file change events
+        let aka_clone = Arc::clone(&self.aka);
+        let config_hash_clone = Arc::clone(&self.config_hash);
+        let config_path_clone = self.config_path.clone();
+        let shutdown_clone = Arc::clone(&self.shutdown);
+        
+        std::thread::spawn(move || {
+            for res in rx {
+                if shutdown_clone.load(Ordering::Relaxed) {
+                    break;
+                }
+                
+                match res {
+                    Ok(Event { kind: EventKind::Modify(_), .. }) => {
+                        info!("📁 Config file changed, reloading...");
+                        if let Err(e) = Self::reload_config_internal(&aka_clone, &config_hash_clone, &config_path_clone) {
+                            error!("❌ Failed to reload config: {}", e.to_string().lines().next().unwrap_or("Unknown error"));
+                        }
+                    },
+                    Ok(_) => {
+                        // Ignore other event types (create, delete, etc.)
+                    },
+                    Err(e) => {
+                        error!("❌ File watcher error: {}", e);
+                    }
+                }
+            }
+            debug!("🛑 File watcher thread shutting down");
+        });
+        
+        self._watcher = Some(watcher);
+        Ok(())
+    }
+
+    fn reload_config_internal(aka: &Arc<Mutex<AKA>>, config_hash: &Arc<Mutex<String>>, config_path: &PathBuf) -> Result<(), Box<dyn std::error::Error>> {
+        use std::time::Instant;
+        use aka_lib::hash_config_file;
+        
+        let start_reload = Instant::now();
+        debug!("🔄 Starting config reload from: {:?}", config_path);
+        
+        // Calculate new config hash before loading
+        let new_hash = hash_config_file(config_path)?;
+        
+        // Load new config
+        let new_aka = AKA::new(false, &Some(config_path.clone()))?;
+        let alias_count = new_aka.spec.aliases.len();
+        
+        // Update the shared AKA instance and hash
+        {
+            let mut aka_guard = aka.lock().unwrap();
+            *aka_guard = new_aka;
+        }
+        {
+            let mut hash_guard = config_hash.lock().unwrap();
+            *hash_guard = new_hash.clone();
+        }
+        
+        let reload_duration = start_reload.elapsed();
+        info!("✅ Config reloaded successfully: {} aliases in {:.3}ms (hash: {})", 
+              alias_count, reload_duration.as_secs_f64() * 1000.0, new_hash);
+        
+        Ok(())
+    }
+
+    fn reload_config(&self) -> Result<(bool, usize, String), Box<dyn std::error::Error>> {
+        match Self::reload_config_internal(&self.aka, &self.config_hash, &self.config_path) {
+            Ok(()) => {
+                let alias_count = self.aka.lock().unwrap().spec.aliases.len();
+                Ok((true, alias_count, "Config reloaded successfully".to_string()))
+            },
+            Err(e) => {
+                let error_msg = format!("Failed to reload config: {}", e);
+                warn!("{}", error_msg);
+                Ok((false, 0, error_msg))
+            }
+        }
     }
 
     fn handle_client(&self, mut stream: UnixStream) -> Result<(), Box<dyn std::error::Error>> {
@@ -73,13 +195,15 @@ impl DaemonServer {
 
         let response = match request {
             Request::Query { cmdline } => {
-                match self.aka.replace_with_mode(&cmdline, ProcessingMode::Daemon) {
+                let aka_guard = self.aka.lock().unwrap();
+                match aka_guard.replace_with_mode(&cmdline, ProcessingMode::Daemon) {
                     Ok(result) => Response::Success { data: result },
                     Err(e) => Response::Error { message: e.to_string() },
                 }
             },
             Request::List { global, patterns } => {
-                let mut aliases: Vec<_> = self.aka.spec.aliases.values().cloned().collect();
+                let aka_guard = self.aka.lock().unwrap();
+                let mut aliases: Vec<_> = aka_guard.spec.aliases.values().cloned().collect();
                 aliases.sort_by_key(|a| a.name.clone());
 
                 if global {
@@ -103,9 +227,18 @@ impl DaemonServer {
             },
             Request::Health => {
                 // Enhanced health check - confirm config is loaded and valid
-                let alias_count = self.aka.spec.aliases.len();
-                let status = format!("healthy:{}:aliases", alias_count);
+                let alias_count = self.aka.lock().unwrap().spec.aliases.len();
+                let config_hash = self.config_hash.lock().unwrap().clone();
+                let status = format!("healthy:{}:aliases:{}:hash", alias_count, config_hash);
                 Response::Health { status }
+            },
+            Request::ReloadConfig => {
+                match self.reload_config() {
+                    Ok((success, aliases_count, message)) => {
+                        Response::ConfigReloaded { success, aliases_count, message }
+                    },
+                    Err(e) => Response::Error { message: e.to_string() },
+                }
             },
             Request::Shutdown => {
                 info!("Shutdown request received");

@@ -24,6 +24,7 @@ enum DaemonRequest {
     Query { cmdline: String },
     List { global: bool, patterns: Vec<String> },
     Health,
+    ReloadConfig,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -32,6 +33,7 @@ enum DaemonResponse {
     Success { data: String },
     Error { message: String },
     Health { status: String },
+    ConfigReloaded { success: bool, aliases_count: usize, message: String },
 }
 
 // Daemon client for sending requests
@@ -90,10 +92,54 @@ fn get_daemon_status_emoji() -> &'static str {
     let process_running = check_daemon_process_simple();
 
     match (socket_exists, process_running) {
-        (true, true) => "✅",   // Healthy
+        (true, true) => {
+            // Check if config is in sync
+            match check_config_sync_status() {
+                Ok(true) => "✅",   // Healthy and in sync
+                Ok(false) => "🔄", // Healthy but config out of sync
+                Err(_) => "✅",    // Can't check sync, assume healthy
+            }
+        },
         (true, false) => "⚠️",  // Stale socket
         (false, false) => "❗", // Not running
         (false, true) => "❓",  // Weird state - process but no socket
+    }
+}
+
+fn check_config_sync_status() -> Result<bool> {
+    use aka_lib::get_config_path;
+    
+    // Get current file hash
+    let config_path = get_config_path()?;
+    let file_hash = aka_lib::hash_config_file(&config_path)?;
+    
+    // Query daemon for its hash
+    let request = DaemonRequest::Health;
+    match DaemonClient::send_request(request) {
+        Ok(DaemonResponse::Health { status }) => {
+            // Parse daemon hash from status string
+            // Format: "healthy:391:aliases:abcd1234efgh5678:hash"
+            if let Some(daemon_hash) = parse_daemon_hash(&status) {
+                Ok(file_hash == daemon_hash)
+            } else {
+                // Old daemon format without hash, assume in sync
+                Ok(true)
+            }
+        },
+        _ => {
+            // Can't communicate with daemon
+            Err(eyre::eyre!("Failed to get daemon health status"))
+        }
+    }
+}
+
+fn parse_daemon_hash(status: &str) -> Option<String> {
+    // Parse format: "healthy:391:aliases:abcd1234efgh5678:hash"
+    let parts: Vec<&str> = status.split(':').collect();
+    if parts.len() >= 5 && parts.get(4) == Some(&"hash") {
+        Some(parts.get(3)?.to_string())
+    } else {
+        None
     }
 }
 
@@ -172,6 +218,9 @@ struct DaemonOpts {
 
     #[clap(long, help = "Restart daemon")]
     restart: bool,
+
+    #[clap(long, help = "Reload daemon configuration")]
+    reload: bool,
 
     #[clap(long, help = "Show daemon status")]
     status: bool,
@@ -611,7 +660,8 @@ WantedBy=default.target
 
 fn print_daemon_legend() {
     println!("Daemon Status Legend:");
-    println!("  ✅ - Daemon is healthy (socket exists + process running)");
+    println!("  ✅ - Daemon is healthy (config in sync)");
+    println!("  🔄 - Config out of sync (daemon has stale config)");
     println!("  ⚠️  - Stale socket (socket exists but process not running)");
     println!("  ❗ - Daemon not running (no socket, no process)");
     println!("  ❓ - Unknown/weird state (can't determine socket path, or process without socket)");
@@ -632,12 +682,34 @@ fn handle_daemon_command(daemon_opts: &DaemonOpts) -> Result<()> {
         service_manager.stop_service()?;
         std::thread::sleep(std::time::Duration::from_secs(1));
         service_manager.start_service()?;
+    } else if daemon_opts.reload {
+        // Send reload config request to daemon
+        match DaemonClient::send_request(DaemonRequest::ReloadConfig) {
+            Ok(DaemonResponse::ConfigReloaded { success, aliases_count, message }) => {
+                if success {
+                    println!("✅ Config reloaded successfully: {} aliases loaded", aliases_count);
+                    println!("   {}", message);
+                } else {
+                    println!("❌ Config reload failed: {}", message);
+                }
+            },
+            Ok(DaemonResponse::Error { message }) => {
+                eprintln!("❌ Daemon error: {}", message);
+            },
+            Ok(_) => {
+                eprintln!("❌ Unexpected response from daemon");
+            },
+            Err(e) => {
+                eprintln!("❌ Failed to communicate with daemon: {}", e);
+                eprintln!("   Make sure the daemon is running with: aka daemon --status");
+            }
+        }
     } else if daemon_opts.status {
         service_manager.status()?;
     } else if daemon_opts.legend {
         print_daemon_legend();
     } else {
-        println!("Usage: aka daemon [--install|--uninstall|--start|--stop|--restart|--status|--legend]");
+        println!("Usage: aka daemon [--install|--uninstall|--start|--stop|--restart|--reload|--status|--legend]");
         return Ok(());
     }
 
