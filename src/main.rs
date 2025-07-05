@@ -217,7 +217,7 @@ impl AKA {
             Some(file) => test_config(file)?,
             None => get_config_path()?,
         };
-        info!("Loading config from: {:?}", config);
+        debug!("Loading config from: {:?}", config);
         let loader = Loader::new();
         let mut spec = loader.load(&config)?;
         debug!("Loaded spec with {} aliases", spec.aliases.len());
