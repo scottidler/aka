@@ -19,8 +19,30 @@ impl Loader {
     ///
     /// Will return `Err` if `filename` does not exist, or the user does not have permission to read it.
     pub fn load(&self, filename: &PathBuf) -> Result<Spec, Error> {
+        use std::time::Instant;
+        use log::debug;
+
+        let start_total = Instant::now();
+
+        // Time file reading
+        let start_read = Instant::now();
         let content = fs::read_to_string(filename).context(format!("Can't load filename={filename:?}"))?;
+        let read_duration = start_read.elapsed();
+
+        // Time YAML deserialization
+        let start_yaml = Instant::now();
         let spec: Spec = serde_yaml::from_str(&content).context(format!("Can't load content={content:?}"))?;
+        let yaml_duration = start_yaml.elapsed();
+
+        let total_duration = start_total.elapsed();
+
+        debug!("📊 Config loading timing breakdown:");
+        debug!("  📁 File read: {:.3}ms", read_duration.as_secs_f64() * 1000.0);
+        debug!("  🔧 YAML parse: {:.3}ms", yaml_duration.as_secs_f64() * 1000.0);
+        debug!("  ⏱️  Total load: {:.3}ms", total_duration.as_secs_f64() * 1000.0);
+        debug!("  📦 Aliases loaded: {}", spec.aliases.len());
+        debug!("  🔍 Lookups loaded: {}", spec.lookups.len());
+
         Ok(spec)
     }
 }

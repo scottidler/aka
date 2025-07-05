@@ -89,73 +89,180 @@ pub fn store_hash(hash: &str) -> Result<()> {
 }
 
 pub fn execute_health_check(config: &Option<PathBuf>) -> Result<i32> {
-    // Step 1: Check if config file exists
+    use std::os::unix::net::UnixStream;
+    use std::io::{BufRead, BufReader, Write};
+    use serde_json;
+
+    debug!("🔍 Starting comprehensive health check");
+    debug!("🔍 Health check input: config = {:?}", config);
+
+    // Step 1: Check daemon health first
+    debug!("📋 Step 1: Checking daemon health");
+    if let Ok(socket_path) = determine_socket_path() {
+        debug!("🔌 Socket path determined: {:?}", socket_path);
+        if socket_path.exists() {
+            debug!("✅ Daemon socket exists, testing connection");
+
+            // Try to connect and send health request
+            match UnixStream::connect(&socket_path) {
+                Ok(mut stream) => {
+                    debug!("🔗 Connected to daemon successfully, sending health request");
+
+                    let health_request = r#"{"type":"Health"}"#;
+                    debug!("📤 Sending health request: {}", health_request);
+
+                    if let Ok(_) = writeln!(stream, "{}", health_request) {
+                        let mut reader = BufReader::new(&stream);
+                        let mut response_line = String::new();
+
+                        match reader.read_line(&mut response_line) {
+                            Ok(_) => {
+                                debug!("📥 Received daemon response: {}", response_line.trim());
+
+                                if let Ok(response) = serde_json::from_str::<serde_json::Value>(&response_line.trim()) {
+                                    if let Some(status) = response.get("status").and_then(|s| s.as_str()) {
+                                        debug!("🔍 Daemon status parsed: {}", status);
+                                        if status.starts_with("healthy:") && status.contains(":aliases") {
+                                            debug!("✅ Daemon is healthy and has config loaded: {}", status);
+                                            debug!("🎯 Health check result: DAEMON_HEALTHY (returning 0)");
+                                            return Ok(0); // Daemon healthy - best case
+                                        } else {
+                                            debug!("⚠️ Daemon status indicates unhealthy: {}", status);
+                                        }
+                                    } else {
+                                        debug!("⚠️ Daemon response missing status field");
+                                    }
+                                } else {
+                                    debug!("⚠️ Failed to parse daemon response as JSON");
+                                }
+                            }
+                            Err(e) => {
+                                debug!("⚠️ Failed to read daemon response: {}", e);
+                            }
+                        }
+                    } else {
+                        debug!("⚠️ Failed to send health request to daemon");
+                    }
+                }
+                Err(e) => {
+                    debug!("⚠️ Failed to connect to daemon socket: {}", e);
+                }
+            }
+            debug!("❌ Daemon socket exists but health check failed");
+        } else {
+            debug!("❌ Daemon socket not found at path: {:?}", socket_path);
+        }
+    } else {
+        debug!("❌ Cannot determine daemon socket path");
+    }
+
+    // Step 2: Daemon not available, check config file cache
+    debug!("📋 Step 2: Daemon unavailable, checking config cache");
+
     let config_path = match config {
         Some(file) => {
+            debug!("🔍 Using specified config file: {:?}", file);
             if !file.exists() {
-                debug!("Health check failed: specified config file {:?} not found", file);
+                debug!("❌ Health check failed: specified config file {:?} not found", file);
+                debug!("🎯 Health check result: CONFIG_NOT_FOUND (returning 1)");
                 return Ok(1); // Config file not found
             }
             file.clone()
         }
         None => {
+            debug!("🔍 No config specified, using default config path");
             let default_config = get_config_path();
             match default_config {
-                Ok(path) => path,
-                Err(_) => {
-                    debug!("Health check failed: no config file found");
+                Ok(path) => {
+                    debug!("✅ Default config path resolved: {:?}", path);
+                    path
+                }
+                Err(e) => {
+                    debug!("❌ Health check failed: no config file found: {}", e);
+                    debug!("🎯 Health check result: CONFIG_NOT_FOUND (returning 1)");
                     return Ok(1); // Config file not found
                 }
             }
         }
     };
 
-    // Step 2: Calculate current config hash
+    // Step 3: Calculate current config hash
+    debug!("📋 Step 3: Calculating current config hash");
     let current_hash = match hash_config_file(&config_path) {
-        Ok(hash) => hash,
+        Ok(hash) => {
+            debug!("✅ Current config hash calculated: {}", hash);
+            hash
+        }
         Err(e) => {
-            debug!("Health check failed: cannot read config file: {}", e);
+            debug!("❌ Health check failed: cannot read config file: {}", e);
+            debug!("🎯 Health check result: CONFIG_READ_ERROR (returning 1)");
             return Ok(1); // Cannot read config file
         }
     };
 
-    // Step 3: Compare with stored hash
+    // Step 4: Compare with stored hash
+    debug!("📋 Step 4: Comparing with stored hash");
     let stored_hash = get_stored_hash().unwrap_or(None);
 
-    if let Some(stored) = stored_hash {
-        if stored == current_hash {
-            // Hash matches, config is valid
-            debug!("Health check passed: config hash matches");
-            return Ok(0);
+    match stored_hash {
+        Some(stored) => {
+            debug!("🔍 Found stored hash: {}", stored);
+            if stored == current_hash {
+                debug!("✅ Hash matches! Config cache is valid, can use direct mode");
+                debug!("🎯 Health check result: CACHE_VALID (returning 0)");
+                return Ok(0);
+            } else {
+                debug!("⚠️ Hash mismatch: stored={}, current={}", stored, current_hash);
+                debug!("📋 Cache invalid, need fresh config load");
+            }
+        }
+        None => {
+            debug!("⚠️ No stored hash found, need fresh config load");
         }
     }
 
-    // Step 4: Hash doesn't match or no stored hash, validate config
-    debug!("Health check: validating config file");
+    // Step 5: Hash doesn't match or no stored hash, validate config fresh
+    debug!("📋 Step 5: Cache invalid, attempting fresh config load");
 
     // Try to load and parse the config
     let loader = Loader::new();
+    debug!("🔄 Loading fresh config from: {:?}", config_path);
     match loader.load(&config_path) {
         Ok(spec) => {
+            debug!("✅ Fresh config loaded successfully");
+
             // Config is valid, store the new hash
             if let Err(e) = store_hash(&current_hash) {
-                debug!("Warning: could not store config hash: {}", e);
+                debug!("⚠️ Warning: could not store config hash: {}", e);
+            } else {
+                debug!("✅ New config hash stored: {}", current_hash);
             }
 
             // Check if we have any aliases
             if spec.aliases.is_empty() {
-                debug!("Health check passed: config valid but no aliases defined");
+                debug!("⚠️ Fresh config valid but no aliases defined");
+                debug!("🎯 Health check result: NO_ALIASES (returning 3)");
                 return Ok(3); // No aliases defined
             }
 
-            debug!("Health check passed: config valid with {} aliases", spec.aliases.len());
+            debug!("✅ Fresh config valid with {} aliases", spec.aliases.len());
+            debug!("🎯 Health check result: FRESH_CONFIG_VALID (returning 0)");
             Ok(0) // All good
         }
         Err(e) => {
-            debug!("Health check failed: config file invalid: {}", e);
-            Ok(2) // Config file invalid
+            debug!("❌ Health check failed: config file invalid: {}", e);
+            debug!("🚨 All health check methods failed - ZLE should not use aka");
+            debug!("🎯 Health check result: CONFIG_INVALID (returning 2)");
+            Ok(2) // Config file invalid - critical failure
         }
     }
+}
+
+// Processing mode enum to track daemon vs direct processing
+#[derive(Debug, Clone, Copy)]
+pub enum ProcessingMode {
+    Daemon,  // Processing via daemon (goblin emoji 👹)
+    Direct,  // Processing directly (inbox emoji 📥)
 }
 
 // Main AKA struct and implementation
@@ -166,13 +273,30 @@ pub struct AKA {
 
 impl AKA {
     pub fn new(eol: bool, config: &Option<PathBuf>) -> Result<Self> {
+        use std::time::Instant;
+
+        let start_total = Instant::now();
+
+        // Time config path resolution
+        let start_path = Instant::now();
         let config_path = match config {
             Some(file) => test_config(file)?,
             None => get_config_path()?,
         };
+        let path_duration = start_path.elapsed();
 
+        // Time loader creation and config loading
+        let start_load = Instant::now();
         let loader = Loader::new();
         let spec = loader.load(&config_path)?;
+        let load_duration = start_load.elapsed();
+
+        let total_duration = start_total.elapsed();
+
+        debug!("🏗️  AKA::new() timing breakdown:");
+        debug!("  📂 Path resolution: {:.3}ms", path_duration.as_secs_f64() * 1000.0);
+        debug!("  📋 Config loading: {:.3}ms", load_duration.as_secs_f64() * 1000.0);
+        debug!("  🎯 Total AKA::new(): {:.3}ms", total_duration.as_secs_f64() * 1000.0);
 
         Ok(AKA { eol, spec })
     }
@@ -219,6 +343,10 @@ impl AKA {
     }
 
     pub fn replace(&self, cmdline: &str) -> Result<String> {
+        self.replace_with_mode(cmdline, ProcessingMode::Direct)
+    }
+
+    pub fn replace_with_mode(&self, cmdline: &str, mode: ProcessingMode) -> Result<String> {
         debug!("Processing command line: {}", cmdline);
         let mut pos: usize = 0;
         let mut space = " ";
@@ -309,7 +437,11 @@ impl AKA {
         };
 
         if replaced || sudo {
-            info!("Command line transformed: {} -> {}", cmdline, result.trim());
+            let emoji = match mode {
+                ProcessingMode::Daemon => "👹", // Goblin for daemon
+                ProcessingMode::Direct => "📥", // Inbox for direct
+            };
+            info!("{} Command line transformed: {} -> {}", emoji, cmdline, result.trim());
         }
 
         Ok(result)
@@ -337,4 +469,4 @@ pub fn determine_socket_path() -> Result<PathBuf> {
         .ok_or_else(|| eyre!("Could not determine home directory"))?;
 
     Ok(home_dir.join(".local/share/aka/daemon.sock"))
-} 
+}

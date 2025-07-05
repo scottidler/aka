@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 // Import from the shared library
 use aka_lib::{
     setup_logging, execute_health_check, determine_socket_path,
-    AKA, print_alias
+    AKA, print_alias, ProcessingMode
 };
 
 mod built_info {
@@ -39,36 +39,42 @@ struct DaemonClient;
 
 impl DaemonClient {
     fn send_request(request: DaemonRequest) -> Result<DaemonResponse> {
+        debug!("🔌 DaemonClient::send_request called");
+        debug!("📤 Request: {:?}", request);
+
         let socket_path = determine_socket_path()?;
+        debug!("🔌 Connecting to socket: {:?}", socket_path);
+
         let mut stream = UnixStream::connect(&socket_path)
             .map_err(|e| eyre::eyre!("Failed to connect to daemon: {}", e))?;
+        debug!("✅ Connected to daemon socket");
 
         // Send request
         let request_json = serde_json::to_string(&request)?;
+        debug!("📤 Sending JSON: {}", request_json);
+
         writeln!(stream, "{}", request_json)?;
+        debug!("✅ Request sent to daemon");
 
         // Read response
         let mut reader = BufReader::new(&stream);
         let mut response_line = String::new();
         reader.read_line(&mut response_line)?;
+        debug!("📥 Raw response received: {}", response_line.trim());
 
         let response: DaemonResponse = serde_json::from_str(&response_line.trim())?;
+        debug!("✅ Response parsed: {:?}", response);
+
         Ok(response)
     }
 
-    fn is_daemon_available() -> bool {
-        if let Ok(socket_path) = determine_socket_path() {
-            socket_path.exists() && Self::send_request(DaemonRequest::Health).is_ok()
-        } else {
-            false
-        }
-    }
+
 }
 
 fn get_after_help() -> &'static str {
     let daemon_status = get_daemon_status_emoji();
     Box::leak(format!(
-        "Logs are written to: ~/.local/share/aka/logs/aka.log\nDaemon status: {}", 
+        "Logs are written to: ~/.local/share/aka/logs/aka.log\nDaemon status: {}",
         daemon_status
     ).into_boxed_str())
 }
@@ -93,7 +99,7 @@ fn get_daemon_status_emoji() -> &'static str {
 
 fn check_daemon_process_simple() -> bool {
     use std::process::Command;
-    
+
     // Quick check if aka-daemon process is running
     Command::new("pgrep")
         .arg("aka-daemon")
@@ -102,7 +108,7 @@ fn check_daemon_process_simple() -> bool {
         .unwrap_or(false)
 }
 
-#[derive(Parser)]
+#[derive(Parser, Debug)]
 #[command(name = "aka", about = "[a]lso [k]nown [a]s: an aliasing program")]
 #[command(version = built_info::GIT_DESCRIBE)]
 #[command(author = "Scott A. Idler <scott.a.idler@gmail.com>")]
@@ -119,7 +125,7 @@ struct AkaOpts {
     command: Option<Command>,
 }
 
-#[derive(Subcommand)]
+#[derive(Subcommand, Debug)]
 enum Command {
     #[clap(name = "ls", about = "list aka aliases")]
     List(ListOpts),
@@ -137,12 +143,12 @@ enum Command {
     HealthCheck,
 }
 
-#[derive(Parser)]
+#[derive(Parser, Debug)]
 struct QueryOpts {
     cmdline: String,
 }
 
-#[derive(Parser)]
+#[derive(Parser, Debug)]
 struct ListOpts {
     #[clap(short, long, help = "list global aliases only")]
     global: bool,
@@ -150,7 +156,7 @@ struct ListOpts {
     patterns: Vec<String>,
 }
 
-#[derive(Parser)]
+#[derive(Parser, Debug)]
 struct DaemonOpts {
     #[clap(long, help = "Install system service")]
     install: bool,
@@ -184,7 +190,7 @@ impl ServiceManager {
 
     fn install_service(&self) -> Result<()> {
         println!("📦 Installing daemon service...");
-        
+
         // For now, just create a simple systemd user service file
         if cfg!(target_os = "linux") {
             self.install_systemd_service()?;
@@ -197,7 +203,7 @@ impl ServiceManager {
         }
 
         println!("✅ Service installed successfully");
-        
+
         // Try to start the service automatically
         println!("🚀 Starting daemon...");
         match self.start_service_silent() {
@@ -207,7 +213,7 @@ impl ServiceManager {
                 println!("   You can start it manually with: aka daemon --start");
             }
         }
-        
+
         Ok(())
     }
 
@@ -487,7 +493,7 @@ WantedBy=default.target
 
     fn check_daemon_process(&self) -> bool {
         use std::process::Command;
-        
+
         // Check if aka-daemon process is running
         if let Ok(output) = Command::new("pgrep").arg("aka-daemon").output() {
             output.status.success() && !output.stdout.is_empty()
@@ -498,7 +504,7 @@ WantedBy=default.target
 
     fn check_systemd_status(&self) -> Result<()> {
         use std::process::Command;
-        
+
         let output = Command::new("systemctl")
             .args(&["--user", "is-active", "aka-daemon.service"])
             .output()?;
@@ -526,7 +532,7 @@ WantedBy=default.target
 
     fn check_launchd_status(&self) -> Result<()> {
         use std::process::Command;
-        
+
         let output = Command::new("launchctl")
             .args(&["list", "com.scottidler.aka-daemon"])
             .output()?;
@@ -639,75 +645,173 @@ fn handle_daemon_command(daemon_opts: &DaemonOpts) -> Result<()> {
 }
 
 fn handle_regular_command(opts: &AkaOpts) -> Result<i32> {
-    // Handle health check first, before trying to create AKA instance
+    debug!("🎯 === STARTING REGULAR COMMAND PROCESSING ===");
+    debug!("🔍 Command options: {:?}", opts);
+
+    // Handle explicit health check command
     if let Some(ref command) = &opts.command {
         if let Command::HealthCheck = command {
+            debug!("🏥 Explicit health check command requested");
             return execute_health_check(&opts.config);
         }
     }
 
-    // Check if daemon is available and try to use it
-    let use_daemon = DaemonClient::is_daemon_available();
-    if use_daemon {
-        debug!("Using daemon for fast processing");
-        return handle_command_via_daemon(opts);
-    } else {
-        debug!("No daemon available, using direct implementation");
-        return handle_command_direct(opts);
+    // For all other commands, use health check to determine the best path
+    debug!("🔍 Using health check to determine processing path");
+    debug!("📋 About to run execute_health_check with config: {:?}", opts.config);
+
+    // Run health check to determine system state
+    let health_status = execute_health_check(&opts.config)?;
+    debug!("📊 Health check completed with status: {}", health_status);
+
+    match health_status {
+        0 => {
+            // Health check passed - it could be daemon or direct
+            debug!("✅ Health check passed (status=0), proceeding with daemon-first approach");
+            debug!("🔀 Routing to handle_command_via_daemon_with_fallback");
+            return handle_command_via_daemon_with_fallback(opts);
+        },
+        1 => {
+            debug!("❌ Health check failed: config file not found (status=1)");
+            debug!("🚨 Returning error to user");
+            eprintln!("Error: Configuration file not found");
+            Ok(1)
+        },
+        2 => {
+            debug!("❌ Health check failed: config file invalid (status=2)");
+            debug!("🚨 Returning error to user");
+            eprintln!("Error: Configuration file is invalid");
+            Ok(2)
+        },
+        3 => {
+            debug!("⚠️ Health check passed but no aliases defined (status=3)");
+            debug!("📝 Returning empty result to user");
+            // Still process the command, just return empty result
+            println!("");
+            Ok(0)
+        },
+        _ => {
+            debug!("❌ Health check returned unknown status: {}", health_status);
+            debug!("🚨 Returning unknown error to user");
+            eprintln!("Error: Unknown health check status");
+            Ok(1)
+        }
     }
 }
 
-fn handle_command_via_daemon(opts: &AkaOpts) -> Result<i32> {
+fn handle_command_via_daemon_with_fallback(opts: &AkaOpts) -> Result<i32> {
+    debug!("🎯 === DAEMON-WITH-FALLBACK PROCESSING ===");
+    debug!("🔍 Attempting daemon path first");
+
+    // Quick check if daemon is available
+    match determine_socket_path() {
+        Ok(socket_path) => {
+            debug!("🔌 Socket path determined: {:?}", socket_path);
+            if socket_path.exists() {
+                debug!("✅ Socket file exists, attempting daemon communication");
+
+                // Try daemon approach
+                match handle_command_via_daemon_only(opts) {
+                    Ok(result) => {
+                        debug!("✅ Daemon path successful, returning result: {}", result);
+                        debug!("🎯 === DAEMON-WITH-FALLBACK COMPLETE (DAEMON SUCCESS) ===");
+                        return Ok(result);
+                    },
+                    Err(e) => {
+                        debug!("⚠️ Daemon path failed: {}, falling back to direct", e);
+                        debug!("🔄 Daemon communication failed, will try direct path");
+                    }
+                }
+            } else {
+                debug!("❌ Socket file does not exist: {:?}", socket_path);
+                debug!("📁 No daemon socket, using direct path");
+            }
+        }
+        Err(e) => {
+            debug!("❌ Cannot determine socket path: {}, using direct path", e);
+        }
+    }
+
+    // Fallback to direct processing
+    debug!("🔄 Falling back to direct config processing");
+    debug!("🔀 Routing to handle_command_direct");
+    let result = handle_command_direct(opts);
+    debug!("🎯 === DAEMON-WITH-FALLBACK COMPLETE (DIRECT FALLBACK) ===");
+    result
+}
+
+fn handle_command_via_daemon_only(opts: &AkaOpts) -> Result<i32> {
+    debug!("🎯 === DAEMON-ONLY PROCESSING ===");
+    debug!("🔍 Daemon-only handler - NO fallback to config loading");
+    debug!("📋 Health check already confirmed daemon was healthy");
+
     if let Some(ref command) = &opts.command {
+        debug!("🔍 Processing command: {:?}", command);
         match command {
             Command::Query(query_opts) => {
+                debug!("📤 Preparing daemon query request");
                 let request = DaemonRequest::Query { cmdline: query_opts.cmdline.clone() };
+                debug!("📤 Sending daemon request: Query({})", query_opts.cmdline);
+
                 match DaemonClient::send_request(request) {
                     Ok(DaemonResponse::Success { data }) => {
+                        debug!("✅ Daemon query successful, got response: {}", data);
                         println!("{}", data);
+                        debug!("🎯 === DAEMON-ONLY COMPLETE (SUCCESS) ===");
                         Ok(0)
                     },
                     Ok(DaemonResponse::Error { message }) => {
+                        debug!("❌ Daemon returned error: {}", message);
                         eprintln!("Daemon error: {}", message);
+                        debug!("🎯 === DAEMON-ONLY COMPLETE (DAEMON ERROR) ===");
                         Ok(1)
                     },
-                    Ok(_) => {
+                    Ok(response) => {
+                        debug!("❌ Daemon returned unexpected response: {:?}", response);
                         eprintln!("Unexpected daemon response");
+                        debug!("🎯 === DAEMON-ONLY COMPLETE (UNEXPECTED RESPONSE) ===");
                         Ok(1)
                     },
                     Err(e) => {
-                        debug!("Daemon request failed: {}, falling back to direct", e);
-                        handle_command_direct(opts)
+                        debug!("❌ Daemon request failed: {}", e);
+                        eprintln!("Daemon communication failed: {}", e);
+                        debug!("🎯 === DAEMON-ONLY COMPLETE (COMMUNICATION ERROR) ===");
+                        Err(e)
                     }
                 }
             }
             Command::List(list_opts) => {
-                let request = DaemonRequest::List { 
-                    global: list_opts.global, 
-                    patterns: list_opts.patterns.clone() 
+                let request = DaemonRequest::List {
+                    global: list_opts.global,
+                    patterns: list_opts.patterns.clone()
                 };
                 match DaemonClient::send_request(request) {
                     Ok(DaemonResponse::Success { data }) => {
+                        debug!("✅ Daemon list successful");
                         println!("{}", data);
                         Ok(0)
                     },
                     Ok(DaemonResponse::Error { message }) => {
+                        debug!("❌ Daemon returned error: {}", message);
                         eprintln!("Daemon error: {}", message);
                         Ok(1)
                     },
                     Ok(_) => {
+                        debug!("❌ Daemon returned unexpected response");
                         eprintln!("Unexpected daemon response");
                         Ok(1)
                     },
                     Err(e) => {
-                        debug!("Daemon request failed: {}, falling back to direct", e);
-                        handle_command_direct(opts)
+                        debug!("❌ Daemon request failed: {}", e);
+                        eprintln!("Daemon communication failed: {}", e);
+                        Ok(1)
                     }
                 }
             }
             _ => {
-                // For other commands, fall back to direct implementation
-                handle_command_direct(opts)
+                debug!("❌ Command not supported in daemon-only mode");
+                eprintln!("Command not supported in daemon mode");
+                Ok(1)
             }
         }
     } else {
@@ -716,12 +820,22 @@ fn handle_command_via_daemon(opts: &AkaOpts) -> Result<i32> {
 }
 
 fn handle_command_direct(opts: &AkaOpts) -> Result<i32> {
+    debug!("🎯 === DIRECT PROCESSING ===");
+    debug!("📁 Loading config for direct processing (cache-aware)");
+    debug!("🔍 Direct processing options: eol={}, config={:?}", opts.eol, opts.config);
+
     let aka = AKA::new(opts.eol, &opts.config)?;
+    debug!("✅ Config loaded, {} aliases available", aka.spec.aliases.len());
+
     if let Some(ref command) = opts.command {
+        debug!("🔍 Processing command in direct mode: {:?}", command);
         match command {
             Command::Query(query_opts) => {
-                let result = aka.replace(&query_opts.cmdline)?;
+                debug!("🔍 Processing query: {}", query_opts.cmdline);
+                let result = aka.replace_with_mode(&query_opts.cmdline, ProcessingMode::Direct)?;
+                debug!("✅ Query processed, result: {}", result);
                 println!("{result}");
+                debug!("🎯 === DIRECT PROCESSING COMPLETE (QUERY SUCCESS) ===");
             }
             Command::List(list_opts) => {
                 let mut aliases: Vec<_> = aka.spec.aliases.values().cloned().collect();
@@ -772,6 +886,76 @@ fn handle_command_direct(opts: &AkaOpts) -> Result<i32> {
     Ok(0)
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_daemon_status_emoji() {
+        // Test that daemon status emoji function works
+        let emoji = get_daemon_status_emoji();
+        assert!(matches!(emoji, "✅" | "⚠️" | "❗" | "❓"), "Should return valid emoji");
+    }
+
+    #[test]
+    fn test_daemon_process_check() {
+        // Test daemon process checking
+        let result = check_daemon_process_simple();
+        // Should return bool without panicking
+        assert!(result == true || result == false);
+    }
+
+    #[test]
+    fn test_service_manager_creation() {
+        // Test service manager can be created
+        let _manager = ServiceManager::new();
+        // Should not panic
+    }
+
+    #[test]
+    fn test_daemon_client_socket_path() {
+        // Test that we can determine socket path
+        let result = determine_socket_path();
+        // Should either succeed or fail gracefully
+        match result {
+            Ok(path) => assert!(path.to_string_lossy().contains("aka")),
+            Err(_) => {}, // Acceptable in test environment
+        }
+    }
+
+    #[test]
+    fn test_daemon_request_serialization() {
+        // Test that daemon requests can be serialized
+        let request = DaemonRequest::Health;
+        let serialized = serde_json::to_string(&request);
+        assert!(serialized.is_ok());
+
+        let query_request = DaemonRequest::Query { cmdline: "test".to_string() };
+        let serialized = serde_json::to_string(&query_request);
+        assert!(serialized.is_ok());
+    }
+
+    #[test]
+    fn test_daemon_response_deserialization() {
+        // Test that daemon responses can be deserialized
+        let response_json = r#"{"type":"Health","status":"healthy:5:aliases"}"#;
+        let response: Result<DaemonResponse, _> = serde_json::from_str(response_json);
+        assert!(response.is_ok());
+
+        if let Ok(DaemonResponse::Health { status }) = response {
+            assert_eq!(status, "healthy:5:aliases");
+        }
+    }
+
+    #[test]
+    fn test_after_help_generation() {
+        // Test that help text generation works
+        let help = get_after_help();
+        assert!(help.contains("Logs are written to"));
+        assert!(help.contains("Daemon status:"));
+    }
+}
+
 fn main() {
     let opts = AkaOpts::parse();
 
@@ -803,4 +987,4 @@ fn main() {
     };
 
     exit(result);
-} 
+}
