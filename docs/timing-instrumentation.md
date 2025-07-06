@@ -2,7 +2,7 @@
 
 ## Overview
 
-The AKA codebase includes comprehensive timing instrumentation to measure performance differences between daemon and fallback execution paths. This guide covers implementation details, usage, and analysis.
+The AKA codebase includes comprehensive timing instrumentation to measure performance differences between daemon and fallback execution paths. By default, timing collection runs silently in the background. Detailed logging and CSV export are only enabled in benchmark mode.
 
 ## Quick Start
 
@@ -12,31 +12,51 @@ The AKA codebase includes comprehensive timing instrumentation to measure perfor
 cargo build --release
 cargo install --path .
 
-# Generate timing data
+# Normal usage (silent timing collection)
 aka daemon --start
 aka query "ls -la"  # Daemon mode
 aka daemon --stop
 aka query "ls -la"  # Direct mode
 
-# View performance summary
+# View performance summary (always available)
 aka daemon --timing-summary
 
-# Export detailed data
+# Export detailed data (from in-memory storage)
 aka daemon --export-timing > timing-data.csv
 ```
 
-### Sample Output
+### Benchmark Mode
+For detailed logging and persistent CSV storage, enable benchmark mode:
+
+```bash
+# Enable benchmark mode with environment variable
+export AKA_BENCHMARK=1
+# OR
+export AKA_TIMING=1
+# OR
+export AKA_DEBUG_TIMING=1
+
+# Now timing details will be logged and written to CSV
+aka query "ls -la"  # Will show detailed timing breakdown in logs
 ```
-📊 TIMING SUMMARY
-================
-👹 Daemon mode:
-   Average: 0.404ms
-   Samples: 8
-📥 Direct mode:
-   Average: 1.774ms
-   Samples: 8
-⚡ Performance:
-   Daemon is 1.370ms faster (77.2% improvement)
+
+### Sample Output
+
+**Normal Mode (Silent):**
+```bash
+$ aka query "ls -la"
+eza -la
+# No timing logs shown
+```
+
+**Benchmark Mode:**
+```bash
+$ AKA_BENCHMARK=1 aka query "ls -la"
+eza -la
+[2025-07-06T20:07:00Z INFO  aka_lib] 👹 === TIMING BREAKDOWN (Daemon) ===
+[2025-07-06T20:07:00Z INFO  aka_lib]   🎯 Total execution: 0.007ms
+[2025-07-06T20:07:00Z INFO  aka_lib]   ⚙️  Processing: 0.002ms (35.7%)
+[2025-07-06T20:07:00Z INFO  aka_lib]   🏗️  Overhead: 0.004ms (64.3%)
 ```
 
 ## Implementation Details
@@ -47,7 +67,7 @@ The timing system consists of three main components:
 
 1. **TimingCollector** - Phase-aware timing collection
 2. **TimingData** - Structured timing storage
-3. **Global Storage** - Persistent data collection
+3. **Global Storage** - In-memory data collection (always enabled)
 
 ### Timing Phases
 
@@ -59,10 +79,26 @@ The timing system consists of three main components:
 | Processing | Alias expansion | ✅ | ✅ |
 | Overhead | Startup costs | ✅ | ✅ |
 
+### Benchmark Mode Control
+
+Timing behavior is controlled by environment variables:
+
+| Mode | Environment Variables | Logging | CSV Export | Memory Storage |
+|------|----------------------|---------|------------|----------------|
+| **Normal** | None | ❌ Silent | ❌ Disabled | ✅ Enabled |
+| **Benchmark** | `AKA_BENCHMARK=1`<br/>`AKA_TIMING=1`<br/>`AKA_DEBUG_TIMING=1` | ✅ Detailed | ✅ Enabled | ✅ Enabled |
+
 ### Code Integration
 
 **Library Framework (`src/lib.rs`):**
 ```rust
+// Check if benchmark mode is enabled
+fn is_benchmark_mode() -> bool {
+    std::env::var("AKA_BENCHMARK").is_ok() ||
+    std::env::var("AKA_TIMING").is_ok() ||
+    std::env::var("AKA_DEBUG_TIMING").is_ok()
+}
+
 pub struct TimingCollector {
     start_time: Instant,
     config_start: Option<Instant>,
@@ -80,11 +116,17 @@ fn handle_command_direct_timed(opts: &AkaOpts, timing: &mut TimingCollector) -> 
 
 ## Data Storage
 
-### Persistent Storage
+### In-Memory Storage (Always Enabled)
+- **Location**: Global static variable in memory
+- **Retention**: Last 1000 entries (automatic cleanup)
+- **Thread Safety**: Mutex-protected
+- **Performance**: Minimal overhead (~microseconds)
+
+### Persistent CSV Storage (Benchmark Mode Only)
 - **Location**: `~/.config/aka/timing-data.csv`
 - **Format**: CSV with timestamps and mode indicators
-- **Retention**: Last 1000 entries (automatic cleanup)
-- **Thread Safety**: Mutex-protected global storage
+- **Enabled**: Only when `AKA_BENCHMARK=1` (or similar) is set
+- **Purpose**: Detailed analysis and external processing
 
 ### CSV Format
 ```csv
@@ -137,9 +179,10 @@ timestamp,mode,total_ms,config_ms,ipc_ms,processing_ms
 
 ### Recommendations
 
-1. **Interactive Usage**: Daemon provides noticeable improvement for frequent users
-2. **High-Frequency Usage**: Essential for ZLE integration and scripts
-3. **Batch Operations**: Linear scaling makes daemon crucial for performance
+1. **Normal Usage**: Timing collection runs silently with minimal overhead
+2. **Performance Analysis**: Enable benchmark mode for detailed insights
+3. **Development**: Use benchmark mode during optimization work
+4. **Production**: Normal mode provides CLI access to timing data without log noise
 
 ## Testing and Validation
 
@@ -147,21 +190,24 @@ timestamp,mode,total_ms,config_ms,ipc_ms,processing_ms
 The timing system includes comprehensive test coverage:
 
 ```bash
-# Run validation tests
+# Run validation tests (will enable benchmark mode automatically)
 ./scripts/test-timing-instrumentation.sh
 
-# Run performance benchmarks
-python3 scripts/benchmark-daemon-vs-fallback.py
+# Run performance benchmarks (enables benchmark mode)
+AKA_BENCHMARK=1 python3 scripts/benchmark-daemon-vs-fallback.py
 ```
 
 ### Manual Testing
 ```bash
-# Generate test data
+# Silent collection (normal mode)
 for i in {1..10}; do
     aka query "ls -la"
 done
 
-# Check results
+# Detailed logging (benchmark mode)
+AKA_BENCHMARK=1 aka query "ls -la"
+
+# Check results (always available)
 aka daemon --timing-summary
 ```
 
@@ -181,38 +227,56 @@ aka daemon --timing-summary
 
 ### Common Issues
 
-**No timing data collected:**
-- Ensure queries are being run after instrumentation
-- Check that daemon is properly started/stopped for mode testing
+**No timing data in summary:**
+- Timing collection always runs, check: `aka daemon --timing-summary`
+- Data is stored in memory even without benchmark mode
 
-**Timing summary shows 0 samples:**
-- Run some queries first to generate data
-- Verify persistent storage is working: `ls ~/.config/aka/timing-data.csv`
+**No detailed logs showing:**
+- Enable benchmark mode: `export AKA_BENCHMARK=1`
+- Check log level: `export RUST_LOG=info`
 
-**CSV export is empty:**
-- Check file permissions on `~/.config/aka/`
-- Ensure timing data has been generated
+**CSV file not created:**
+- CSV export only works in benchmark mode
+- Enable with: `export AKA_BENCHMARK=1`
+- Check file: `ls ~/.config/aka/timing-data.csv`
+
+**Performance seems slow:**
+- Normal timing collection has ~microsecond overhead
+- Benchmark mode adds logging overhead (~milliseconds)
+- Disable benchmark mode for production use
 
 ### Debug Commands
 ```bash
+# Check if benchmark mode is active
+echo $AKA_BENCHMARK
+
+# Enable benchmark mode temporarily
+AKA_BENCHMARK=1 aka query "test"
+
 # Check daemon status
 aka daemon --status
 
-# Verify timing file exists
-ls -la ~/.config/aka/timing-data.csv
+# View in-memory timing data
+aka daemon --timing-summary
 
-# Check recent timing data
-tail ~/.config/aka/timing-data.csv
+# Export current data (works in both modes)
+aka daemon --export-timing
 ```
 
 ## API Reference
 
 ### CLI Commands
-- `aka daemon --timing-summary` - Show performance summary
-- `aka daemon --export-timing` - Export CSV data
+- `aka daemon --timing-summary` - Show performance summary (always available)
+- `aka daemon --export-timing` - Export data as CSV (from memory + file if benchmark mode)
+
+### Environment Variables
+- `AKA_BENCHMARK=1` - Enable detailed logging and CSV export
+- `AKA_TIMING=1` - Alternative benchmark mode flag
+- `AKA_DEBUG_TIMING=1` - Alternative benchmark mode flag
 
 ### Internal Functions
+- `is_benchmark_mode()` - Check if benchmark mode is enabled
 - `TimingCollector::new(mode)` - Create timing collector
-- `log_timing(timing_data)` - Store timing data
+- `log_timing(timing_data)` - Store timing data (conditional logging/CSV)
 - `get_timing_summary()` - Get performance statistics
-- `export_timing_csv()` - Export CSV data 
+- `export_timing_csv()` - Export CSV data

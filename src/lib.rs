@@ -15,6 +15,13 @@ pub use cfg::alias::Alias as AliasType;
 pub use cfg::loader::Loader as ConfigLoader;
 pub use cfg::spec::Spec as ConfigSpec;
 
+// Check if benchmark mode is enabled
+fn is_benchmark_mode() -> bool {
+    std::env::var("AKA_BENCHMARK").is_ok() ||
+    std::env::var("AKA_TIMING").is_ok() ||
+    std::env::var("AKA_DEBUG_TIMING").is_ok()
+}
+
 // Timing instrumentation framework
 #[derive(Debug, Clone)]
 pub struct TimingData {
@@ -90,6 +97,11 @@ impl TimingCollector {
 // Timing output and logging
 impl TimingData {
     pub fn log_detailed(&self) {
+        // Only log detailed timing if benchmark mode is enabled
+        if !is_benchmark_mode() {
+            return;
+        }
+
         let emoji = match self.mode {
             ProcessingMode::Daemon => "👹",
             ProcessingMode::Direct => "📥",
@@ -97,32 +109,32 @@ impl TimingData {
 
         info!("{} === TIMING BREAKDOWN ({:?}) ===", emoji, self.mode);
         info!("  🎯 Total execution: {:.3}ms", self.total_duration.as_secs_f64() * 1000.0);
-        
+
         if let Some(config_duration) = self.config_load_duration {
-            info!("  📋 Config loading: {:.3}ms ({:.1}%)", 
+            info!("  📋 Config loading: {:.3}ms ({:.1}%)",
                 config_duration.as_secs_f64() * 1000.0,
                 (config_duration.as_secs_f64() / self.total_duration.as_secs_f64()) * 100.0
             );
         }
-        
+
         if let Some(ipc_duration) = self.ipc_duration {
-            info!("  🔌 IPC communication: {:.3}ms ({:.1}%)", 
+            info!("  🔌 IPC communication: {:.3}ms ({:.1}%)",
                 ipc_duration.as_secs_f64() * 1000.0,
                 (ipc_duration.as_secs_f64() / self.total_duration.as_secs_f64()) * 100.0
             );
         }
-        
-        info!("  ⚙️  Processing: {:.3}ms ({:.1}%)", 
+
+        info!("  ⚙️  Processing: {:.3}ms ({:.1}%)",
             self.processing_duration.as_secs_f64() * 1000.0,
             (self.processing_duration.as_secs_f64() / self.total_duration.as_secs_f64()) * 100.0
         );
 
         // Calculate overhead
-        let accounted = self.config_load_duration.unwrap_or_default() + 
-                       self.ipc_duration.unwrap_or_default() + 
+        let accounted = self.config_load_duration.unwrap_or_default() +
+                       self.ipc_duration.unwrap_or_default() +
                        self.processing_duration;
         let overhead = self.total_duration.saturating_sub(accounted);
-        info!("  🏗️  Overhead: {:.3}ms ({:.1}%)", 
+        info!("  🏗️  Overhead: {:.3}ms ({:.1}%)",
             overhead.as_secs_f64() * 1000.0,
             (overhead.as_secs_f64() / self.total_duration.as_secs_f64()) * 100.0
         );
@@ -145,28 +157,28 @@ fn parse_csv_line(line: &str) -> Result<TimingData> {
     if parts.len() != 6 {
         return Err(eyre!("Invalid CSV line format"));
     }
-    
+
     let timestamp_ms: u64 = parts[0].parse().map_err(|_| eyre!("Invalid timestamp"))?;
     let mode = match parts[1] {
         "Daemon" => ProcessingMode::Daemon,
         "Direct" => ProcessingMode::Direct,
         _ => return Err(eyre!("Invalid processing mode")),
     };
-    
+
     let total_ms: f64 = parts[2].parse().map_err(|_| eyre!("Invalid total duration"))?;
     let config_ms: f64 = parts[3].parse().map_err(|_| eyre!("Invalid config duration"))?;
     let ipc_ms: f64 = parts[4].parse().map_err(|_| eyre!("Invalid IPC duration"))?;
     let processing_ms: f64 = parts[5].parse().map_err(|_| eyre!("Invalid processing duration"))?;
-    
+
     Ok(TimingData {
         total_duration: Duration::from_secs_f64(total_ms / 1000.0),
         config_load_duration: if config_ms > 0.0 { Some(Duration::from_secs_f64(config_ms / 1000.0)) } else { None },
         ipc_duration: if ipc_ms > 0.0 { Some(Duration::from_secs_f64(ipc_ms / 1000.0)) } else { None },
         processing_duration: Duration::from_secs_f64(processing_ms / 1000.0),
         mode,
-                 timestamp: std::time::UNIX_EPOCH + Duration::from_millis(timestamp_ms),
-     })
- }
+        timestamp: std::time::UNIX_EPOCH + Duration::from_millis(timestamp_ms),
+    })
+}
 
 // Global timing storage for analysis
 use std::sync::Mutex;
@@ -177,41 +189,45 @@ lazy_static! {
 }
 
 pub fn log_timing(timing: TimingData) {
-    // Log detailed breakdown
-    timing.log_detailed();
-    
-    // Store for later analysis
+    // Only log detailed breakdown if benchmark mode is enabled
+    if is_benchmark_mode() {
+        timing.log_detailed();
+    }
+
+    // Always store in memory for CLI commands (minimal overhead)
     if let Ok(mut log) = TIMING_LOG.lock() {
         log.push(timing.clone());
-        
+
         // Keep only last 1000 entries to prevent memory bloat
         let len = log.len();
         if len > 1000 {
             log.drain(0..len - 1000);
         }
     }
-    
-    // Also append to persistent file
-    if let Ok(timing_file_path) = get_timing_file_path() {
-        // Ensure directory exists
-        if let Some(parent) = timing_file_path.parent() {
-            let _ = std::fs::create_dir_all(parent);
-        }
-        
-        let csv_line = timing.to_csv_line();
-        if let Ok(mut file) = OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(timing_file_path) {
-            use std::io::Write;
-            let _ = writeln!(file, "{}", csv_line);
+
+    // Only write to CSV file if benchmark mode is enabled
+    if is_benchmark_mode() {
+        if let Ok(timing_file_path) = get_timing_file_path() {
+            // Ensure directory exists
+            if let Some(parent) = timing_file_path.parent() {
+                let _ = std::fs::create_dir_all(parent);
+            }
+
+            let csv_line = timing.to_csv_line();
+            if let Ok(mut file) = OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(timing_file_path) {
+                use std::io::Write;
+                let _ = writeln!(file, "{}", csv_line);
+            }
         }
     }
 }
 
 pub fn export_timing_csv() -> Result<String> {
     let mut csv = String::from("timestamp,mode,total_ms,config_ms,ipc_ms,processing_ms\n");
-    
+
     // Load from persistent file if it exists
     if let Ok(timing_file_path) = get_timing_file_path() {
         if let Ok(content) = std::fs::read_to_string(timing_file_path) {
@@ -223,7 +239,7 @@ pub fn export_timing_csv() -> Result<String> {
             }
         }
     }
-    
+
     // Also include current session data
     if let Ok(log) = TIMING_LOG.lock() {
         for timing in log.iter() {
@@ -231,13 +247,13 @@ pub fn export_timing_csv() -> Result<String> {
             csv.push('\n');
         }
     }
-    
+
     Ok(csv)
 }
 
 pub fn get_timing_summary() -> Result<(Duration, Duration, usize, usize)> {
     let mut all_timings = Vec::new();
-    
+
     // Load from persistent file if it exists
     if let Ok(timing_file_path) = get_timing_file_path() {
         if let Ok(content) = std::fs::read_to_string(timing_file_path) {
@@ -248,27 +264,27 @@ pub fn get_timing_summary() -> Result<(Duration, Duration, usize, usize)> {
             }
         }
     }
-    
+
     // Also include current session data
     if let Ok(log) = TIMING_LOG.lock() {
         all_timings.extend(log.iter().cloned());
     }
-    
+
     let daemon_timings: Vec<_> = all_timings.iter().filter(|t| matches!(t.mode, ProcessingMode::Daemon)).collect();
     let direct_timings: Vec<_> = all_timings.iter().filter(|t| matches!(t.mode, ProcessingMode::Direct)).collect();
-    
+
     let daemon_avg = if !daemon_timings.is_empty() {
         daemon_timings.iter().map(|t| t.total_duration).sum::<Duration>() / daemon_timings.len() as u32
     } else {
         Duration::default()
     };
-    
+
     let direct_avg = if !direct_timings.is_empty() {
         direct_timings.iter().map(|t| t.total_duration).sum::<Duration>() / direct_timings.len() as u32
     } else {
         Duration::default()
     };
-    
+
     Ok((daemon_avg, direct_avg, daemon_timings.len(), direct_timings.len()))
 }
 
@@ -301,22 +317,30 @@ pub fn test_config(file: &PathBuf) -> Result<PathBuf> {
 }
 
 pub fn setup_logging() -> Result<()> {
-    let log_dir = dirs::data_local_dir()
-        .ok_or_else(|| eyre!("Could not determine local data directory"))?
-        .join("aka")
-        .join("logs");
+    if is_benchmark_mode() {
+        // In benchmark mode, log to stdout for visibility
+        env_logger::Builder::from_env(env_logger::Env::default().filter_or("RUST_LOG", "info"))
+            .target(env_logger::Target::Stdout)
+            .init();
+    } else {
+        // In normal mode, log to file
+        let log_dir = dirs::data_local_dir()
+            .ok_or_else(|| eyre!("Could not determine local data directory"))?
+            .join("aka")
+            .join("logs");
 
-    std::fs::create_dir_all(&log_dir)?;
-    let log_file_path = log_dir.join("aka.log");
+        std::fs::create_dir_all(&log_dir)?;
+        let log_file_path = log_dir.join("aka.log");
 
-    let log_file = OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(&log_file_path)?;
+        let log_file = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&log_file_path)?;
 
-    env_logger::Builder::from_env(env_logger::Env::default().filter_or("RUST_LOG", "info"))
-        .target(env_logger::Target::Pipe(Box::new(log_file)))
-        .init();
+        env_logger::Builder::from_env(env_logger::Env::default().filter_or("RUST_LOG", "info"))
+            .target(env_logger::Target::Pipe(Box::new(log_file)))
+            .init();
+    }
 
     Ok(())
 }
