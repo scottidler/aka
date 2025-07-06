@@ -31,7 +31,7 @@ impl Loader {
 
         // Time YAML deserialization
         let start_yaml = Instant::now();
-        let spec: Spec = serde_yaml::from_str(&content).context(format!("Can't load content={content:?}"))?;
+        let spec: Spec = serde_yaml::from_str(&content).context(format!("Can't parse YAML from file={filename:?}"))?;
         let yaml_duration = start_yaml.elapsed();
 
         let total_duration = start_total.elapsed();

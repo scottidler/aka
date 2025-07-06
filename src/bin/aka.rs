@@ -24,6 +24,7 @@ enum DaemonRequest {
     Query { cmdline: String },
     List { global: bool, patterns: Vec<String> },
     Health,
+    ReloadConfig,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -32,6 +33,7 @@ enum DaemonResponse {
     Success { data: String },
     Error { message: String },
     Health { status: String },
+    ConfigReloaded { success: bool, message: String },
 }
 
 // Daemon client for sending requests
@@ -80,6 +82,9 @@ fn get_after_help() -> &'static str {
 }
 
 fn get_daemon_status_emoji() -> &'static str {
+    use std::os::unix::net::UnixStream;
+    use std::io::{BufRead, BufReader, Write};
+    
     // Check daemon status quickly and return appropriate emoji
     let socket_path = match determine_socket_path() {
         Ok(path) => path,
@@ -90,7 +95,28 @@ fn get_daemon_status_emoji() -> &'static str {
     let process_running = check_daemon_process_simple();
 
     match (socket_exists, process_running) {
-        (true, true) => "✅",   // Healthy
+        (true, true) => {
+            // Daemon appears to be running, check config sync status
+            if let Ok(mut stream) = UnixStream::connect(&socket_path) {
+                let health_request = r#"{"type":"Health"}"#;
+                if let Ok(_) = writeln!(stream, "{}", health_request) {
+                    let mut reader = BufReader::new(&stream);
+                    let mut response_line = String::new();
+                    if let Ok(_) = reader.read_line(&mut response_line) {
+                        if let Ok(response) = serde_json::from_str::<serde_json::Value>(&response_line.trim()) {
+                            if let Some(status) = response.get("status").and_then(|s| s.as_str()) {
+                                if status.contains(":stale") {
+                                    return "🔄"; // Config out of sync
+                                } else if status.contains(":synced") {
+                                    return "✅"; // Healthy and synced
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            "⚠️" // Socket exists, process running, but health check failed
+        },
         (true, false) => "⚠️",  // Stale socket
         (false, false) => "❗", // Not running
         (false, true) => "❓",  // Weird state - process but no socket
@@ -172,6 +198,9 @@ struct DaemonOpts {
 
     #[clap(long, help = "Restart daemon")]
     restart: bool,
+
+    #[clap(long, help = "Reload daemon configuration")]
+    reload: bool,
 
     #[clap(long, help = "Show daemon status")]
     status: bool,
@@ -611,10 +640,43 @@ WantedBy=default.target
 
 fn print_daemon_legend() {
     println!("Daemon Status Legend:");
-    println!("  ✅ - Daemon is healthy (socket exists + process running)");
+    println!("  ✅ - Daemon is healthy and config is synced");
+    println!("  🔄 - Daemon is healthy but config is out of sync (reload needed)");
     println!("  ⚠️  - Stale socket (socket exists but process not running)");
     println!("  ❗ - Daemon not running (no socket, no process)");
     println!("  ❓ - Unknown/weird state (can't determine socket path, or process without socket)");
+}
+
+fn handle_daemon_reload() -> Result<()> {
+    println!("🔄 Reloading daemon configuration...");
+    
+    // Send reload request to daemon
+    let request = DaemonRequest::ReloadConfig;
+    match DaemonClient::send_request(request) {
+        Ok(DaemonResponse::ConfigReloaded { success, message }) => {
+            if success {
+                println!("✅ {}", message);
+            } else {
+                println!("❌ Config reload failed: {}", message);
+                return Err(eyre::eyre!("Config reload failed"));
+            }
+        },
+        Ok(DaemonResponse::Error { message }) => {
+            println!("❌ Daemon error: {}", message);
+            return Err(eyre::eyre!("Daemon error: {}", message));
+        },
+        Ok(response) => {
+            println!("❌ Unexpected response: {:?}", response);
+            return Err(eyre::eyre!("Unexpected daemon response"));
+        },
+        Err(e) => {
+            println!("❌ Failed to communicate with daemon: {}", e);
+            println!("   Make sure the daemon is running with: aka daemon --status");
+            return Err(e);
+        }
+    }
+    
+    Ok(())
 }
 
 fn handle_daemon_command(daemon_opts: &DaemonOpts) -> Result<()> {
@@ -632,12 +694,14 @@ fn handle_daemon_command(daemon_opts: &DaemonOpts) -> Result<()> {
         service_manager.stop_service()?;
         std::thread::sleep(std::time::Duration::from_secs(1));
         service_manager.start_service()?;
+    } else if daemon_opts.reload {
+        handle_daemon_reload()?;
     } else if daemon_opts.status {
         service_manager.status()?;
     } else if daemon_opts.legend {
         print_daemon_legend();
     } else {
-        println!("Usage: aka daemon [--install|--uninstall|--start|--stop|--restart|--status|--legend]");
+        println!("Usage: aka daemon [--install|--uninstall|--start|--stop|--restart|--reload|--status|--legend]");
         return Ok(());
     }
 
