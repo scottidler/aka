@@ -13,9 +13,7 @@ use aka_lib::{
     AKA, print_alias, ProcessingMode
 };
 
-mod built_info {
-    include!(concat!(env!("OUT_DIR"), "/git_describe.rs"));
-}
+
 
 // IPC Protocol Messages (shared with daemon)
 #[derive(Serialize, Deserialize, Debug)]
@@ -136,7 +134,7 @@ fn check_daemon_process_simple() -> bool {
 
 #[derive(Parser, Debug)]
 #[command(name = "aka", about = "[a]lso [k]nown [a]s: an aliasing program")]
-#[command(version = built_info::GIT_DESCRIBE)]
+#[command(version = env!("GIT_DESCRIBE"))]
 #[command(author = "Scott A. Idler <scott.a.idler@gmail.com>")]
 #[command(arg_required_else_help = true)]
 #[command(after_help = get_after_help())]
