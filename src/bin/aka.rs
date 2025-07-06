@@ -14,7 +14,11 @@ use aka_lib::{
     determine_socket_path,
     print_alias,
     AKA,
-    ProcessingMode
+    ProcessingMode,
+    TimingCollector,
+    log_timing,
+    export_timing_csv,
+    get_timing_summary
 };
 
 
@@ -70,6 +74,13 @@ impl DaemonClient {
         debug!("✅ Response parsed: {:?}", response);
 
         Ok(response)
+    }
+
+    fn send_request_timed(request: DaemonRequest, timing: &mut TimingCollector) -> Result<DaemonResponse> {
+        timing.start_ipc();
+        let result = Self::send_request(request);
+        timing.end_ipc();
+        result
     }
 }
 
@@ -207,6 +218,12 @@ struct DaemonOpts {
 
     #[clap(long, help = "Show daemon status legend")]
     legend: bool,
+
+    #[clap(long, help = "Export timing data as CSV")]
+    export_timing: bool,
+
+    #[clap(long, help = "Show timing summary")]
+    timing_summary: bool,
 }
 
 // Basic service manager for proof of concept
@@ -707,8 +724,42 @@ fn handle_daemon_command(daemon_opts: &DaemonOpts) -> Result<()> {
         service_manager.status()?;
     } else if daemon_opts.legend {
         print_daemon_legend();
+    } else if daemon_opts.export_timing {
+        match export_timing_csv() {
+            Ok(csv) => {
+                println!("{}", csv);
+            }
+            Err(e) => {
+                eprintln!("Error exporting timing data: {}", e);
+                return Err(e);
+            }
+        }
+    } else if daemon_opts.timing_summary {
+        match get_timing_summary() {
+            Ok((daemon_avg, direct_avg, daemon_count, direct_count)) => {
+                println!("📊 TIMING SUMMARY");
+                println!("================");
+                println!("👹 Daemon mode:");
+                println!("   Average: {:.3}ms", daemon_avg.as_secs_f64() * 1000.0);
+                println!("   Samples: {}", daemon_count);
+                println!("📥 Direct mode:");
+                println!("   Average: {:.3}ms", direct_avg.as_secs_f64() * 1000.0);
+                println!("   Samples: {}", direct_count);
+                if daemon_count > 0 && direct_count > 0 {
+                    let improvement = direct_avg.as_secs_f64() - daemon_avg.as_secs_f64();
+                    let percentage = (improvement / direct_avg.as_secs_f64()) * 100.0;
+                    println!("⚡ Performance:");
+                    println!("   Daemon is {:.3}ms faster ({:.1}% improvement)", 
+                        improvement * 1000.0, percentage);
+                }
+            }
+            Err(e) => {
+                eprintln!("Error getting timing summary: {}", e);
+                return Err(e);
+            }
+        }
     } else {
-        println!("Usage: aka daemon [--install|--uninstall|--start|--stop|--restart|--reload|--status|--legend]");
+        println!("Usage: aka daemon [--install|--uninstall|--start|--stop|--restart|--reload|--status|--legend|--export-timing|--timing-summary]");
         return Ok(());
     }
 
@@ -774,6 +825,9 @@ fn handle_command_via_daemon_with_fallback(opts: &AkaOpts) -> Result<i32> {
     debug!("🎯 === DAEMON-WITH-FALLBACK PROCESSING ===");
     debug!("🔍 Attempting daemon path first");
 
+    // Start timing for daemon attempt
+    let mut timing = TimingCollector::new(ProcessingMode::Daemon);
+
     // Quick check if daemon is available
     match determine_socket_path() {
         Ok(socket_path) => {
@@ -781,11 +835,16 @@ fn handle_command_via_daemon_with_fallback(opts: &AkaOpts) -> Result<i32> {
             if socket_path.exists() {
                 debug!("✅ Socket file exists, attempting daemon communication");
 
-                // Try daemon approach
-                match handle_command_via_daemon_only(opts) {
+                // Try daemon approach with timing
+                match handle_command_via_daemon_only_timed(opts, &mut timing) {
                     Ok(result) => {
                         debug!("✅ Daemon path successful, returning result: {}", result);
                         debug!("🎯 === DAEMON-WITH-FALLBACK COMPLETE (DAEMON SUCCESS) ===");
+                        
+                        // Log daemon timing
+                        let timing_data = timing.finalize();
+                        log_timing(timing_data);
+                        
                         return Ok(result);
                     },
                     Err(e) => {
@@ -803,18 +862,27 @@ fn handle_command_via_daemon_with_fallback(opts: &AkaOpts) -> Result<i32> {
         }
     }
 
-    // Fallback to direct processing
+    // Fallback to direct processing with timing
     debug!("🔄 Falling back to direct config processing");
     debug!("🔀 Routing to handle_command_direct");
-    let result = handle_command_direct(opts);
+    
+    let mut direct_timing = TimingCollector::new(ProcessingMode::Direct);
+    let result = handle_command_direct_timed(opts, &mut direct_timing);
+    
+    // Log direct timing
+    let timing_data = direct_timing.finalize();
+    log_timing(timing_data);
+    
     debug!("🎯 === DAEMON-WITH-FALLBACK COMPLETE (DIRECT FALLBACK) ===");
     result
 }
 
-fn handle_command_via_daemon_only(opts: &AkaOpts) -> Result<i32> {
+fn handle_command_via_daemon_only_timed(opts: &AkaOpts, timing: &mut TimingCollector) -> Result<i32> {
     debug!("🎯 === DAEMON-ONLY PROCESSING ===");
     debug!("🔍 Daemon-only handler - NO fallback to config loading");
     debug!("📋 Health check already confirmed daemon was healthy");
+
+    timing.start_processing();
 
     if let Some(ref command) = &opts.command {
         debug!("🔍 Processing command: {:?}", command);
@@ -824,28 +892,32 @@ fn handle_command_via_daemon_only(opts: &AkaOpts) -> Result<i32> {
                 let request = DaemonRequest::Query { cmdline: query_opts.cmdline.clone() };
                 debug!("📤 Sending daemon request: Query({})", query_opts.cmdline);
 
-                match DaemonClient::send_request(request) {
+                match DaemonClient::send_request_timed(request, timing) {
                     Ok(DaemonResponse::Success { data }) => {
                         debug!("✅ Daemon query successful, got response: {}", data);
                         println!("{}", data);
+                        timing.end_processing();
                         debug!("🎯 === DAEMON-ONLY COMPLETE (SUCCESS) ===");
                         Ok(0)
                     },
                     Ok(DaemonResponse::Error { message }) => {
                         debug!("❌ Daemon returned error: {}", message);
                         eprintln!("Daemon error: {}", message);
+                        timing.end_processing();
                         debug!("🎯 === DAEMON-ONLY COMPLETE (DAEMON ERROR) ===");
                         Ok(1)
                     },
                     Ok(response) => {
                         debug!("❌ Daemon returned unexpected response: {:?}", response);
                         eprintln!("Unexpected daemon response");
+                        timing.end_processing();
                         debug!("🎯 === DAEMON-ONLY COMPLETE (UNEXPECTED RESPONSE) ===");
                         Ok(1)
                     },
                     Err(e) => {
                         debug!("❌ Daemon request failed: {}", e);
                         debug!("🔄 Daemon communication failed, will fallback to direct mode");
+                        timing.end_processing();
                         debug!("🎯 === DAEMON-ONLY COMPLETE (COMMUNICATION ERROR) ===");
                         Err(e)
                     }
@@ -856,25 +928,29 @@ fn handle_command_via_daemon_only(opts: &AkaOpts) -> Result<i32> {
                     global: list_opts.global,
                     patterns: list_opts.patterns.clone()
                 };
-                match DaemonClient::send_request(request) {
+                match DaemonClient::send_request_timed(request, timing) {
                     Ok(DaemonResponse::Success { data }) => {
                         debug!("✅ Daemon list successful");
                         println!("{}", data);
+                        timing.end_processing();
                         Ok(0)
                     },
                     Ok(DaemonResponse::Error { message }) => {
                         debug!("❌ Daemon returned error: {}", message);
                         eprintln!("Daemon error: {}", message);
+                        timing.end_processing();
                         Ok(1)
                     },
                     Ok(_) => {
                         debug!("❌ Daemon returned unexpected response");
                         eprintln!("Unexpected daemon response");
+                        timing.end_processing();
                         Ok(1)
                     },
                     Err(e) => {
                         debug!("❌ Daemon request failed: {}", e);
                         debug!("🔄 Daemon communication failed, will fallback to direct mode");
+                        timing.end_processing();
                         Ok(1)
                     }
                 }
@@ -882,21 +958,28 @@ fn handle_command_via_daemon_only(opts: &AkaOpts) -> Result<i32> {
             _ => {
                 debug!("❌ Command not supported in daemon-only mode");
                 eprintln!("Command not supported in daemon mode");
+                timing.end_processing();
                 Ok(1)
             }
         }
     } else {
+        timing.end_processing();
         Ok(0)
     }
 }
 
-fn handle_command_direct(opts: &AkaOpts) -> Result<i32> {
+fn handle_command_direct_timed(opts: &AkaOpts, timing: &mut TimingCollector) -> Result<i32> {
     debug!("🎯 === DIRECT PROCESSING ===");
     debug!("📁 Loading config for direct processing (cache-aware)");
     debug!("🔍 Direct processing options: eol={}, config={:?}", opts.eol, opts.config);
 
+    timing.start_config_load();
     let aka = AKA::new(opts.eol, &opts.config)?;
+    timing.end_config_load();
+    
     debug!("✅ Config loaded, {} aliases available", aka.spec.aliases.len());
+
+    timing.start_processing();
 
     if let Some(ref command) = opts.command {
         debug!("🔍 Processing command in direct mode: {:?}", command);
@@ -906,6 +989,7 @@ fn handle_command_direct(opts: &AkaOpts) -> Result<i32> {
                 let result = aka.replace_with_mode(&query_opts.cmdline, ProcessingMode::Direct)?;
                 debug!("✅ Query processed, result: {}", result);
                 println!("{result}");
+                timing.end_processing();
                 debug!("🎯 === DIRECT PROCESSING COMPLETE (QUERY SUCCESS) ===");
             }
             Command::List(list_opts) => {
@@ -927,6 +1011,7 @@ fn handle_command_direct(opts: &AkaOpts) -> Result<i32> {
                         }
                     }
                 }
+                timing.end_processing();
             }
 
             Command::CompleteAliases => {
@@ -939,19 +1024,24 @@ fn handle_command_direct(opts: &AkaOpts) -> Result<i32> {
                 for name in keys {
                     println!("{name}");
                 }
+                timing.end_processing();
                 return Ok(0);
             }
 
             Command::HealthCheck => {
                 // Already handled above
+                timing.end_processing();
                 return Ok(0);
             }
 
             Command::Daemon(_) => {
                 // Should not reach here
+                timing.end_processing();
                 return Ok(0);
             }
         }
+    } else {
+        timing.end_processing();
     }
 
     Ok(0)

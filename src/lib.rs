@@ -2,6 +2,7 @@ use eyre::{eyre, Result};
 use log::{info, debug};
 use std::fs::OpenOptions;
 use std::path::PathBuf;
+use std::time::{Instant, Duration};
 use xxhash_rust::xxh3::xxh3_64;
 
 pub mod cfg;
@@ -13,6 +14,269 @@ use cfg::spec::Spec;
 pub use cfg::alias::Alias as AliasType;
 pub use cfg::loader::Loader as ConfigLoader;
 pub use cfg::spec::Spec as ConfigSpec;
+
+// Timing instrumentation framework
+#[derive(Debug, Clone)]
+pub struct TimingData {
+    pub total_duration: Duration,
+    pub config_load_duration: Option<Duration>,
+    pub ipc_duration: Option<Duration>,
+    pub processing_duration: Duration,
+    pub mode: ProcessingMode,
+    pub timestamp: std::time::SystemTime,
+}
+
+#[derive(Debug, Clone)]
+pub struct TimingCollector {
+    start_time: Instant,
+    config_start: Option<Instant>,
+    ipc_start: Option<Instant>,
+    processing_start: Option<Instant>,
+    mode: ProcessingMode,
+}
+
+impl TimingCollector {
+    pub fn new(mode: ProcessingMode) -> Self {
+        Self {
+            start_time: Instant::now(),
+            config_start: None,
+            ipc_start: None,
+            processing_start: None,
+            mode,
+        }
+    }
+
+    pub fn start_config_load(&mut self) {
+        self.config_start = Some(Instant::now());
+    }
+
+    pub fn end_config_load(&mut self) -> Option<Duration> {
+        self.config_start.map(|start| start.elapsed())
+    }
+
+    pub fn start_ipc(&mut self) {
+        self.ipc_start = Some(Instant::now());
+    }
+
+    pub fn end_ipc(&mut self) -> Option<Duration> {
+        self.ipc_start.map(|start| start.elapsed())
+    }
+
+    pub fn start_processing(&mut self) {
+        self.processing_start = Some(Instant::now());
+    }
+
+    pub fn end_processing(&mut self) -> Duration {
+        self.processing_start.map(|start| start.elapsed()).unwrap_or_default()
+    }
+
+    pub fn finalize(self) -> TimingData {
+        let total_duration = self.start_time.elapsed();
+        let config_load_duration = self.config_start.map(|start| start.elapsed());
+        let ipc_duration = self.ipc_start.map(|start| start.elapsed());
+        let processing_duration = self.processing_start.map(|start| start.elapsed()).unwrap_or_default();
+
+        TimingData {
+            total_duration,
+            config_load_duration,
+            ipc_duration,
+            processing_duration,
+            mode: self.mode,
+            timestamp: std::time::SystemTime::now(),
+        }
+    }
+}
+
+// Timing output and logging
+impl TimingData {
+    pub fn log_detailed(&self) {
+        let emoji = match self.mode {
+            ProcessingMode::Daemon => "👹",
+            ProcessingMode::Direct => "📥",
+        };
+
+        info!("{} === TIMING BREAKDOWN ({:?}) ===", emoji, self.mode);
+        info!("  🎯 Total execution: {:.3}ms", self.total_duration.as_secs_f64() * 1000.0);
+        
+        if let Some(config_duration) = self.config_load_duration {
+            info!("  📋 Config loading: {:.3}ms ({:.1}%)", 
+                config_duration.as_secs_f64() * 1000.0,
+                (config_duration.as_secs_f64() / self.total_duration.as_secs_f64()) * 100.0
+            );
+        }
+        
+        if let Some(ipc_duration) = self.ipc_duration {
+            info!("  🔌 IPC communication: {:.3}ms ({:.1}%)", 
+                ipc_duration.as_secs_f64() * 1000.0,
+                (ipc_duration.as_secs_f64() / self.total_duration.as_secs_f64()) * 100.0
+            );
+        }
+        
+        info!("  ⚙️  Processing: {:.3}ms ({:.1}%)", 
+            self.processing_duration.as_secs_f64() * 1000.0,
+            (self.processing_duration.as_secs_f64() / self.total_duration.as_secs_f64()) * 100.0
+        );
+
+        // Calculate overhead
+        let accounted = self.config_load_duration.unwrap_or_default() + 
+                       self.ipc_duration.unwrap_or_default() + 
+                       self.processing_duration;
+        let overhead = self.total_duration.saturating_sub(accounted);
+        info!("  🏗️  Overhead: {:.3}ms ({:.1}%)", 
+            overhead.as_secs_f64() * 1000.0,
+            (overhead.as_secs_f64() / self.total_duration.as_secs_f64()) * 100.0
+        );
+    }
+
+    pub fn to_csv_line(&self) -> String {
+        format!("{},{:?},{:.3},{:.3},{:.3},{:.3}",
+            self.timestamp.duration_since(std::time::UNIX_EPOCH).unwrap().as_millis(),
+            self.mode,
+            self.total_duration.as_secs_f64() * 1000.0,
+            self.config_load_duration.map(|d| d.as_secs_f64() * 1000.0).unwrap_or(0.0),
+            self.ipc_duration.map(|d| d.as_secs_f64() * 1000.0).unwrap_or(0.0),
+            self.processing_duration.as_secs_f64() * 1000.0
+        )
+    }
+}
+
+fn parse_csv_line(line: &str) -> Result<TimingData> {
+    let parts: Vec<&str> = line.split(',').collect();
+    if parts.len() != 6 {
+        return Err(eyre!("Invalid CSV line format"));
+    }
+    
+    let timestamp_ms: u64 = parts[0].parse().map_err(|_| eyre!("Invalid timestamp"))?;
+    let mode = match parts[1] {
+        "Daemon" => ProcessingMode::Daemon,
+        "Direct" => ProcessingMode::Direct,
+        _ => return Err(eyre!("Invalid processing mode")),
+    };
+    
+    let total_ms: f64 = parts[2].parse().map_err(|_| eyre!("Invalid total duration"))?;
+    let config_ms: f64 = parts[3].parse().map_err(|_| eyre!("Invalid config duration"))?;
+    let ipc_ms: f64 = parts[4].parse().map_err(|_| eyre!("Invalid IPC duration"))?;
+    let processing_ms: f64 = parts[5].parse().map_err(|_| eyre!("Invalid processing duration"))?;
+    
+    Ok(TimingData {
+        total_duration: Duration::from_secs_f64(total_ms / 1000.0),
+        config_load_duration: if config_ms > 0.0 { Some(Duration::from_secs_f64(config_ms / 1000.0)) } else { None },
+        ipc_duration: if ipc_ms > 0.0 { Some(Duration::from_secs_f64(ipc_ms / 1000.0)) } else { None },
+        processing_duration: Duration::from_secs_f64(processing_ms / 1000.0),
+        mode,
+                 timestamp: std::time::UNIX_EPOCH + Duration::from_millis(timestamp_ms),
+     })
+ }
+
+// Global timing storage for analysis
+use std::sync::Mutex;
+use lazy_static::lazy_static;
+
+lazy_static! {
+    static ref TIMING_LOG: Mutex<Vec<TimingData>> = Mutex::new(Vec::new());
+}
+
+pub fn log_timing(timing: TimingData) {
+    // Log detailed breakdown
+    timing.log_detailed();
+    
+    // Store for later analysis
+    if let Ok(mut log) = TIMING_LOG.lock() {
+        log.push(timing.clone());
+        
+        // Keep only last 1000 entries to prevent memory bloat
+        let len = log.len();
+        if len > 1000 {
+            log.drain(0..len - 1000);
+        }
+    }
+    
+    // Also append to persistent file
+    if let Ok(timing_file_path) = get_timing_file_path() {
+        // Ensure directory exists
+        if let Some(parent) = timing_file_path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        
+        let csv_line = timing.to_csv_line();
+        if let Ok(mut file) = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(timing_file_path) {
+            use std::io::Write;
+            let _ = writeln!(file, "{}", csv_line);
+        }
+    }
+}
+
+pub fn export_timing_csv() -> Result<String> {
+    let mut csv = String::from("timestamp,mode,total_ms,config_ms,ipc_ms,processing_ms\n");
+    
+    // Load from persistent file if it exists
+    if let Ok(timing_file_path) = get_timing_file_path() {
+        if let Ok(content) = std::fs::read_to_string(timing_file_path) {
+            for line in content.lines() {
+                if !line.trim().is_empty() {
+                    csv.push_str(line);
+                    csv.push('\n');
+                }
+            }
+        }
+    }
+    
+    // Also include current session data
+    if let Ok(log) = TIMING_LOG.lock() {
+        for timing in log.iter() {
+            csv.push_str(&timing.to_csv_line());
+            csv.push('\n');
+        }
+    }
+    
+    Ok(csv)
+}
+
+pub fn get_timing_summary() -> Result<(Duration, Duration, usize, usize)> {
+    let mut all_timings = Vec::new();
+    
+    // Load from persistent file if it exists
+    if let Ok(timing_file_path) = get_timing_file_path() {
+        if let Ok(content) = std::fs::read_to_string(timing_file_path) {
+            for line in content.lines() {
+                if let Ok(timing) = parse_csv_line(line) {
+                    all_timings.push(timing);
+                }
+            }
+        }
+    }
+    
+    // Also include current session data
+    if let Ok(log) = TIMING_LOG.lock() {
+        all_timings.extend(log.iter().cloned());
+    }
+    
+    let daemon_timings: Vec<_> = all_timings.iter().filter(|t| matches!(t.mode, ProcessingMode::Daemon)).collect();
+    let direct_timings: Vec<_> = all_timings.iter().filter(|t| matches!(t.mode, ProcessingMode::Direct)).collect();
+    
+    let daemon_avg = if !daemon_timings.is_empty() {
+        daemon_timings.iter().map(|t| t.total_duration).sum::<Duration>() / daemon_timings.len() as u32
+    } else {
+        Duration::default()
+    };
+    
+    let direct_avg = if !direct_timings.is_empty() {
+        direct_timings.iter().map(|t| t.total_duration).sum::<Duration>() / direct_timings.len() as u32
+    } else {
+        Duration::default()
+    };
+    
+    Ok((daemon_avg, direct_avg, daemon_timings.len(), direct_timings.len()))
+}
+
+pub fn get_timing_file_path() -> Result<PathBuf> {
+    let config_dir = dirs::config_dir()
+        .ok_or_else(|| eyre!("Could not determine config directory"))?;
+    Ok(config_dir.join("aka").join("timing_data.csv"))
+}
 
 pub fn get_config_path() -> Result<PathBuf> {
     let config_path = dirs::config_dir()
