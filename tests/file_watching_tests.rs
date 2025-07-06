@@ -15,7 +15,7 @@ aliases:
   test-initial:
     value: echo "initial test"
     global: true
-  
+
   test-local:
     value: echo "local test"
     global: false
@@ -28,15 +28,15 @@ aliases:
   test-initial:
     value: echo "initial test"
     global: true
-  
+
   test-local:
     value: echo "local test"
     global: false
-    
+
   test-new-alias:
     value: echo "new alias added"
     global: true
-    
+
   test-another:
     value: echo "another new alias"
     global: false
@@ -96,7 +96,7 @@ aliases:
         // Test that reloaded config is properly validated
         let temp_dir = TempDir::new().expect("Failed to create temp dir");
         let config_file = temp_dir.path().join("aka.yml");
-        
+
         // Write invalid config
         let invalid_config = r#"
 invalid_yaml: [
@@ -114,8 +114,8 @@ invalid_yaml: [
         // Should now load successfully
         let aka = AKA::new(false, &Some(config_file.clone()));
         assert!(aka.is_ok(), "Loading valid config should succeed");
-        
-        let aka = aka.unwrap();
+
+        let aka = aka.expect("Config should load successfully after writing valid config");
         assert_eq!(aka.spec.aliases.len(), 2);
     }
 
@@ -136,7 +136,7 @@ invalid_yaml: [
 
         // Reload config
         let aka = AKA::new(false, &Some(config_file.clone())).expect("Failed to reload config");
-        
+
         // Test that old alias still works
         let result = aka.replace_with_mode("test-initial", aka_lib::ProcessingMode::Direct).expect("Failed to process old alias");
         assert_eq!(result.trim(), "echo \"initial test\"");
@@ -151,8 +151,8 @@ invalid_yaml: [
         // Test that get_config_path function works
         let config_path = get_config_path();
         assert!(config_path.is_ok(), "get_config_path should succeed");
-        
-        let path = config_path.unwrap();
+
+        let path = config_path.expect("get_config_path should return a valid path");
         assert!(path.to_string_lossy().contains("aka.yml"), "Config path should contain aka.yml");
     }
 
@@ -161,7 +161,7 @@ invalid_yaml: [
         // Test that alias count is properly tracked during reloads
         let temp_dir = TempDir::new().expect("Failed to create temp dir");
         let config_file = temp_dir.path().join("aka.yml");
-        
+
         // Initial config with 2 aliases
         fs::write(&config_file, TEST_CONFIG_INITIAL).expect("Failed to write initial config");
         let aka = AKA::new(false, &Some(config_file.clone())).expect("Failed to load initial config");
@@ -187,7 +187,7 @@ invalid_yaml: [
         fs::write(&config_file, TEST_CONFIG_UPDATED).expect("Failed to write config");
 
         let aka = AKA::new(false, &Some(config_file.clone())).expect("Failed to load config");
-        
+
         // Check global aliases
         let global_aliases: Vec<_> = aka.spec.aliases.values()
             .filter(|alias| alias.global)
@@ -243,7 +243,7 @@ mod daemon_ipc_tests {
             aliases_count: 42,
             message: "Config reloaded successfully".to_string(),
         };
-        
+
         let serialized = serde_json::to_string(&response).expect("Failed to serialize response");
         assert!(serialized.contains("ConfigReloaded"));
         assert!(serialized.contains("42"));
@@ -265,10 +265,10 @@ mod daemon_ipc_tests {
         // Test health request/response serialization
         let request = TestRequest::Health;
         let serialized_request = serde_json::to_string(&request).expect("Failed to serialize health request");
-        
+
         let response = TestResponse::Health { status: "healthy:10:aliases".to_string() };
         let serialized_response = serde_json::to_string(&response).expect("Failed to serialize health response");
-        
+
         // Verify both can be deserialized
         let _: TestRequest = serde_json::from_str(&serialized_request).expect("Failed to deserialize health request");
         let _: TestResponse = serde_json::from_str(&serialized_response).expect("Failed to deserialize health response");
@@ -279,7 +279,7 @@ mod daemon_ipc_tests {
         // Test error response serialization
         let response = TestResponse::Error { message: "Test error message".to_string() };
         let serialized = serde_json::to_string(&response).expect("Failed to serialize error response");
-        
+
         let deserialized: TestResponse = serde_json::from_str(&serialized).expect("Failed to deserialize error response");
         match deserialized {
             TestResponse::Error { message } => {
@@ -303,9 +303,9 @@ mod integration_tests {
         let output = Command::new("cargo")
             .args(&["build", "--bin", "aka-daemon"])
             .output();
-        
+
         assert!(output.is_ok(), "Should be able to build aka-daemon");
-        let output = output.unwrap();
+        let output = output.expect("Should be able to execute cargo build command");
         assert!(output.status.success(), "aka-daemon binary should build successfully");
     }
 
@@ -315,9 +315,9 @@ mod integration_tests {
         let output = Command::new("cargo")
             .args(&["run", "--bin", "aka", "--", "daemon", "--help"])
             .output();
-        
+
         assert!(output.is_ok(), "Should be able to run 'cargo run --bin aka daemon --help'");
-        let output = output.unwrap();
+        let output = output.expect("Should be able to execute cargo run command");
         let help_text = String::from_utf8_lossy(&output.stdout);
         assert!(help_text.contains("reload"), "Help text should mention reload option");
     }
@@ -327,24 +327,24 @@ mod integration_tests {
         // Test that we can create the data structures needed for file watching
         let shutdown = Arc::new(AtomicBool::new(false));
         let aka_data = Arc::new(Mutex::new("test data"));
-        
+
         // Simulate what the file watcher does
         assert!(!shutdown.load(Ordering::Relaxed));
-        
+
         // Simulate updating the data
         {
-            let mut data = aka_data.lock().unwrap();
+            let mut data = aka_data.lock().expect("Should be able to acquire mutex lock");
             *data = "updated data";
         }
-        
+
         // Verify the data was updated
         {
-            let data = aka_data.lock().unwrap();
+            let data = aka_data.lock().expect("Should be able to acquire mutex lock");
             assert_eq!(*data, "updated data");
         }
-        
+
         // Simulate shutdown
         shutdown.store(true, Ordering::Relaxed);
         assert!(shutdown.load(Ordering::Relaxed));
     }
-} 
+}

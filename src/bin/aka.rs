@@ -9,8 +9,12 @@ use serde::{Deserialize, Serialize};
 
 // Import from the shared library
 use aka_lib::{
-    setup_logging, execute_health_check, determine_socket_path,
-    AKA, print_alias, ProcessingMode
+    setup_logging,
+    execute_health_check,
+    determine_socket_path,
+    print_alias,
+    AKA,
+    ProcessingMode
 };
 
 
@@ -67,8 +71,6 @@ impl DaemonClient {
 
         Ok(response)
     }
-
-
 }
 
 fn get_after_help() -> &'static str {
@@ -82,7 +84,7 @@ fn get_after_help() -> &'static str {
 fn get_daemon_status_emoji() -> &'static str {
     use std::os::unix::net::UnixStream;
     use std::io::{BufRead, BufReader, Write};
-    
+
     // Check daemon status quickly and return appropriate emoji
     let socket_path = match determine_socket_path() {
         Ok(path) => path,
@@ -274,7 +276,10 @@ Environment=PATH={}:/usr/local/bin:/usr/bin:/bin
 WantedBy=default.target
 "#,
             daemon_path.display(),
-            dirs::home_dir().unwrap().join(".cargo/bin").display()
+            dirs::home_dir()
+                .ok_or_else(|| eyre::eyre!("Could not determine home directory"))?
+                .join(".cargo/bin")
+                .display()
         );
 
         // Write service file
@@ -325,8 +330,12 @@ WantedBy=default.target
 </plist>
 "#,
             daemon_path.display(),
-            dirs::home_dir().unwrap().display(),
-            dirs::home_dir().unwrap().display()
+            dirs::home_dir()
+                .ok_or_else(|| eyre::eyre!("Could not determine home directory"))?
+                .display(),
+            dirs::home_dir()
+                .ok_or_else(|| eyre::eyre!("Could not determine home directory"))?
+                .display()
         );
 
         // Write plist file
@@ -647,7 +656,7 @@ fn print_daemon_legend() {
 
 fn handle_daemon_reload() -> Result<()> {
     println!("🔄 Reloading daemon configuration...");
-    
+
     // Send reload request to daemon
     let request = DaemonRequest::ReloadConfig;
     match DaemonClient::send_request(request) {
@@ -673,7 +682,7 @@ fn handle_daemon_reload() -> Result<()> {
             return Err(e);
         }
     }
-    
+
     Ok(())
 }
 

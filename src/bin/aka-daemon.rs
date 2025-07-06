@@ -10,6 +10,7 @@ use log::{info, error, debug, warn};
 use notify::{Watcher, RecommendedWatcher, RecursiveMode, Event, EventKind};
 use std::sync::mpsc::{channel, Receiver};
 use std::thread;
+use eyre::{Result, eyre};
 
 // Import from the shared library
 use aka_lib::{determine_socket_path, AKA, setup_logging, ProcessingMode, hash_config_file, store_hash};
@@ -110,7 +111,7 @@ impl DaemonServer {
         debug!("✅ Daemon initialization complete: {:.3}ms", daemon_init_duration.as_secs_f64() * 1000.0);
         
         let alias_count = {
-            let aka_guard = aka.read().unwrap();
+            let aka_guard = aka.read().map_err(|e| eyre!("Failed to acquire read lock on AKA: {}", e))?;
             aka_guard.spec.aliases.len()
         };
         debug!("📦 Daemon has {} aliases cached in memory", alias_count);
@@ -135,7 +136,7 @@ impl DaemonServer {
         // Calculate new hash
         let new_hash = hash_config_file(&self.config_path)?;
         let current_hash = {
-            let hash_guard = self.config_hash.read().unwrap();
+            let hash_guard = self.config_hash.read().map_err(|e| eyre!("Failed to acquire read lock on config hash: {}", e))?;
             hash_guard.clone()
         };
         
@@ -151,13 +152,13 @@ impl DaemonServer {
         
         // Update stored config
         {
-            let mut aka_guard = self.aka.write().unwrap();
+            let mut aka_guard = self.aka.write().map_err(|e| eyre!("Failed to acquire write lock on AKA: {}", e))?;
             *aka_guard = new_aka;
         }
         
         // Update hash
         {
-            let mut hash_guard = self.config_hash.write().unwrap();
+            let mut hash_guard = self.config_hash.write().map_err(|e| eyre!("Failed to acquire write lock on config hash: {}", e))?;
             *hash_guard = new_hash.clone();
         }
         
@@ -168,7 +169,7 @@ impl DaemonServer {
         
         let reload_duration = start_reload.elapsed();
         let alias_count = {
-            let aka_guard = self.aka.read().unwrap();
+            let aka_guard = self.aka.read().map_err(|e| eyre!("Failed to acquire read lock on AKA: {}", e))?;
             aka_guard.spec.aliases.len()
         };
         
@@ -190,14 +191,14 @@ impl DaemonServer {
 
         let response = match request {
             Request::Query { cmdline } => {
-                let aka_guard = self.aka.read().unwrap();
+                let aka_guard = self.aka.read().map_err(|e| eyre!("Failed to acquire read lock on AKA: {}", e))?;
                 match aka_guard.replace_with_mode(&cmdline, ProcessingMode::Daemon) {
                     Ok(result) => Response::Success { data: result },
                     Err(e) => Response::Error { message: e.to_string() },
                 }
             },
             Request::List { global, patterns } => {
-                let aka_guard = self.aka.read().unwrap();
+                let aka_guard = self.aka.read().map_err(|e| eyre!("Failed to acquire read lock on AKA: {}", e))?;
                 let mut aliases: Vec<_> = aka_guard.spec.aliases.values().cloned().collect();
                 aliases.sort_by_key(|a| a.name.clone());
 
@@ -222,10 +223,10 @@ impl DaemonServer {
             },
             Request::Health => {
                 // Enhanced health check - confirm config is loaded and valid
-                let aka_guard = self.aka.read().unwrap();
+                let aka_guard = self.aka.read().map_err(|e| eyre!("Failed to acquire read lock on AKA: {}", e))?;
                 let alias_count = aka_guard.spec.aliases.len();
                 let current_hash = {
-                    let hash_guard = self.config_hash.read().unwrap();
+                    let hash_guard = self.config_hash.read().map_err(|e| eyre!("Failed to acquire read lock on config hash: {}", e))?;
                     hash_guard.clone()
                 };
                 
@@ -287,59 +288,88 @@ impl DaemonServer {
         let shutdown_for_watcher = Arc::clone(&self.shutdown);
         
         thread::spawn(move || {
-            let receiver = reload_receiver.lock().unwrap();
-            while !shutdown_for_watcher.load(Ordering::Relaxed) {
-                if let Ok(()) = receiver.recv_timeout(std::time::Duration::from_millis(100)) {
-                    debug!("📁 File change detected, reloading config automatically");
-                    
-                    // Calculate new hash
-                    match hash_config_file(&config_path_for_watcher) {
-                        Ok(new_hash) => {
-                            let current_hash = {
-                                let hash_guard = config_hash_for_watcher.read().unwrap();
-                                hash_guard.clone()
-                            };
-                            
-                            if new_hash != current_hash {
-                                debug!("🔄 Auto-reload: hash changed {} -> {}", current_hash, new_hash);
-                                
-                                // Load new config
-                                match AKA::new(false, &Some(config_path_for_watcher.clone())) {
-                                    Ok(new_aka) => {
-                                        // Update stored config
-                                        {
-                                            let mut aka_guard = aka_for_watcher.write().unwrap();
-                                            *aka_guard = new_aka;
+            let receiver = reload_receiver.lock().map_err(|e| {
+                error!("Failed to acquire lock on reload receiver: {}", e);
+            });
+            
+            if let Ok(receiver) = receiver {
+                while !shutdown_for_watcher.load(Ordering::Relaxed) {
+                    if let Ok(()) = receiver.recv_timeout(std::time::Duration::from_millis(100)) {
+                        debug!("📁 File change detected, reloading config automatically");
+                        
+                        // Calculate new hash
+                        match hash_config_file(&config_path_for_watcher) {
+                            Ok(new_hash) => {
+                                let current_hash = {
+                                    match config_hash_for_watcher.read() {
+                                        Ok(guard) => guard.clone(),
+                                        Err(e) => {
+                                            error!("Failed to acquire read lock on config hash: {}", e);
+                                            continue;
                                         }
-                                        
-                                        // Update hash
-                                        {
-                                            let mut hash_guard = config_hash_for_watcher.write().unwrap();
-                                            *hash_guard = new_hash.clone();
-                                        }
-                                        
-                                        // Store hash for CLI comparison
-                                        if let Err(e) = store_hash(&new_hash) {
-                                            warn!("Failed to store updated config hash: {}", e);
-                                        }
-                                        
-                                        let alias_count = {
-                                            let aka_guard = aka_for_watcher.read().unwrap();
-                                            aka_guard.spec.aliases.len()
-                                        };
-                                        
-                                        info!("🔄 Config auto-reloaded: {} aliases", alias_count);
-                                    },
-                                    Err(e) => {
-                                        error!("Failed to auto-reload config: {}", e);
                                     }
+                                };
+                                
+                                if new_hash != current_hash {
+                                    debug!("🔄 Auto-reload: hash changed {} -> {}", current_hash, new_hash);
+                                    
+                                    // Load new config
+                                    match AKA::new(false, &Some(config_path_for_watcher.clone())) {
+                                        Ok(new_aka) => {
+                                            // Update stored config
+                                            {
+                                                match aka_for_watcher.write() {
+                                                    Ok(mut aka_guard) => {
+                                                        *aka_guard = new_aka;
+                                                    }
+                                                    Err(e) => {
+                                                        error!("Failed to acquire write lock on AKA: {}", e);
+                                                        continue;
+                                                    }
+                                                }
+                                            }
+                                            
+                                            // Update hash
+                                            {
+                                                match config_hash_for_watcher.write() {
+                                                    Ok(mut hash_guard) => {
+                                                        *hash_guard = new_hash.clone();
+                                                    }
+                                                    Err(e) => {
+                                                        error!("Failed to acquire write lock on config hash: {}", e);
+                                                        continue;
+                                                    }
+                                                }
+                                            }
+                                            
+                                            // Store hash for CLI comparison
+                                            if let Err(e) = store_hash(&new_hash) {
+                                                warn!("Failed to store updated config hash: {}", e);
+                                            }
+                                            
+                                            let alias_count = {
+                                                match aka_for_watcher.read() {
+                                                    Ok(aka_guard) => aka_guard.spec.aliases.len(),
+                                                    Err(e) => {
+                                                        error!("Failed to acquire read lock on AKA: {}", e);
+                                                        0
+                                                    }
+                                                }
+                                            };
+                                            
+                                            info!("🔄 Config auto-reloaded: {} aliases", alias_count);
+                                        },
+                                        Err(e) => {
+                                            error!("Failed to auto-reload config: {}", e);
+                                        }
+                                    }
+                                } else {
+                                    debug!("⚡ Auto-reload: hash unchanged, skipping");
                                 }
-                            } else {
-                                debug!("⚡ Auto-reload: hash unchanged, skipping");
+                            },
+                            Err(e) => {
+                                error!("Failed to calculate config hash for auto-reload: {}", e);
                             }
-                        },
-                        Err(e) => {
-                            error!("Failed to calculate config hash for auto-reload: {}", e);
                         }
                     }
                 }
@@ -458,8 +488,8 @@ aliases:
     fn test_request_response_roundtrip() {
         // Test that requests and responses can be serialized and deserialized
         let original_request = Request::Query { cmdline: "test command".to_string() };
-        let serialized = serde_json::to_string(&original_request).unwrap();
-        let deserialized: Request = serde_json::from_str(&serialized).unwrap();
+        let serialized = serde_json::to_string(&original_request).map_err(|e| eyre!("Failed to serialize request: {}", e)).expect("Serialization should succeed");
+        let deserialized: Request = serde_json::from_str(&serialized).map_err(|e| eyre!("Failed to deserialize request: {}", e)).expect("Deserialization should succeed");
 
         match (original_request, deserialized) {
             (Request::Query { cmdline: orig }, Request::Query { cmdline: deser }) => {
