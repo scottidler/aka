@@ -838,7 +838,7 @@ fn handle_command_via_daemon_only(opts: &AkaOpts) -> Result<i32> {
                     },
                     Err(e) => {
                         debug!("❌ Daemon request failed: {}", e);
-                        eprintln!("Daemon communication failed: {}", e);
+                        debug!("🔄 Daemon communication failed, will fallback to direct mode");
                         debug!("🎯 === DAEMON-ONLY COMPLETE (COMMUNICATION ERROR) ===");
                         Err(e)
                     }
@@ -867,7 +867,7 @@ fn handle_command_via_daemon_only(opts: &AkaOpts) -> Result<i32> {
                     },
                     Err(e) => {
                         debug!("❌ Daemon request failed: {}", e);
-                        eprintln!("Daemon communication failed: {}", e);
+                        debug!("🔄 Daemon communication failed, will fallback to direct mode");
                         Ok(1)
                     }
                 }
