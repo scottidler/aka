@@ -51,7 +51,7 @@ expand-aka-space() {
     aka_health_check
     if [ $? -eq 0 ]; then
         log "expand-aka-space: BUFFER=$BUFFER"
-        OUTPUT=$(aka query "$BUFFER" 2>/dev/null)
+        OUTPUT=$(aka query "$BUFFER")
         RC=$?
         log "expand-aka-space: OUTPUT=$OUTPUT RC=$RC"
 
@@ -76,7 +76,7 @@ expand-aka-accept-line() {
     aka_health_check
     if [ $? -eq 0 ]; then
         log "expand-aka-accept-line: BUFFER=$BUFFER"
-        OUTPUT=$(aka --eol query "$BUFFER" 2>/dev/null)
+        OUTPUT=$(aka --eol query "$BUFFER")
         RC=$?
         log "expand-aka-accept-line: OUTPUT=$OUTPUT RC=$RC"
 
