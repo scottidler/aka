@@ -150,9 +150,16 @@ impl DaemonClient {
 
         debug!("📥 Received response: {}", response_line.trim());
 
+        // Validate response size
+        if let Err(e) = aka_lib::protocol::validate_message_size(&response_line) {
+            return Err(DaemonError::ProtocolError(format!("Response validation failed: {}", e)));
+        }
+
         // Parse response
         let response: DaemonResponse = serde_json::from_str(&response_line.trim())
             .map_err(|e| DaemonError::ProtocolError(format!("Failed to parse response: {}", e)))?;
+
+
 
         // Check for daemon shutdown response
         if let DaemonResponse::ShutdownAck = response {

@@ -179,6 +179,15 @@ impl DaemonServer {
 
         // Read request line
         reader.read_line(&mut line)?;
+
+        // Basic message size check
+        if let Err(e) = aka_lib::protocol::validate_message_size(&line) {
+            let error_response = Response::Error { message: format!("Message too large: {}", e) };
+            let response_json = serde_json::to_string(&error_response)?;
+            writeln!(stream, "{}", response_json)?;
+            return Ok(());
+        }
+
         let request: Request = serde_json::from_str(&line.trim())?;
 
         debug!("Received request: {:?}", request);

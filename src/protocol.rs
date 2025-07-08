@@ -1,8 +1,12 @@
 use serde::{Deserialize, Serialize};
+use eyre::{eyre, Result};
 
 /// Shared protocol definitions for daemon-client communication
 /// This module provides a single source of truth for all IPC message types
 /// to ensure consistency between daemon and direct execution modes.
+
+// Basic size limits to prevent technical issues
+const MAX_MESSAGE_SIZE: usize = 1_000_000;   // 1MB max total message
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(tag = "type")]
@@ -30,15 +34,32 @@ pub enum DaemonRequest {
 #[serde(tag = "type")]
 pub enum DaemonResponse {
     /// Successful operation with data
-    Success { data: String },
+    Success {
+        data: String
+    },
     /// Error occurred during processing
-    Error { message: String },
+    Error {
+        message: String
+    },
     /// Health check response
-    Health { status: String },
+    Health {
+        status: String
+    },
     /// Configuration reload response
-    ConfigReloaded { success: bool, message: String },
+    ConfigReloaded {
+        success: bool,
+        message: String
+    },
     /// Shutdown acknowledgment
     ShutdownAck,
+}
+
+/// Validate the total message size before processing
+pub fn validate_message_size(json: &str) -> Result<()> {
+    if json.len() > MAX_MESSAGE_SIZE {
+        return Err(eyre!("Message too large: {} bytes (max: {})", json.len(), MAX_MESSAGE_SIZE));
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -102,7 +123,7 @@ mod tests {
         let responses = vec![
             DaemonResponse::Success { data: "data".to_string() },
             DaemonResponse::Error { message: "error".to_string() },
-            DaemonResponse::Health { status: "healthy".to_string() },
+            DaemonResponse::Health { status: "healthy:5:aliases:abc123:synced".to_string() },
             DaemonResponse::ConfigReloaded { success: true, message: "reloaded".to_string() },
             DaemonResponse::ShutdownAck,
         ];
@@ -111,5 +132,15 @@ mod tests {
             let serialized = serde_json::to_string(&response).expect("Failed to serialize response");
             let _: DaemonResponse = serde_json::from_str(&serialized).expect("Failed to deserialize response");
         }
+    }
+
+    #[test]
+    fn test_message_size_validation() {
+        // Valid message size
+        assert!(validate_message_size("small message").is_ok());
+
+        // Too large message should fail
+        let large_message = "a".repeat(MAX_MESSAGE_SIZE + 1);
+        assert!(validate_message_size(&large_message).is_err());
     }
 }

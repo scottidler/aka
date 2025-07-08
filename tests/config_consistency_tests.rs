@@ -49,14 +49,14 @@ fn test_config_path_error_handling() {
     let result = get_config_path(&home_dir);
     assert!(result.is_err());
     let error_msg = result.unwrap_err().to_string();
-    assert!(error_msg.contains("Config file not found"));
+    assert!(error_msg.contains("Configuration file not found"));
 
     // Test override path when file doesn't exist
     let non_existent = temp_dir.path().join("non_existent.yml");
     let result = get_config_path_with_override(&home_dir, &Some(non_existent));
     assert!(result.is_err());
     let error_msg = result.unwrap_err().to_string();
-    assert!(error_msg.contains("Custom config file not found"));
+    assert!(error_msg.contains("Configuration file not found"));
 }
 
 /// Test that config validation catches common errors

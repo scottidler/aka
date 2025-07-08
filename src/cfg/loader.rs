@@ -91,27 +91,55 @@ impl Loader {
         Ok(())
     }
 
-    /// Comprehensive configuration validation
+    /// Comprehensive configuration validation with enhanced error context
     fn validate_config(&self, spec: &Spec, config_path: &PathBuf) -> Result<()> {
-        let mut errors = Vec::new();
+        let mut validation_errors = Vec::new();
 
-        // Validate aliases
+        // Validate aliases with enhanced error context
         if let Err(alias_errors) = self.validate_aliases(&spec.aliases, config_path) {
-            errors.extend(alias_errors);
+            for error in alias_errors {
+                validation_errors.push(crate::ValidationError {
+                    error_type: "Alias Validation".to_string(),
+                    message: error,
+                    line: None, // TODO: Extract line numbers from YAML parsing
+                    column: None,
+                    context: "aliases section".to_string(),
+                });
+            }
         }
 
-        // Validate lookups
+        // Validate lookups with enhanced error context
         if let Err(lookup_errors) = self.validate_lookups(&spec.lookups, config_path) {
-            errors.extend(lookup_errors);
+            for error in lookup_errors {
+                validation_errors.push(crate::ValidationError {
+                    error_type: "Lookup Validation".to_string(),
+                    message: error,
+                    line: None, // TODO: Extract line numbers from YAML parsing
+                    column: None,
+                    context: "lookups section".to_string(),
+                });
+            }
         }
 
-        // Validate cross-references
+        // Validate cross-references with enhanced error context
         if let Err(ref_errors) = self.validate_cross_references(spec, config_path) {
-            errors.extend(ref_errors);
+            for error in ref_errors {
+                validation_errors.push(crate::ValidationError {
+                    error_type: "Cross-reference Validation".to_string(),
+                    message: error,
+                    line: None, // TODO: Extract line numbers from YAML parsing
+                    column: None,
+                    context: "alias and lookup references".to_string(),
+                });
+            }
         }
 
-        if !errors.is_empty() {
-            return Err(eyre::eyre!("Config validation failed:\n{}", errors.join("\n")));
+        if !validation_errors.is_empty() {
+            let context = crate::ErrorContext::new("validating configuration structure")
+                .with_file(config_path.clone())
+                .with_context("checking aliases, lookups, and cross-references");
+
+            return Err(eyre::eyre!(context.to_config_validation_error(validation_errors)));
         }
 
         Ok(())

@@ -9,6 +9,7 @@ use serde::{Serialize, Deserialize};
 
 pub mod cfg;
 pub mod protocol;
+pub mod error;
 
 use cfg::alias::Alias;
 use cfg::loader::Loader;
@@ -21,6 +22,9 @@ pub use cfg::spec::Spec as ConfigSpec;
 
 // Re-export protocol types for shared use
 pub use protocol::{DaemonRequest, DaemonResponse};
+
+// Re-export error types for enhanced error handling
+pub use error::{AkaError, ErrorContext, ValidationError, enhance_error};
 
 // Daemon error handling types and constants
 #[derive(Debug, Clone)]
@@ -396,13 +400,29 @@ pub fn get_timing_file_path() -> Result<PathBuf> {
 }
 
 pub fn get_config_path(home_dir: &PathBuf) -> Result<PathBuf> {
-    let config_path = home_dir.join(".config").join("aka").join("aka.yml");
+    let config_dirs = [
+        home_dir.join(".config").join("aka"),
+        home_dir.clone(),
+    ];
 
-    if config_path.exists() {
-        Ok(config_path)
-    } else {
-        Err(eyre!("Config file not found at {:?}. Please create the config file first.", config_path))
+    let config_files = ["aka.yml", "aka.yaml", ".aka.yml", ".aka.yaml"];
+    let mut attempted_paths = Vec::new();
+
+    for config_dir in &config_dirs {
+        for config_file in &config_files {
+            let path = config_dir.join(config_file);
+            attempted_paths.push(path.clone());
+            if path.exists() {
+                return Ok(path);
+            }
+        }
     }
+
+    let context = ErrorContext::new("locating configuration file")
+        .with_context("checking standard configuration locations");
+
+    let aka_error = context.to_config_not_found_error(attempted_paths, home_dir.clone(), None);
+    Err(eyre::eyre!(aka_error))
 }
 
 pub fn get_config_path_with_override(home_dir: &PathBuf, override_path: &Option<PathBuf>) -> Result<PathBuf> {
@@ -411,7 +431,12 @@ pub fn get_config_path_with_override(home_dir: &PathBuf, override_path: &Option<
             if path.exists() {
                 Ok(path.clone())
             } else {
-                Err(eyre!("Custom config file not found at {:?}", path))
+                let context = ErrorContext::new("locating custom configuration file")
+                    .with_file(path.clone())
+                    .with_context("custom config path specified via --config option");
+
+                let aka_error = context.to_config_not_found_error(vec![path.clone()], home_dir.clone(), Some(path.clone()));
+                Err(eyre::eyre!(aka_error))
             }
         }
         None => get_config_path(home_dir),
