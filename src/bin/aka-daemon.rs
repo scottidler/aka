@@ -5,7 +5,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, RwLock, Mutex};
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::io::{BufRead, BufReader, Write};
-use serde::{Deserialize, Serialize};
+
 use log::{info, error, debug, warn};
 use notify::{Watcher, RecommendedWatcher, RecursiveMode, Event, EventKind};
 use std::sync::mpsc::{channel, Receiver};
@@ -13,7 +13,7 @@ use std::thread;
 use eyre::{Result, eyre};
 
 // Import from the shared library
-use aka_lib::{determine_socket_path, AKA, setup_logging, ProcessingMode, hash_config_file, store_hash};
+use aka_lib::{determine_socket_path, AKA, setup_logging, ProcessingMode, hash_config_file, store_hash, DaemonRequest, DaemonResponse};
 
 #[derive(Parser)]
 #[command(name = "aka-daemon", about = "AKA Alias Daemon")]
@@ -25,25 +25,9 @@ struct DaemonOpts {
     config: Option<PathBuf>,
 }
 
-// IPC Protocol Messages
-#[derive(Serialize, Deserialize, Debug)]
-#[serde(tag = "type")]
-enum Request {
-    Query { cmdline: String },
-    List { global: bool, patterns: Vec<String> },
-    Health,
-    ReloadConfig,
-    Shutdown,
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-#[serde(tag = "type")]
-enum Response {
-    Success { data: String },
-    Error { message: String },
-    Health { status: String },
-    ConfigReloaded { success: bool, message: String },
-}
+// IPC Protocol Messages - now using shared types from aka_lib
+type Request = DaemonRequest;
+type Response = DaemonResponse;
 
 struct DaemonServer {
     aka: Arc<RwLock<AKA>>,
@@ -206,8 +190,10 @@ impl DaemonServer {
         debug!("Received request: {:?}", request);
 
         let response = match request {
-            Request::Query { cmdline } => {
+            Request::Query { cmdline, eol } => {
                 let mut aka_guard = self.aka.write().map_err(|e| eyre!("Failed to acquire write lock on AKA: {}", e))?;
+                // Update AKA's eol setting to match the request
+                aka_guard.eol = eol;
                 match aka_guard.replace_with_mode(&cmdline, ProcessingMode::Daemon) {
                     Ok(result) => Response::Success { data: result },
                     Err(e) => Response::Error { message: e.to_string() },
@@ -451,7 +437,10 @@ mod tests {
         let serialized = serde_json::to_string(&health_request);
         assert!(serialized.is_ok());
 
-        let query_request = Request::Query { cmdline: "test command".to_string() };
+        let query_request = Request::Query {
+            cmdline: "test command".to_string(),
+            eol: false,
+        };
         let serialized = serde_json::to_string(&query_request);
         assert!(serialized.is_ok());
 
@@ -479,13 +468,17 @@ mod tests {
     #[test]
     fn test_request_response_roundtrip() {
         // Test that requests and responses can be serialized and deserialized
-        let original_request = Request::Query { cmdline: "test command".to_string() };
+        let original_request = Request::Query {
+            cmdline: "test command".to_string(),
+            eol: true,
+        };
         let serialized = serde_json::to_string(&original_request).map_err(|e| eyre!("Failed to serialize request: {}", e)).expect("Serialization should succeed");
         let deserialized: Request = serde_json::from_str(&serialized).map_err(|e| eyre!("Failed to deserialize request: {}", e)).expect("Deserialization should succeed");
 
         match (original_request, deserialized) {
-            (Request::Query { cmdline: orig }, Request::Query { cmdline: deser }) => {
+            (Request::Query { cmdline: orig, eol: orig_eol }, Request::Query { cmdline: deser, eol: deser_eol }) => {
                 assert_eq!(orig, deser);
+                assert_eq!(orig_eol, deser_eol);
             },
             _ => panic!("Request roundtrip failed"),
         }

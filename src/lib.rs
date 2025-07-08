@@ -8,6 +8,8 @@ use std::collections::HashMap;
 use serde::{Serialize, Deserialize};
 
 pub mod cfg;
+pub mod protocol;
+
 use cfg::alias::Alias;
 use cfg::loader::Loader;
 use cfg::spec::Spec;
@@ -16,6 +18,103 @@ use cfg::spec::Spec;
 pub use cfg::alias::Alias as AliasType;
 pub use cfg::loader::Loader as ConfigLoader;
 pub use cfg::spec::Spec as ConfigSpec;
+
+// Re-export protocol types for shared use
+pub use protocol::{DaemonRequest, DaemonResponse};
+
+// Daemon error handling types and constants
+#[derive(Debug, Clone)]
+pub enum DaemonError {
+    ConnectionTimeout,
+    ReadTimeout,
+    WriteTimeout,
+    ConnectionRefused,
+    SocketNotFound,
+    SocketPermissionDenied,
+    ProtocolError(String),
+    DaemonShutdown,
+    TotalOperationTimeout,
+    UnknownError(String),
+}
+
+impl std::fmt::Display for DaemonError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            DaemonError::ConnectionTimeout => write!(f, "Daemon connection timeout"),
+            DaemonError::ReadTimeout => write!(f, "Daemon read timeout"),
+            DaemonError::WriteTimeout => write!(f, "Daemon write timeout"),
+            DaemonError::ConnectionRefused => write!(f, "Daemon connection refused"),
+            DaemonError::SocketNotFound => write!(f, "Daemon socket not found"),
+            DaemonError::SocketPermissionDenied => write!(f, "Daemon socket permission denied"),
+            DaemonError::ProtocolError(msg) => write!(f, "Daemon protocol error: {}", msg),
+            DaemonError::DaemonShutdown => write!(f, "Daemon is shutting down"),
+            DaemonError::TotalOperationTimeout => write!(f, "Total daemon operation timeout"),
+            DaemonError::UnknownError(msg) => write!(f, "Unknown daemon error: {}", msg),
+        }
+    }
+}
+
+impl std::error::Error for DaemonError {}
+
+// Aggressive timeout constants for CLI performance
+pub const DAEMON_CONNECTION_TIMEOUT_MS: u64 = 100;  // 100ms to connect
+pub const DAEMON_READ_TIMEOUT_MS: u64 = 200;        // 200ms to read response
+pub const DAEMON_WRITE_TIMEOUT_MS: u64 = 50;        // 50ms to write request
+pub const DAEMON_TOTAL_TIMEOUT_MS: u64 = 300;       // 300ms total operation limit
+pub const DAEMON_RETRY_DELAY_MS: u64 = 50;          // 50ms between retries
+pub const DAEMON_MAX_RETRIES: u32 = 1;              // Only 1 retry attempt
+
+// Timeout utility functions
+pub fn should_retry_daemon_error(error: &DaemonError) -> bool {
+    match error {
+        DaemonError::ConnectionTimeout => true,
+        DaemonError::ConnectionRefused => true,
+        DaemonError::ReadTimeout => false,  // Don't retry read timeouts
+        DaemonError::WriteTimeout => false, // Don't retry write timeouts
+        DaemonError::SocketNotFound => false,
+        DaemonError::SocketPermissionDenied => false,
+        DaemonError::ProtocolError(_) => false,
+        DaemonError::DaemonShutdown => false,
+        DaemonError::TotalOperationTimeout => false,
+        DaemonError::UnknownError(_) => false,
+    }
+}
+
+pub fn categorize_daemon_error(error: &std::io::Error) -> DaemonError {
+    use std::io::ErrorKind;
+    match error.kind() {
+        ErrorKind::TimedOut => DaemonError::ConnectionTimeout,
+        ErrorKind::ConnectionRefused => DaemonError::ConnectionRefused,
+        ErrorKind::NotFound => DaemonError::SocketNotFound,
+        ErrorKind::PermissionDenied => DaemonError::SocketPermissionDenied,
+        ErrorKind::WouldBlock => DaemonError::ReadTimeout,
+        _ => DaemonError::UnknownError(error.to_string()),
+    }
+}
+
+pub fn validate_socket_path(socket_path: &PathBuf) -> Result<(), DaemonError> {
+    if !socket_path.exists() {
+        return Err(DaemonError::SocketNotFound);
+    }
+
+    // Check if it's actually a socket (not a regular file)
+    match std::fs::metadata(socket_path) {
+        Ok(metadata) => {
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::FileTypeExt;
+                if !metadata.file_type().is_socket() {
+                    return Err(DaemonError::SocketNotFound);
+                }
+            }
+        }
+        Err(e) => {
+            return Err(categorize_daemon_error(&e));
+        }
+    }
+
+    Ok(())
+}
 
 // JSON cache structure for aliases with usage counts
 #[derive(Serialize, Deserialize)]
