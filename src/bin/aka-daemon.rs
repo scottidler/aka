@@ -55,11 +55,11 @@ struct DaemonServer {
 }
 
 impl DaemonServer {
-    fn new(config: &Option<PathBuf>) -> Result<Self, Box<dyn std::error::Error>> {
+    fn new(config: &Option<PathBuf>) -> Result<Self> {
         Self::new_with_cache_dir(config, None)
     }
 
-    fn new_with_cache_dir(config: &Option<PathBuf>, _cache_dir: Option<&std::path::Path>) -> Result<Self, Box<dyn std::error::Error>> {
+    fn new_with_cache_dir(config: &Option<PathBuf>, _cache_dir: Option<&std::path::Path>) -> Result<Self> {
         use std::time::Instant;
 
         let start_daemon_init = Instant::now();
@@ -107,10 +107,10 @@ impl DaemonServer {
                 }
                 Err(e) => error!("File watcher error: {}", e),
             }
-        })?;
+        }).map_err(|e| eyre!("Failed to create file watcher: {}", e))?;
 
         // Watch the config file
-        watcher.watch(&config_path, RecursiveMode::NonRecursive)?;
+        watcher.watch(&config_path, RecursiveMode::NonRecursive).map_err(|e| eyre!("Failed to watch config file: {}", e))?;
         debug!("👀 File watcher set up for: {:?}", config_path);
 
         let daemon_init_duration = start_daemon_init.elapsed();
@@ -133,7 +133,7 @@ impl DaemonServer {
         })
     }
 
-    fn reload_config(&self) -> Result<String, Box<dyn std::error::Error>> {
+    fn reload_config(&self) -> Result<String> {
         use std::time::Instant;
 
         let start_reload = Instant::now();
@@ -199,7 +199,7 @@ impl DaemonServer {
         Ok(message)
     }
 
-    fn handle_client(&self, mut stream: UnixStream) -> Result<(), Box<dyn std::error::Error>> {
+    fn handle_client(&self, mut stream: UnixStream) -> Result<()> {
         let mut reader = BufReader::new(&stream);
         let mut line = String::new();
 
@@ -285,7 +285,7 @@ impl DaemonServer {
         Ok(())
     }
 
-    fn run(&self, socket_path: &PathBuf) -> Result<(), Box<dyn std::error::Error>> {
+    fn run(&self, socket_path: &PathBuf) -> Result<()> {
         // Remove existing socket file if it exists
         if socket_path.exists() {
             fs::remove_file(socket_path)?;
