@@ -1,6 +1,6 @@
 use eyre::Result;
 use regex::Regex;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::str::FromStr;
 
 const fn default_true() -> bool {
@@ -11,7 +11,11 @@ const fn default_false() -> bool {
     false
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize)]
+const fn default_zero() -> u64 {
+    0
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
 pub struct Alias {
     #[serde(skip_deserializing)]
     pub name: String,
@@ -23,6 +27,9 @@ pub struct Alias {
 
     #[serde(default = "default_false")]
     pub global: bool,
+
+    #[serde(default = "default_zero")]
+    pub count: u64,
 }
 
 impl Alias {
@@ -101,6 +108,7 @@ impl FromStr for Alias {
             value: s.to_owned(),
             space: true,
             global: false,
+            count: 0,
         })
     }
 }
@@ -116,6 +124,7 @@ mod tests {
             value: "echo $1 $2".to_string(),
             space: true,
             global: false,
+            count: 0,
         };
 
         assert_eq!(alias.positionals()?, vec!["$1", "$2"]);
@@ -129,6 +138,7 @@ mod tests {
             value: "echo $name $location".to_string(),
             space: true,
             global: false,
+            count: 0,
         };
 
         assert_eq!(alias.keywords()?, vec!["$location", "$name"]);
@@ -142,6 +152,7 @@ mod tests {
             value: "echo $@".to_string(),
             space: true,
             global: false,
+            count: 0,
         };
 
         assert!(alias.is_variadic());
@@ -154,6 +165,7 @@ mod tests {
             value: "echo $1 $2".to_string(),
             space: true,
             global: false,
+            count: 0,
         };
 
         let mut remainders = vec!["Hello".to_string(), "World".to_string()];
@@ -165,6 +177,7 @@ mod tests {
             value: "echo $@".to_string(),
             space: true,
             global: false,
+            count: 0,
         };
 
         let mut remainders_variadic = vec!["Hello".to_string(), "from".to_string(), "Rust".to_string()];
@@ -185,6 +198,7 @@ mod tests {
         assert_eq!(alias.value, s);
         assert!(alias.space);
         assert!(!alias.global);
+        assert_eq!(alias.count, 0);
         Ok(())
     }
 
@@ -195,10 +209,12 @@ mod tests {
             value: "echo Hello World".to_string(),
             space: true,
             global: false,
+            count: 0,
         };
 
         assert_eq!(alias.positionals()?, Vec::<String>::new());
         assert_eq!(alias.keywords()?, Vec::<String>::new());
+        assert_eq!(alias.count, 0);
         Ok(())
     }
 
@@ -209,11 +225,13 @@ mod tests {
             value: "echo $@".to_string(),
             space: true,
             global: false,
+            count: 0,
         };
 
         let mut remainders = vec!["Hello".to_string(), "World".to_string()];
         assert_eq!(alias.replace(&mut remainders)?, ("echo Hello World".to_string(), 2));
         assert_eq!(remainders, Vec::<String>::new());
+        assert_eq!(alias.count, 0); // Count is not modified by the replace method itself
         Ok(())
     }
 
@@ -224,10 +242,12 @@ mod tests {
             value: "echo $1 $2 $3".to_string(),
             space: true,
             global: false,
+            count: 0,
         };
 
         let mut remainders = vec!["Hello".to_string(), "World".to_string()];
         assert_eq!(alias.replace(&mut remainders)?, ("alias".to_string(), 0)); // Alias name is returned when not enough arguments.
+        assert_eq!(alias.count, 0);
         Ok(())
     }
 }

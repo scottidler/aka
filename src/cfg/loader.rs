@@ -95,6 +95,7 @@ lookups:
                     value: "echo Hello World".to_string(),
                     space: true,
                     global: false,
+                    count: 0,
                 },
             );
             map

@@ -1,8 +1,17 @@
 use std::fs;
 use std::time::Duration;
-use std::thread;
 use tempfile::TempDir;
 use aka_lib::{AKA, get_config_path};
+
+fn setup_test_environment(_test_name: &str) -> (TempDir, TempDir) {
+    // Create temp directory for config file
+    let config_temp_dir = TempDir::new().expect("Failed to create temp directory");
+
+    // Create temp directory for cache files
+    let cache_temp_dir = TempDir::new().expect("Failed to create temp directory");
+
+    (config_temp_dir, cache_temp_dir)
+}
 
 #[cfg(test)]
 mod file_watching_tests {
@@ -44,34 +53,40 @@ aliases:
 
     #[test]
     fn test_manual_config_reload() {
+        let (config_temp_dir, cache_temp_dir) = setup_test_environment("manual_reload");
+        let cache_path = cache_temp_dir.path().to_path_buf();
+
         // Create temporary config file
-        let temp_dir = TempDir::new().expect("Failed to create temp dir");
-        let config_file = temp_dir.path().join("aka.yml");
+        let config_file = config_temp_dir.path().join("aka.yml");
         fs::write(&config_file, TEST_CONFIG_INITIAL).expect("Failed to write initial config");
 
         // Load initial config
-        let mut aka = AKA::new(false, &Some(config_file.clone())).expect("Failed to load initial config");
+        let mut aka = AKA::new_with_cache_dir(false, &Some(config_file.clone()), Some(&cache_path)).expect("Failed to load initial config");
         assert_eq!(aka.spec.aliases.len(), 2);
         assert!(aka.spec.aliases.contains_key("test-initial"));
         assert!(aka.spec.aliases.contains_key("test-local"));
 
-        // Update config file
+        // Update config file with new aliases
         fs::write(&config_file, TEST_CONFIG_UPDATED).expect("Failed to write updated config");
 
         // Manually reload config
-        aka = AKA::new(false, &Some(config_file.clone())).expect("Failed to reload config");
+        aka = AKA::new_with_cache_dir(false, &Some(config_file.clone()), Some(&cache_path)).expect("Failed to reload config");
         assert_eq!(aka.spec.aliases.len(), 4);
         assert!(aka.spec.aliases.contains_key("test-initial"));
         assert!(aka.spec.aliases.contains_key("test-local"));
         assert!(aka.spec.aliases.contains_key("test-new-alias"));
         assert!(aka.spec.aliases.contains_key("test-another"));
+
+        // Clean up
+        // config_temp_dir will be dropped here
     }
 
     #[test]
     fn test_config_file_modification_detection() {
+        let (config_temp_dir, _cache_temp_dir) = setup_test_environment("modification_detection");
+
         // Create temporary config file
-        let temp_dir = TempDir::new().expect("Failed to create temp dir");
-        let config_file = temp_dir.path().join("aka.yml");
+        let config_file = config_temp_dir.path().join("aka.yml");
         fs::write(&config_file, TEST_CONFIG_INITIAL).expect("Failed to write initial config");
 
         // Get initial modification time
@@ -79,55 +94,59 @@ aliases:
         let initial_modified = initial_metadata.modified().expect("Failed to get modification time");
 
         // Wait a bit to ensure different timestamp
-        thread::sleep(Duration::from_millis(10));
+        std::thread::sleep(Duration::from_millis(10));
 
-        // Update config file
+        // Update the file
         fs::write(&config_file, TEST_CONFIG_UPDATED).expect("Failed to write updated config");
 
-        // Check that modification time changed
-        let updated_metadata = fs::metadata(&config_file).expect("Failed to get updated file metadata");
-        let updated_modified = updated_metadata.modified().expect("Failed to get updated modification time");
+        // Get updated modification time
+        let updated_metadata = fs::metadata(&config_file).expect("Failed to get file metadata");
+        let updated_modified = updated_metadata.modified().expect("Failed to get modification time");
 
+        // Verify modification time changed
         assert!(updated_modified > initial_modified, "File modification time should have changed");
+
+        // Clean up
+        // config_temp_dir will be dropped here
     }
 
     #[test]
     fn test_config_validation_after_reload() {
-        // Test that reloaded config is properly validated
-        let temp_dir = TempDir::new().expect("Failed to create temp dir");
-        let config_file = temp_dir.path().join("aka.yml");
+        let (config_temp_dir, cache_temp_dir) = setup_test_environment("config_validation");
+        let cache_path = cache_temp_dir.path().to_path_buf();
+        let config_file = config_temp_dir.path().join("aka.yml");
 
-        // Write invalid config
+        // Test valid config
+        fs::write(&config_file, TEST_CONFIG_INITIAL).expect("Failed to write valid config");
+        let result = AKA::new_with_cache_dir(false, &Some(config_file.clone()), Some(&cache_path));
+        assert!(result.is_ok(), "Loading valid config should succeed");
+
+        // Test invalid config (missing required fields)
         let invalid_config = r#"
 invalid_yaml: [
-  - missing_closing_bracket
-"#;
+        "#;
         fs::write(&config_file, invalid_config).expect("Failed to write invalid config");
-
-        // Attempt to load invalid config should fail
-        let result = AKA::new(false, &Some(config_file.clone()));
+        let result = AKA::new_with_cache_dir(false, &Some(config_file.clone()), Some(&cache_path));
         assert!(result.is_err(), "Loading invalid config should fail");
 
-        // Write valid config
-        fs::write(&config_file, TEST_CONFIG_INITIAL).expect("Failed to write valid config");
+        // Test config that becomes valid again
+        fs::write(&config_file, TEST_CONFIG_UPDATED).expect("Failed to write valid config again");
+        let result = AKA::new_with_cache_dir(false, &Some(config_file.clone()), Some(&cache_path));
+        assert!(result.is_ok(), "Loading valid config again should succeed");
 
-        // Should now load successfully
-        let aka = AKA::new(false, &Some(config_file.clone()));
-        assert!(aka.is_ok(), "Loading valid config should succeed");
-
-        let aka = aka.expect("Config should load successfully after writing valid config");
-        assert_eq!(aka.spec.aliases.len(), 2);
+        // Clean up
+        // config_temp_dir will be dropped here
     }
 
     #[test]
     fn test_alias_functionality_after_reload() {
-        // Test that aliases work correctly after config reload
-        let temp_dir = TempDir::new().expect("Failed to create temp dir");
-        let config_file = temp_dir.path().join("aka.yml");
+        let (config_temp_dir, cache_temp_dir) = setup_test_environment("alias_functionality");
+        let cache_path = cache_temp_dir.path().to_path_buf();
+        let config_file = config_temp_dir.path().join("aka.yml");
         fs::write(&config_file, TEST_CONFIG_INITIAL).expect("Failed to write initial config");
 
         // Load initial config and test alias
-        let aka = AKA::new(false, &Some(config_file.clone())).expect("Failed to load initial config");
+        let mut aka = AKA::new_with_cache_dir(false, &Some(config_file.clone()), Some(&cache_path)).expect("Failed to load initial config");
         let result = aka.replace_with_mode("test-initial", aka_lib::ProcessingMode::Direct).expect("Failed to process alias");
         assert_eq!(result.trim(), "echo \"initial test\"");
 
@@ -135,7 +154,7 @@ invalid_yaml: [
         fs::write(&config_file, TEST_CONFIG_UPDATED).expect("Failed to write updated config");
 
         // Reload config
-        let aka = AKA::new(false, &Some(config_file.clone())).expect("Failed to reload config");
+        let mut aka = AKA::new_with_cache_dir(false, &Some(config_file.clone()), Some(&cache_path)).expect("Failed to reload config");
 
         // Test that old alias still works
         let result = aka.replace_with_mode("test-initial", aka_lib::ProcessingMode::Direct).expect("Failed to process old alias");
@@ -144,32 +163,40 @@ invalid_yaml: [
         // Test that new alias works
         let result = aka.replace_with_mode("test-new-alias", aka_lib::ProcessingMode::Direct).expect("Failed to process new alias");
         assert_eq!(result.trim(), "echo \"new alias added\"");
+
+        // Clean up
+        // config_temp_dir will be dropped here
     }
 
     #[test]
     fn test_get_config_path_function() {
+        let (_config_temp_dir, _cache_temp_dir) = setup_test_environment("config_path");
+
         // Test that get_config_path function works
         let config_path = get_config_path();
         assert!(config_path.is_ok(), "get_config_path should succeed");
 
         let path = config_path.expect("get_config_path should return a valid path");
         assert!(path.to_string_lossy().contains("aka.yml"), "Config path should contain aka.yml");
+
+        // Clean up
+        // config_temp_dir will be dropped here
     }
 
     #[test]
     fn test_alias_count_tracking() {
-        // Test that alias count is properly tracked during reloads
-        let temp_dir = TempDir::new().expect("Failed to create temp dir");
-        let config_file = temp_dir.path().join("aka.yml");
+        let (config_temp_dir, cache_temp_dir) = setup_test_environment("alias_count_tracking");
+        let cache_path = cache_temp_dir.path().to_path_buf();
+        let config_file = config_temp_dir.path().join("aka.yml");
 
         // Initial config with 2 aliases
         fs::write(&config_file, TEST_CONFIG_INITIAL).expect("Failed to write initial config");
-        let aka = AKA::new(false, &Some(config_file.clone())).expect("Failed to load initial config");
+        let aka = AKA::new_with_cache_dir(false, &Some(config_file.clone()), Some(&cache_path)).expect("Failed to load initial config");
         assert_eq!(aka.spec.aliases.len(), 2);
 
         // Updated config with 4 aliases
         fs::write(&config_file, TEST_CONFIG_UPDATED).expect("Failed to write updated config");
-        let aka = AKA::new(false, &Some(config_file.clone())).expect("Failed to reload config");
+        let aka = AKA::new_with_cache_dir(false, &Some(config_file.clone()), Some(&cache_path)).expect("Failed to reload config");
         assert_eq!(aka.spec.aliases.len(), 4);
 
         // Verify specific aliases exist
@@ -177,16 +204,19 @@ invalid_yaml: [
         assert!(aka.spec.aliases.contains_key("test-local"));
         assert!(aka.spec.aliases.contains_key("test-new-alias"));
         assert!(aka.spec.aliases.contains_key("test-another"));
+
+        // Clean up
+        // config_temp_dir will be dropped here
     }
 
     #[test]
     fn test_global_vs_local_aliases_after_reload() {
-        // Test that global/local distinction is preserved after reload
-        let temp_dir = TempDir::new().expect("Failed to create temp dir");
-        let config_file = temp_dir.path().join("aka.yml");
+        let (config_temp_dir, cache_temp_dir) = setup_test_environment("global_vs_local");
+        let cache_path = cache_temp_dir.path().to_path_buf();
+        let config_file = config_temp_dir.path().join("aka.yml");
         fs::write(&config_file, TEST_CONFIG_UPDATED).expect("Failed to write config");
 
-        let aka = AKA::new(false, &Some(config_file.clone())).expect("Failed to load config");
+        let aka = AKA::new_with_cache_dir(false, &Some(config_file.clone()), Some(&cache_path)).expect("Failed to load config");
 
         // Check global aliases
         let global_aliases: Vec<_> = aka.spec.aliases.values()
@@ -199,6 +229,9 @@ invalid_yaml: [
             .filter(|alias| !alias.global)
             .collect();
         assert_eq!(local_aliases.len(), 2); // test-local and test-another
+
+        // Clean up
+        // config_temp_dir will be dropped here
     }
 }
 
@@ -296,6 +329,7 @@ mod integration_tests {
     use std::sync::Arc;
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::Mutex;
+    use tempfile::TempDir;
 
     #[test]
     fn test_daemon_binary_exists() {
@@ -311,9 +345,13 @@ mod integration_tests {
 
     #[test]
     fn test_cli_reload_command_exists() {
+        // Create a temporary directory for cache files
+        let cache_temp_dir = TempDir::new().expect("Failed to create temp directory");
+
         // Test that the CLI has the reload command
         let output = Command::new("cargo")
             .args(&["run", "--bin", "aka", "--", "daemon", "--help"])
+            .env("AKA_TEST_CACHE_DIR", cache_temp_dir.path())
             .output();
 
         assert!(output.is_ok(), "Should be able to run 'cargo run --bin aka daemon --help'");

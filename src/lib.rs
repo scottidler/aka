@@ -4,6 +4,8 @@ use std::fs::OpenOptions;
 use std::path::PathBuf;
 use std::time::{Instant, Duration};
 use xxhash_rust::xxh3::xxh3_64;
+use std::collections::HashMap;
+use serde::{Serialize, Deserialize};
 
 pub mod cfg;
 use cfg::alias::Alias;
@@ -14,6 +16,12 @@ use cfg::spec::Spec;
 pub use cfg::alias::Alias as AliasType;
 pub use cfg::loader::Loader as ConfigLoader;
 pub use cfg::spec::Spec as ConfigSpec;
+
+// JSON cache structure for aliases with usage counts
+#[derive(Serialize, Deserialize)]
+struct AliasCache {
+    aliases: HashMap<String, Alias>,
+}
 
 // Check if benchmark mode is enabled
 fn is_benchmark_mode() -> bool {
@@ -44,7 +52,7 @@ pub struct TimingCollector {
 
 impl TimingCollector {
     pub fn new(mode: ProcessingMode) -> Self {
-        Self {
+        TimingCollector {
             start_time: Instant::now(),
             config_start: None,
             ipc_start: None,
@@ -94,56 +102,55 @@ impl TimingCollector {
     }
 }
 
-// Timing output and logging
 impl TimingData {
     pub fn log_detailed(&self) {
-        // Only log detailed timing if benchmark mode is enabled
-        if !is_benchmark_mode() {
-            return;
-        }
-
         let emoji = match self.mode {
             ProcessingMode::Daemon => "👹",
             ProcessingMode::Direct => "📥",
         };
 
-        info!("{} === TIMING BREAKDOWN ({:?}) ===", emoji, self.mode);
-        info!("  🎯 Total execution: {:.3}ms", self.total_duration.as_secs_f64() * 1000.0);
+        debug!("🕒 Timing Report [{}]:", emoji);
+        debug!("  📊 Total: {:.3}ms", self.total_duration.as_secs_f64() * 1000.0);
 
         if let Some(config_duration) = self.config_load_duration {
-            info!("  📋 Config loading: {:.3}ms ({:.1}%)",
-                config_duration.as_secs_f64() * 1000.0,
-                (config_duration.as_secs_f64() / self.total_duration.as_secs_f64()) * 100.0
-            );
+            debug!("  📋 Config Load: {:.3}ms", config_duration.as_secs_f64() * 1000.0);
         }
 
         if let Some(ipc_duration) = self.ipc_duration {
-            info!("  🔌 IPC communication: {:.3}ms ({:.1}%)",
-                ipc_duration.as_secs_f64() * 1000.0,
-                (ipc_duration.as_secs_f64() / self.total_duration.as_secs_f64()) * 100.0
-            );
+            debug!("  📡 IPC: {:.3}ms", ipc_duration.as_secs_f64() * 1000.0);
         }
 
-        info!("  ⚙️  Processing: {:.3}ms ({:.1}%)",
-            self.processing_duration.as_secs_f64() * 1000.0,
-            (self.processing_duration.as_secs_f64() / self.total_duration.as_secs_f64()) * 100.0
-        );
+        debug!("  ⚙️  Processing: {:.3}ms", self.processing_duration.as_secs_f64() * 1000.0);
 
-        // Calculate overhead
-        let accounted = self.config_load_duration.unwrap_or_default() +
-                       self.ipc_duration.unwrap_or_default() +
-                       self.processing_duration;
-        let overhead = self.total_duration.saturating_sub(accounted);
-        info!("  🏗️  Overhead: {:.3}ms ({:.1}%)",
-            overhead.as_secs_f64() * 1000.0,
-            (overhead.as_secs_f64() / self.total_duration.as_secs_f64()) * 100.0
-        );
+        // Calculate percentages
+        let total_ms = self.total_duration.as_secs_f64() * 1000.0;
+        if total_ms > 0.0 {
+            if let Some(config_duration) = self.config_load_duration {
+                let config_ms = config_duration.as_secs_f64() * 1000.0;
+                let config_pct = (config_ms / total_ms) * 100.0;
+                debug!("  📋 Config Load: {:.1}%", config_pct);
+            }
+
+            if let Some(ipc_duration) = self.ipc_duration {
+                let ipc_ms = ipc_duration.as_secs_f64() * 1000.0;
+                let ipc_pct = (ipc_ms / total_ms) * 100.0;
+                debug!("  📡 IPC: {:.1}%", ipc_pct);
+            }
+
+            let processing_ms = self.processing_duration.as_secs_f64() * 1000.0;
+            let processing_pct = (processing_ms / total_ms) * 100.0;
+            debug!("  ⚙️  Processing: {:.1}%", processing_pct);
+        }
     }
 
     pub fn to_csv_line(&self) -> String {
-        format!("{},{:?},{:.3},{:.3},{:.3},{:.3}",
-            self.timestamp.duration_since(std::time::UNIX_EPOCH).unwrap().as_millis(),
-            self.mode,
+        let mode_str = match self.mode {
+            ProcessingMode::Daemon => "daemon",
+            ProcessingMode::Direct => "direct",
+        };
+
+        format!("{},{:.3},{:.3},{:.3},{:.3}",
+            mode_str,
             self.total_duration.as_secs_f64() * 1000.0,
             self.config_load_duration.map(|d| d.as_secs_f64() * 1000.0).unwrap_or(0.0),
             self.ipc_duration.map(|d| d.as_secs_f64() * 1000.0).unwrap_or(0.0),
@@ -154,71 +161,54 @@ impl TimingData {
 
 fn parse_csv_line(line: &str) -> Result<TimingData> {
     let parts: Vec<&str> = line.split(',').collect();
-    if parts.len() != 6 {
+    if parts.len() != 5 {
         return Err(eyre!("Invalid CSV line format"));
     }
 
-    let timestamp_ms: u64 = parts[0].parse().map_err(|_| eyre!("Invalid timestamp"))?;
-    let mode = match parts[1] {
-        "Daemon" => ProcessingMode::Daemon,
-        "Direct" => ProcessingMode::Direct,
-        _ => return Err(eyre!("Invalid processing mode")),
+    let mode = match parts[0] {
+        "daemon" => ProcessingMode::Daemon,
+        "direct" => ProcessingMode::Direct,
+        _ => return Err(eyre!("Invalid mode: {}", parts[0])),
     };
 
-    let total_ms: f64 = parts[2].parse().map_err(|_| eyre!("Invalid total duration"))?;
-    let config_ms: f64 = parts[3].parse().map_err(|_| eyre!("Invalid config duration"))?;
-    let ipc_ms: f64 = parts[4].parse().map_err(|_| eyre!("Invalid IPC duration"))?;
-    let processing_ms: f64 = parts[5].parse().map_err(|_| eyre!("Invalid processing duration"))?;
+    let total_duration = Duration::from_secs_f64(parts[1].parse::<f64>()? / 1000.0);
+    let config_load_duration = if parts[2] == "0" {
+        None
+    } else {
+        Some(Duration::from_secs_f64(parts[2].parse::<f64>()? / 1000.0))
+    };
+    let ipc_duration = if parts[3] == "0" {
+        None
+    } else {
+        Some(Duration::from_secs_f64(parts[3].parse::<f64>()? / 1000.0))
+    };
+    let processing_duration = Duration::from_secs_f64(parts[4].parse::<f64>()? / 1000.0);
 
     Ok(TimingData {
-        total_duration: Duration::from_secs_f64(total_ms / 1000.0),
-        config_load_duration: if config_ms > 0.0 { Some(Duration::from_secs_f64(config_ms / 1000.0)) } else { None },
-        ipc_duration: if ipc_ms > 0.0 { Some(Duration::from_secs_f64(ipc_ms / 1000.0)) } else { None },
-        processing_duration: Duration::from_secs_f64(processing_ms / 1000.0),
+        total_duration,
+        config_load_duration,
+        ipc_duration,
+        processing_duration,
         mode,
-        timestamp: std::time::UNIX_EPOCH + Duration::from_millis(timestamp_ms),
+        timestamp: std::time::SystemTime::now(),
     })
 }
 
-// Global timing storage for analysis
-use std::sync::Mutex;
-use lazy_static::lazy_static;
-
-lazy_static! {
-    static ref TIMING_LOG: Mutex<Vec<TimingData>> = Mutex::new(Vec::new());
-}
-
 pub fn log_timing(timing: TimingData) {
-    // Only log detailed breakdown if benchmark mode is enabled
     if is_benchmark_mode() {
         timing.log_detailed();
-    }
 
-    // Always store in memory for CLI commands (minimal overhead)
-    if let Ok(mut log) = TIMING_LOG.lock() {
-        log.push(timing.clone());
-
-        // Keep only last 1000 entries to prevent memory bloat
-        let len = log.len();
-        if len > 1000 {
-            log.drain(0..len - 1000);
-        }
-    }
-
-    // Only write to CSV file if benchmark mode is enabled
-    if is_benchmark_mode() {
-        if let Ok(timing_file_path) = get_timing_file_path() {
-            // Ensure directory exists
-            if let Some(parent) = timing_file_path.parent() {
-                let _ = std::fs::create_dir_all(parent);
-            }
-
+        // Also append to CSV file for analysis
+        if let Ok(timing_file) = get_timing_file_path() {
             let csv_line = timing.to_csv_line();
-            if let Ok(mut file) = OpenOptions::new()
-                .create(true)
-                .append(true)
-                .open(timing_file_path) {
+            let header = "mode,total_ms,config_load_ms,ipc_ms,processing_ms";
+
+            let needs_header = !timing_file.exists();
+            if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(&timing_file) {
                 use std::io::Write;
+                if needs_header {
+                    let _ = writeln!(file, "{}", header);
+                }
                 let _ = writeln!(file, "{}", csv_line);
             }
         }
@@ -226,72 +216,71 @@ pub fn log_timing(timing: TimingData) {
 }
 
 pub fn export_timing_csv() -> Result<String> {
-    let mut csv = String::from("timestamp,mode,total_ms,config_ms,ipc_ms,processing_ms\n");
-
-    // Load from persistent file if it exists
-    if let Ok(timing_file_path) = get_timing_file_path() {
-        if let Ok(content) = std::fs::read_to_string(timing_file_path) {
-            for line in content.lines() {
-                if !line.trim().is_empty() {
-                    csv.push_str(line);
-                    csv.push('\n');
-                }
-            }
-        }
+    let timing_file = get_timing_file_path()?;
+    if !timing_file.exists() {
+        return Ok("No timing data available".to_string());
     }
 
-    // Also include current session data
-    if let Ok(log) = TIMING_LOG.lock() {
-        for timing in log.iter() {
-            csv.push_str(&timing.to_csv_line());
-            csv.push('\n');
-        }
-    }
-
-    Ok(csv)
+    let content = std::fs::read_to_string(&timing_file)?;
+    Ok(content)
 }
 
 pub fn get_timing_summary() -> Result<(Duration, Duration, usize, usize)> {
-    let mut all_timings = Vec::new();
+    let timing_file = get_timing_file_path()?;
+    if !timing_file.exists() {
+        return Ok((Duration::from_secs(0), Duration::from_secs(0), 0, 0));
+    }
 
-    // Load from persistent file if it exists
-    if let Ok(timing_file_path) = get_timing_file_path() {
-        if let Ok(content) = std::fs::read_to_string(timing_file_path) {
-            for line in content.lines() {
-                if let Ok(timing) = parse_csv_line(line) {
-                    all_timings.push(timing);
+    let content = std::fs::read_to_string(&timing_file)?;
+    let lines: Vec<&str> = content.lines().collect();
+
+    if lines.len() <= 1 { // Header only or empty
+        return Ok((Duration::from_secs(0), Duration::from_secs(0), 0, 0));
+    }
+
+    let mut daemon_count = 0;
+    let mut direct_count = 0;
+    let mut total_daemon_time = Duration::from_secs(0);
+    let mut total_direct_time = Duration::from_secs(0);
+
+    for line in lines.iter().skip(1) { // Skip header
+        if let Ok(timing) = parse_csv_line(line) {
+            match timing.mode {
+                ProcessingMode::Daemon => {
+                    daemon_count += 1;
+                    total_daemon_time += timing.total_duration;
+                }
+                ProcessingMode::Direct => {
+                    direct_count += 1;
+                    total_direct_time += timing.total_duration;
                 }
             }
         }
     }
 
-    // Also include current session data
-    if let Ok(log) = TIMING_LOG.lock() {
-        all_timings.extend(log.iter().cloned());
-    }
-
-    let daemon_timings: Vec<_> = all_timings.iter().filter(|t| matches!(t.mode, ProcessingMode::Daemon)).collect();
-    let direct_timings: Vec<_> = all_timings.iter().filter(|t| matches!(t.mode, ProcessingMode::Direct)).collect();
-
-    let daemon_avg = if !daemon_timings.is_empty() {
-        daemon_timings.iter().map(|t| t.total_duration).sum::<Duration>() / daemon_timings.len() as u32
+    let avg_daemon_time = if daemon_count > 0 {
+        total_daemon_time / daemon_count as u32
     } else {
-        Duration::default()
+        Duration::from_secs(0)
     };
 
-    let direct_avg = if !direct_timings.is_empty() {
-        direct_timings.iter().map(|t| t.total_duration).sum::<Duration>() / direct_timings.len() as u32
+    let avg_direct_time = if direct_count > 0 {
+        total_direct_time / direct_count as u32
     } else {
-        Duration::default()
+        Duration::from_secs(0)
     };
 
-    Ok((daemon_avg, direct_avg, daemon_timings.len(), direct_timings.len()))
+    Ok((avg_daemon_time, avg_direct_time, daemon_count, direct_count))
 }
 
 pub fn get_timing_file_path() -> Result<PathBuf> {
-    let config_dir = dirs::config_dir()
-        .ok_or_else(|| eyre!("Could not determine config directory"))?;
-    Ok(config_dir.join("aka").join("timing_data.csv"))
+    let data_dir = dirs::data_local_dir()
+        .ok_or_else(|| eyre!("Could not determine local data directory"))?
+        .join("aka")
+        .join("logs");
+
+    std::fs::create_dir_all(&data_dir)?;
+    Ok(data_dir.join("timing.csv"))
 }
 
 pub fn get_config_path() -> Result<PathBuf> {
@@ -345,35 +334,10 @@ pub fn setup_logging() -> Result<()> {
     Ok(())
 }
 
-pub fn get_hash_cache_path() -> Result<PathBuf> {
-    let cache_dir = dirs::data_local_dir()
-        .ok_or_else(|| eyre!("Could not determine local data directory"))?
-        .join("aka");
-
-    std::fs::create_dir_all(&cache_dir)?;
-    Ok(cache_dir.join("config.hash"))
-}
-
 pub fn hash_config_file(config_path: &PathBuf) -> Result<String> {
     let content = std::fs::read(config_path)?;
     let hash = xxh3_64(&content);
     Ok(format!("{:016x}", hash))
-}
-
-pub fn get_stored_hash() -> Result<Option<String>> {
-    let hash_path = get_hash_cache_path()?;
-    if hash_path.exists() {
-        let stored_hash = std::fs::read_to_string(&hash_path)?;
-        Ok(Some(stored_hash.trim().to_string()))
-    } else {
-        Ok(None)
-    }
-}
-
-pub fn store_hash(hash: &str) -> Result<()> {
-    let hash_path = get_hash_cache_path()?;
-    std::fs::write(&hash_path, hash)?;
-    Ok(())
 }
 
 pub fn execute_health_check(config: &Option<PathBuf>) -> Result<i32> {
@@ -444,8 +408,8 @@ pub fn execute_health_check(config: &Option<PathBuf>) -> Result<i32> {
         debug!("❌ Cannot determine daemon socket path");
     }
 
-    // Step 2: Daemon not available, check config file cache
-    debug!("📋 Step 2: Daemon unavailable, checking config cache");
+    // Step 2: Daemon not available, validate config directly
+    debug!("📋 Step 2: Daemon unavailable, validating config directly");
 
     let config_path = match config {
         Some(file) => {
@@ -474,72 +438,29 @@ pub fn execute_health_check(config: &Option<PathBuf>) -> Result<i32> {
         }
     };
 
-    // Step 3: Calculate current config hash
-    debug!("📋 Step 3: Calculating current config hash");
-    let current_hash = match hash_config_file(&config_path) {
-        Ok(hash) => {
-            debug!("✅ Current config hash calculated: {}", hash);
-            hash
-        }
-        Err(e) => {
-            debug!("❌ Health check failed: cannot read config file: {}", e);
-            debug!("🎯 Health check result: CONFIG_READ_ERROR (returning 1)");
-            return Ok(1); // Cannot read config file
-        }
-    };
+    // Step 3: Try to load and validate the config
+    debug!("📋 Step 3: Attempting to load and validate config");
 
-    // Step 4: Compare with stored hash
-    debug!("📋 Step 4: Comparing with stored hash");
-    let stored_hash = get_stored_hash().unwrap_or(None);
-
-    match stored_hash {
-        Some(stored) => {
-            debug!("🔍 Found stored hash: {}", stored);
-            if stored == current_hash {
-                debug!("✅ Hash matches! Config cache is valid, can use direct mode");
-                debug!("🎯 Health check result: CACHE_VALID (returning 0)");
-                return Ok(0);
-            } else {
-                debug!("⚠️ Hash mismatch: stored={}, current={}", stored, current_hash);
-                debug!("📋 Cache invalid, need fresh config load");
-            }
-        }
-        None => {
-            debug!("⚠️ No stored hash found, need fresh config load");
-        }
-    }
-
-    // Step 5: Hash doesn't match or no stored hash, validate config fresh
-    debug!("📋 Step 5: Cache invalid, attempting fresh config load");
-
-    // Try to load and parse the config
     let loader = Loader::new();
-    debug!("🔄 Loading fresh config from: {:?}", config_path);
+    debug!("🔄 Loading config from: {:?}", config_path);
     match loader.load(&config_path) {
         Ok(spec) => {
-            debug!("✅ Fresh config loaded successfully");
-
-            // Config is valid, store the new hash
-            if let Err(e) = store_hash(&current_hash) {
-                debug!("⚠️ Warning: could not store config hash: {}", e);
-            } else {
-                debug!("✅ New config hash stored: {}", current_hash);
-            }
+            debug!("✅ Config loaded successfully");
 
             // Check if we have any aliases
             if spec.aliases.is_empty() {
-                debug!("⚠️ Fresh config valid but no aliases defined");
+                debug!("⚠️ Config valid but no aliases defined");
                 debug!("🎯 Health check result: NO_ALIASES (returning 3)");
                 return Ok(3); // No aliases defined
             }
 
-            debug!("✅ Fresh config valid with {} aliases", spec.aliases.len());
-            debug!("🎯 Health check result: FRESH_CONFIG_VALID (returning 0)");
+            debug!("✅ Config valid with {} aliases", spec.aliases.len());
+            debug!("🎯 Health check result: CONFIG_VALID (returning 0)");
             Ok(0) // All good
         }
         Err(e) => {
             debug!("❌ Health check failed: config file invalid: {}", e);
-            debug!("🚨 All health check methods failed - ZLE should not use aka");
+            debug!("🚨 Config validation failed - aka cannot be used");
             debug!("🎯 Health check result: CONFIG_INVALID (returning 2)");
             Ok(2) // Config file invalid - critical failure
         }
@@ -557,10 +478,16 @@ pub enum ProcessingMode {
 pub struct AKA {
     pub eol: bool,
     pub spec: Spec,
+    pub config_hash: String,
+    pub cache_dir: Option<PathBuf>,
 }
 
 impl AKA {
     pub fn new(eol: bool, config: &Option<PathBuf>) -> Result<Self> {
+        Self::new_with_cache_dir(eol, config, None)
+    }
+
+    pub fn new_with_cache_dir(eol: bool, config: &Option<PathBuf>, cache_dir: Option<&PathBuf>) -> Result<Self> {
         use std::time::Instant;
 
         let start_total = Instant::now();
@@ -573,20 +500,42 @@ impl AKA {
         };
         let path_duration = start_path.elapsed();
 
+        // Calculate config hash
+        let config_hash = hash_config_file(&config_path)?;
+        debug!("🔒 Config hash: {}", config_hash);
+
         // Time loader creation and config loading
         let start_load = Instant::now();
         let loader = Loader::new();
-        let spec = loader.load(&config_path)?;
+        let mut spec = loader.load(&config_path)?;
         let load_duration = start_load.elapsed();
+
+        // Try to load from cache first
+        let start_cache = Instant::now();
+        if let Some(cached_aliases) = load_alias_cache_with_base(&config_hash, cache_dir)? {
+            debug!("📋 Using cached aliases with usage counts");
+            debug!("📋 Cache loaded {} aliases", cached_aliases.len());
+            // Log a sample alias count for debugging
+            if let Some((name, alias)) = cached_aliases.iter().next() {
+                debug!("📋 Sample alias '{}' has count: {}", name, alias.count);
+            }
+            spec.aliases = cached_aliases;
+        } else {
+            debug!("📋 No cache found, initializing usage counts to 0");
+            // Initialize all counts to 0 (they already are due to skip_deserializing) and save to cache
+            save_alias_cache_with_base(&config_hash, &spec.aliases, cache_dir)?;
+        }
+        let cache_duration = start_cache.elapsed();
 
         let total_duration = start_total.elapsed();
 
         debug!("🏗️  AKA::new() timing breakdown:");
         debug!("  📂 Path resolution: {:.3}ms", path_duration.as_secs_f64() * 1000.0);
         debug!("  📋 Config loading: {:.3}ms", load_duration.as_secs_f64() * 1000.0);
+        debug!("  🗃️  Cache handling: {:.3}ms", cache_duration.as_secs_f64() * 1000.0);
         debug!("  🎯 Total AKA::new(): {:.3}ms", total_duration.as_secs_f64() * 1000.0);
 
-        Ok(AKA { eol, spec })
+        Ok(AKA { eol, spec, config_hash, cache_dir: cache_dir.cloned() })
     }
 
     pub fn use_alias(&self, alias: &Alias, pos: usize) -> bool {
@@ -630,11 +579,11 @@ impl AKA {
         self.spec.lookups.get(lookup).and_then(|map| map.get(key).cloned())
     }
 
-    pub fn replace(&self, cmdline: &str) -> Result<String> {
+    pub fn replace(&mut self, cmdline: &str) -> Result<String> {
         self.replace_with_mode(cmdline, ProcessingMode::Direct)
     }
 
-    pub fn replace_with_mode(&self, cmdline: &str, mode: ProcessingMode) -> Result<String> {
+    pub fn replace_with_mode(&mut self, cmdline: &str, mode: ProcessingMode) -> Result<String> {
         debug!("Processing command line: {}", cmdline);
         let mut pos: usize = 0;
         let mut space = " ";
@@ -642,33 +591,20 @@ impl AKA {
         let mut sudo = false;
         let mut args = Self::split_respecting_quotes(cmdline);
 
-        if self.eol && !args.is_empty() {
-            if let Some(last_arg) = args.last() {
-                if last_arg == "!" || last_arg.ends_with("!") {
-                    args.pop();
-                    sudo = true;
-                } else if last_arg.starts_with("!") {
-                    let next_arg = last_arg[1..].to_string();
-                    args[0] = next_arg;
-                    replaced = true;
+        if args.is_empty() {
+            return Ok(String::new());
+        }
 
-                    let mut i = 1;
-                    while i < args.len() {
-                        if args[i].starts_with("-") {
-                            args.remove(i);
-                        } else if args[i] == "|" || args[i] == ">" || args[i] == "<" {
-                            break;
-                        } else {
-                            i += 1;
-                        }
-                    }
-                    args.pop();
-                }
+        if args[0] == "sudo" {
+            sudo = true;
+            args.remove(0);
+            if args.is_empty() {
+                return Ok(String::new());
             }
         }
 
         while pos < args.len() {
-            let current_arg = args[pos].clone(); // Clone to avoid borrowing conflicts
+            let current_arg = args[pos].clone();
 
             // Perform lookup replacement logic
             if current_arg.starts_with("lookup:") && current_arg.contains("[") && current_arg.ends_with("]") {
@@ -683,8 +619,16 @@ impl AKA {
             }
 
             let mut remainders: Vec<String> = args[pos + 1..].to_vec();
-            let (value, count) = match self.spec.aliases.get(&current_arg) {
-                Some(alias) if self.use_alias(alias, pos) => {
+
+            // First check if we should use the alias (immutable borrow)
+            let should_use_alias = match self.spec.aliases.get(&current_arg) {
+                Some(alias) => self.use_alias(alias, pos),
+                None => false,
+            };
+
+            let (value, count) = if should_use_alias {
+                // Now we can safely get mutable reference
+                if let Some(alias) = self.spec.aliases.get_mut(&current_arg) {
                     if (alias.global && cmdline.contains(&alias.value))
                         || (!alias.global && pos == 0 && cmdline.starts_with(&alias.value))
                     {
@@ -694,11 +638,17 @@ impl AKA {
                         let (v, c) = alias.replace(&mut remainders)?;
                         if v != alias.name {
                             replaced = true;
+                            // Increment usage count when alias is actually used
+                            alias.count += 1;
+                            debug!("📊 Alias '{}' used, count now: {}", alias.name, alias.count);
                         }
                         (v, c)
                     }
+                } else {
+                    (current_arg.clone(), 0)
                 }
-                Some(_) | None => (current_arg.clone(), 0),
+            } else {
+                (current_arg.clone(), 0)
             };
 
             let beg = pos + 1;
@@ -730,6 +680,13 @@ impl AKA {
                 ProcessingMode::Direct => "📥", // Inbox for direct
             };
             info!("{} Command line transformed: {} -> {}", emoji, cmdline, result.trim());
+
+            // Save updated usage counts to cache if any aliases were used
+            if replaced {
+                if let Err(e) = save_alias_cache_with_base(&self.config_hash, &self.spec.aliases, self.cache_dir.as_ref()) {
+                    debug!("⚠️ Failed to save alias cache: {}", e);
+                }
+            }
         }
 
         Ok(result)
@@ -757,4 +714,104 @@ pub fn determine_socket_path() -> Result<PathBuf> {
         .ok_or_else(|| eyre!("Could not determine home directory"))?;
 
     Ok(home_dir.join(".local/share/aka/daemon.sock"))
+}
+
+pub fn get_alias_cache_path(config_hash: &str) -> Result<PathBuf> {
+    get_alias_cache_path_with_base(config_hash, None)
+}
+
+pub fn get_alias_cache_path_with_base(config_hash: &str, base_dir: Option<&PathBuf>) -> Result<PathBuf> {
+    let data_dir = match base_dir {
+        Some(dir) => dir.clone(),
+        None => {
+            // Check for test environment variable first
+            if let Ok(test_dir) = std::env::var("AKA_TEST_CACHE_DIR") {
+                PathBuf::from(test_dir)
+            } else {
+                dirs::data_local_dir()
+                    .ok_or_else(|| eyre!("Could not determine local data directory"))?
+                    .join("aka")
+            }
+        }
+    };
+
+    std::fs::create_dir_all(&data_dir)?;
+    Ok(data_dir.join(format!("{}.json", config_hash)))
+}
+
+pub fn load_alias_cache(config_hash: &str) -> Result<Option<HashMap<String, Alias>>> {
+    load_alias_cache_with_base(config_hash, None)
+}
+
+pub fn load_alias_cache_with_base(config_hash: &str, base_dir: Option<&PathBuf>) -> Result<Option<HashMap<String, Alias>>> {
+    let cache_path = get_alias_cache_path_with_base(config_hash, base_dir)?;
+
+    if !cache_path.exists() {
+        debug!("Cache file doesn't exist: {:?}", cache_path);
+        return Ok(None);
+    }
+
+    debug!("Loading alias cache from: {:?}", cache_path);
+    let content = std::fs::read_to_string(&cache_path)?;
+    let cache: AliasCache = serde_json::from_str(&content)?;
+
+    // Restore names from HashMap keys since they might be empty in the cache
+    let mut aliases_with_names = HashMap::new();
+    for (key, mut alias) in cache.aliases {
+        if alias.name.is_empty() {
+            alias.name = key.clone();
+        }
+        aliases_with_names.insert(key, alias);
+    }
+
+    debug!("Loaded {} aliases from cache", aliases_with_names.len());
+    Ok(Some(aliases_with_names))
+}
+
+pub fn save_alias_cache(config_hash: &str, aliases: &HashMap<String, Alias>) -> Result<()> {
+    save_alias_cache_with_base(config_hash, aliases, None)
+}
+
+pub fn save_alias_cache_with_base(config_hash: &str, aliases: &HashMap<String, Alias>, base_dir: Option<&PathBuf>) -> Result<()> {
+    let cache_path = get_alias_cache_path_with_base(config_hash, base_dir)?;
+
+    let cache = AliasCache {
+        aliases: aliases.clone(),
+    };
+
+    let content = serde_json::to_string_pretty(&cache)?;
+
+    // Write to temporary file first, then rename (atomic operation)
+    let temp_path = cache_path.with_extension("tmp");
+    std::fs::write(&temp_path, content)?;
+    std::fs::rename(&temp_path, &cache_path)?;
+
+    debug!("Saved alias cache to: {:?}", cache_path);
+    Ok(())
+}
+
+pub fn migrate_alias_counts(old_hash: &str, new_hash: &str, new_aliases: &mut HashMap<String, Alias>) -> Result<()> {
+    migrate_alias_counts_with_base(old_hash, new_hash, new_aliases, None)
+}
+
+pub fn migrate_alias_counts_with_base(old_hash: &str, new_hash: &str, new_aliases: &mut HashMap<String, Alias>, base_dir: Option<&PathBuf>) -> Result<()> {
+    if let Some(old_aliases) = load_alias_cache_with_base(old_hash, base_dir)? {
+        debug!("Migrating usage counts from old config hash: {}", old_hash);
+
+        for (key, new_alias) in new_aliases.iter_mut() {
+            if let Some(old_alias) = old_aliases.get(key) {
+                new_alias.count = old_alias.count;
+                debug!("Migrated count {} for alias: {}", old_alias.count, key);
+            }
+        }
+
+        // Save the new cache with migrated counts
+        save_alias_cache_with_base(new_hash, new_aliases, base_dir)?;
+
+        debug!("Migration complete, saved new cache with hash: {}", new_hash);
+    } else {
+        debug!("No old cache found for migration from hash: {}", old_hash);
+    }
+
+    Ok(())
 }

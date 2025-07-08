@@ -6,14 +6,14 @@ use std::sync::{Arc, RwLock, Mutex};
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::io::{BufRead, BufReader, Write};
 use serde::{Deserialize, Serialize};
-use log::{info, error, debug, warn};
+use log::{info, error, debug};
 use notify::{Watcher, RecommendedWatcher, RecursiveMode, Event, EventKind};
 use std::sync::mpsc::{channel, Receiver};
 use std::thread;
 use eyre::{Result, eyre};
 
 // Import from the shared library
-use aka_lib::{determine_socket_path, AKA, setup_logging, ProcessingMode, hash_config_file, store_hash};
+use aka_lib::{determine_socket_path, AKA, setup_logging, ProcessingMode, hash_config_file};
 
 #[derive(Parser)]
 #[command(name = "aka-daemon", about = "AKA Alias Daemon")]
@@ -56,6 +56,10 @@ struct DaemonServer {
 
 impl DaemonServer {
     fn new(config: &Option<PathBuf>) -> Result<Self, Box<dyn std::error::Error>> {
+        Self::new_with_cache_dir(config, None)
+    }
+
+    fn new_with_cache_dir(config: &Option<PathBuf>, cache_dir: Option<&std::path::Path>) -> Result<Self, Box<dyn std::error::Error>> {
         use std::time::Instant;
 
         let start_daemon_init = Instant::now();
@@ -68,24 +72,24 @@ impl DaemonServer {
         };
 
         // Load initial config
-        let aka = AKA::new(false, &Some(config_path.clone()))?;
+        let aka = if let Some(cache_dir) = cache_dir {
+            let cache_dir_pathbuf = cache_dir.to_path_buf();
+            AKA::new_with_cache_dir(false, &Some(config_path.clone()), Some(&cache_dir_pathbuf))?
+        } else {
+            AKA::new(false, &Some(config_path.clone()))?
+        };
         let aka = Arc::new(RwLock::new(aka));
-        
+
         // Calculate initial config hash
         let initial_hash = hash_config_file(&config_path)?;
         let config_hash = Arc::new(RwLock::new(initial_hash.clone()));
-        
-        // Store hash for CLI comparison
-        if let Err(e) = store_hash(&initial_hash) {
-            warn!("Failed to store initial config hash: {}", e);
-        }
 
         let shutdown = Arc::new(AtomicBool::new(false));
 
         // Set up file watcher
         let (reload_sender, reload_receiver) = channel();
         let reload_receiver = Arc::new(Mutex::new(reload_receiver));
-        
+
         let config_path_for_watcher = config_path.clone();
         let mut watcher = notify::recommended_watcher(move |res: Result<Event, notify::Error>| {
             match res {
@@ -109,7 +113,7 @@ impl DaemonServer {
 
         let daemon_init_duration = start_daemon_init.elapsed();
         debug!("✅ Daemon initialization complete: {:.3}ms", daemon_init_duration.as_secs_f64() * 1000.0);
-        
+
         let alias_count = {
             let aka_guard = aka.read().map_err(|e| eyre!("Failed to acquire read lock on AKA: {}", e))?;
             aka_guard.spec.aliases.len()
@@ -117,11 +121,11 @@ impl DaemonServer {
         debug!("📦 Daemon has {} aliases cached in memory", alias_count);
         debug!("🔒 Initial config hash: {}", initial_hash);
 
-        Ok(DaemonServer { 
-            aka, 
+        Ok(DaemonServer {
+            aka,
             config_path,
             config_hash,
-            shutdown, 
+            shutdown,
             _watcher: Some(watcher),
             reload_receiver,
         })
@@ -129,56 +133,63 @@ impl DaemonServer {
 
     fn reload_config(&self) -> Result<String, Box<dyn std::error::Error>> {
         use std::time::Instant;
-        
+
         let start_reload = Instant::now();
         debug!("🔄 Manual config reload requested");
-        
+
         // Calculate new hash
         let new_hash = hash_config_file(&self.config_path)?;
         let current_hash = {
             let hash_guard = self.config_hash.read().map_err(|e| eyre!("Failed to acquire read lock on config hash: {}", e))?;
             hash_guard.clone()
         };
-        
+
         if new_hash == current_hash {
             debug!("⚡ Config hash unchanged, skipping reload");
             return Ok("Config unchanged".to_string());
         }
-        
+
         debug!("🔄 Config hash changed: {} -> {}", current_hash, new_hash);
-        
-        // Load new config
-        let new_aka = AKA::new(false, &Some(self.config_path.clone()))?;
-        
+
+        // Load new config (this will create the new cache or load existing one)
+        let mut new_aka = AKA::new(false, &Some(self.config_path.clone()))?;
+
+        // If we have an old cache, migrate counts to the new one
+        if current_hash != new_hash {
+            if let Err(e) = aka_lib::migrate_alias_counts(&current_hash, &new_hash, &mut new_aka.spec.aliases) {
+                debug!("⚠️ Failed to migrate alias counts: {}", e);
+            } else {
+                // Save the migrated aliases back to cache
+                if let Err(e) = aka_lib::save_alias_cache(&new_hash, &new_aka.spec.aliases) {
+                    debug!("⚠️ Failed to save migrated alias cache: {}", e);
+                }
+            }
+        }
+
         // Update stored config
         {
             let mut aka_guard = self.aka.write().map_err(|e| eyre!("Failed to acquire write lock on AKA: {}", e))?;
             *aka_guard = new_aka;
         }
-        
+
         // Update hash
         {
             let mut hash_guard = self.config_hash.write().map_err(|e| eyre!("Failed to acquire write lock on config hash: {}", e))?;
             *hash_guard = new_hash.clone();
         }
-        
-        // Store hash for CLI comparison
-        if let Err(e) = store_hash(&new_hash) {
-            warn!("Failed to store updated config hash: {}", e);
-        }
-        
+
         let reload_duration = start_reload.elapsed();
         let alias_count = {
             let aka_guard = self.aka.read().map_err(|e| eyre!("Failed to acquire read lock on AKA: {}", e))?;
             aka_guard.spec.aliases.len()
         };
-        
+
         let message = format!("Config reloaded: {} aliases in {:.3}ms", alias_count, reload_duration.as_secs_f64() * 1000.0);
         info!("✅ {}", message);
-        
+
         Ok(message)
     }
-    
+
     fn handle_client(&self, mut stream: UnixStream) -> Result<(), Box<dyn std::error::Error>> {
         let mut reader = BufReader::new(&stream);
         let mut line = String::new();
@@ -191,7 +202,7 @@ impl DaemonServer {
 
         let response = match request {
             Request::Query { cmdline } => {
-                let aka_guard = self.aka.read().map_err(|e| eyre!("Failed to acquire read lock on AKA: {}", e))?;
+                let mut aka_guard = self.aka.write().map_err(|e| eyre!("Failed to acquire write lock on AKA: {}", e))?;
                 match aka_guard.replace_with_mode(&cmdline, ProcessingMode::Daemon) {
                     Ok(result) => Response::Success { data: result },
                     Err(e) => Response::Error { message: e.to_string() },
@@ -229,7 +240,7 @@ impl DaemonServer {
                     let hash_guard = self.config_hash.read().map_err(|e| eyre!("Failed to acquire read lock on config hash: {}", e))?;
                     hash_guard.clone()
                 };
-                
+
                 // Check if config file has changed
                 match hash_config_file(&self.config_path) {
                     Ok(file_hash) => {
@@ -286,17 +297,17 @@ impl DaemonServer {
         let config_path_for_watcher = self.config_path.clone();
         let config_hash_for_watcher = Arc::clone(&self.config_hash);
         let shutdown_for_watcher = Arc::clone(&self.shutdown);
-        
+
         thread::spawn(move || {
             let receiver = reload_receiver.lock().map_err(|e| {
                 error!("Failed to acquire lock on reload receiver: {}", e);
             });
-            
+
             if let Ok(receiver) = receiver {
                 while !shutdown_for_watcher.load(Ordering::Relaxed) {
                     if let Ok(()) = receiver.recv_timeout(std::time::Duration::from_millis(100)) {
                         debug!("📁 File change detected, reloading config automatically");
-                        
+
                         // Calculate new hash
                         match hash_config_file(&config_path_for_watcher) {
                             Ok(new_hash) => {
@@ -309,13 +320,23 @@ impl DaemonServer {
                                         }
                                     }
                                 };
-                                
+
                                 if new_hash != current_hash {
                                     debug!("🔄 Auto-reload: hash changed {} -> {}", current_hash, new_hash);
-                                    
+
                                     // Load new config
                                     match AKA::new(false, &Some(config_path_for_watcher.clone())) {
-                                        Ok(new_aka) => {
+                                        Ok(mut new_aka) => {
+                                            // Migrate usage counts from old cache to new cache
+                                            if let Err(e) = aka_lib::migrate_alias_counts(&current_hash, &new_hash, &mut new_aka.spec.aliases) {
+                                                debug!("⚠️ Failed to migrate alias counts: {}", e);
+                                            } else {
+                                                // Save the migrated aliases back to cache
+                                                if let Err(e) = aka_lib::save_alias_cache(&new_hash, &new_aka.spec.aliases) {
+                                                    debug!("⚠️ Failed to save migrated alias cache: {}", e);
+                                                }
+                                            }
+
                                             // Update stored config
                                             {
                                                 match aka_for_watcher.write() {
@@ -328,7 +349,7 @@ impl DaemonServer {
                                                     }
                                                 }
                                             }
-                                            
+
                                             // Update hash
                                             {
                                                 match config_hash_for_watcher.write() {
@@ -341,12 +362,7 @@ impl DaemonServer {
                                                     }
                                                 }
                                             }
-                                            
-                                            // Store hash for CLI comparison
-                                            if let Err(e) = store_hash(&new_hash) {
-                                                warn!("Failed to store updated config hash: {}", e);
-                                            }
-                                            
+
                                             let alias_count = {
                                                 match aka_for_watcher.read() {
                                                     Ok(aka_guard) => aka_guard.spec.aliases.len(),
@@ -356,7 +372,7 @@ impl DaemonServer {
                                                     }
                                                 }
                                             };
-                                            
+
                                             info!("🔄 Config auto-reloaded: {} aliases", alias_count);
                                         },
                                         Err(e) => {
@@ -378,21 +394,28 @@ impl DaemonServer {
         });
 
         // Main server loop
-        for stream in listener.incoming() {
+        loop {
             if self.shutdown.load(Ordering::Relaxed) {
+                info!("🛑 Shutdown signal received, stopping daemon");
                 break;
             }
 
-            match stream {
-                Ok(stream) => {
+            match listener.accept() {
+                Ok((stream, _)) => {
                     if let Err(e) = self.handle_client(stream) {
                         error!("Error handling client: {}", e);
                     }
-                },
+                }
                 Err(e) => {
                     error!("Error accepting connection: {}", e);
+                    break;
                 }
             }
+        }
+
+        // Cleanup
+        if socket_path.exists() {
+            let _ = fs::remove_file(socket_path);
         }
 
         Ok(())
@@ -465,7 +488,7 @@ aliases:
         let config_file = temp_dir.path().join("test.yml");
         fs::write(&config_file, TEST_CONFIG).expect("Failed to write test config");
 
-        let result = DaemonServer::new(&Some(config_file));
+        let result = DaemonServer::new_with_cache_dir(&Some(config_file), Some(temp_dir.path()));
         assert!(result.is_ok(), "Should create daemon server with valid config");
 
         if let Ok(server) = result {

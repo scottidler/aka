@@ -749,7 +749,7 @@ fn handle_daemon_command(daemon_opts: &DaemonOpts) -> Result<()> {
                     let improvement = direct_avg.as_secs_f64() - daemon_avg.as_secs_f64();
                     let percentage = (improvement / direct_avg.as_secs_f64()) * 100.0;
                     println!("⚡ Performance:");
-                    println!("   Daemon is {:.3}ms faster ({:.1}% improvement)", 
+                    println!("   Daemon is {:.3}ms faster ({:.1}% improvement)",
                         improvement * 1000.0, percentage);
                 }
             }
@@ -840,11 +840,11 @@ fn handle_command_via_daemon_with_fallback(opts: &AkaOpts) -> Result<i32> {
                     Ok(result) => {
                         debug!("✅ Daemon path successful, returning result: {}", result);
                         debug!("🎯 === DAEMON-WITH-FALLBACK COMPLETE (DAEMON SUCCESS) ===");
-                        
+
                         // Log daemon timing
                         let timing_data = timing.finalize();
                         log_timing(timing_data);
-                        
+
                         return Ok(result);
                     },
                     Err(e) => {
@@ -865,14 +865,14 @@ fn handle_command_via_daemon_with_fallback(opts: &AkaOpts) -> Result<i32> {
     // Fallback to direct processing with timing
     debug!("🔄 Falling back to direct config processing");
     debug!("🔀 Routing to handle_command_direct");
-    
+
     let mut direct_timing = TimingCollector::new(ProcessingMode::Direct);
     let result = handle_command_direct_timed(opts, &mut direct_timing);
-    
+
     // Log direct timing
     let timing_data = direct_timing.finalize();
     log_timing(timing_data);
-    
+
     debug!("🎯 === DAEMON-WITH-FALLBACK COMPLETE (DIRECT FALLBACK) ===");
     result
 }
@@ -974,9 +974,17 @@ fn handle_command_direct_timed(opts: &AkaOpts, timing: &mut TimingCollector) -> 
     debug!("🔍 Direct processing options: eol={}, config={:?}", opts.eol, opts.config);
 
     timing.start_config_load();
-    let aka = AKA::new(opts.eol, &opts.config)?;
+
+    // Check for test environment variable to use temp cache directory
+    let mut aka = if let Ok(test_cache_dir) = std::env::var("AKA_TEST_CACHE_DIR") {
+        let cache_path = std::path::PathBuf::from(test_cache_dir);
+        AKA::new_with_cache_dir(opts.eol, &opts.config, Some(&cache_path))?
+    } else {
+        AKA::new(opts.eol, &opts.config)?
+    };
+
     timing.end_config_load();
-    
+
     debug!("✅ Config loaded, {} aliases available", aka.spec.aliases.len());
 
     timing.start_processing();
