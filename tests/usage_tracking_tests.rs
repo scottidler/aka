@@ -1,15 +1,19 @@
 use std::fs;
 use tempfile::TempDir;
 use std::path::PathBuf;
-use aka_lib::{AKA, ProcessingMode, load_alias_cache_with_base};
+use aka_lib::{AKA, ProcessingMode, load_alias_cache};
 
 fn setup_test_environment(test_name: &str) -> (TempDir, PathBuf, TempDir) {
     // Create temp directory for config file
     let config_temp_dir = TempDir::new().expect("Failed to create temp dir for config");
-    let config_file = config_temp_dir.path().join("aka.yml");
 
-    // Create temp directory for cache files
+    // Create temp directory for cache files (this will be our "home" directory)
     let cache_temp_dir = TempDir::new().expect("Failed to create temp dir for cache");
+
+    // Create the config file in the expected location within the cache temp dir
+    let config_dir = cache_temp_dir.path().join(".config").join("aka");
+    fs::create_dir_all(&config_dir).expect("Failed to create config dir");
+    let config_file = config_dir.join("aka.yml");
 
     // Write test config
     let config_content = format!(r#"
@@ -36,7 +40,7 @@ fn test_usage_count_initialization() {
     let cache_path = cache_temp_dir.path().to_path_buf();
 
     // Create AKA instance with temp cache directory
-    let aka = AKA::new_with_cache_dir(false, &Some(config_file), Some(&cache_path)).expect("Failed to create AKA instance");
+    let aka = AKA::new(false, cache_path.to_path_buf()).expect("Failed to create AKA instance");
 
     // Check that aliases are initialized with count = 0
     for (name, alias) in &aka.spec.aliases {
@@ -50,7 +54,7 @@ fn test_usage_count_increment() {
     let cache_path = cache_temp_dir.path().to_path_buf();
 
     // Create AKA instance with temp cache directory
-    let mut aka = AKA::new_with_cache_dir(false, &Some(config_file), Some(&cache_path)).expect("Failed to create AKA instance");
+    let mut aka = AKA::new(false, cache_path.to_path_buf()).expect("Failed to create AKA instance");
 
     // Use an alias
     let result = aka.replace_with_mode("test-alias", ProcessingMode::Direct).expect("Failed to replace");
@@ -76,7 +80,7 @@ fn test_usage_count_persistence() {
 
     // Create AKA instance and use an alias
     {
-        let mut aka = AKA::new_with_cache_dir(false, &Some(config_file.clone()), Some(&cache_path)).expect("Failed to create AKA instance");
+        let mut aka = AKA::new(false, cache_path.to_path_buf()).expect("Failed to create AKA instance");
         let result = aka.replace_with_mode("test-alias", ProcessingMode::Direct).expect("Failed to replace");
         assert_eq!(result.trim(), "echo \"test command\"");
 
@@ -87,7 +91,7 @@ fn test_usage_count_persistence() {
 
     // Create a new AKA instance (simulating restart)
     {
-        let aka = AKA::new_with_cache_dir(false, &Some(config_file), Some(&cache_path)).expect("Failed to create AKA instance");
+        let aka = AKA::new(false, cache_path.to_path_buf()).expect("Failed to create AKA instance");
 
         // Check that count was persisted
         let test_alias = aka.spec.aliases.get("test-alias").expect("test-alias should exist");
@@ -101,7 +105,7 @@ fn test_no_count_increment_for_unused_aliases() {
     let cache_path = cache_temp_dir.path().to_path_buf();
 
     // Create AKA instance with temp cache directory
-    let mut aka = AKA::new_with_cache_dir(false, &Some(config_file), Some(&cache_path)).expect("Failed to create AKA instance");
+    let mut aka = AKA::new(false, cache_path.to_path_buf()).expect("Failed to create AKA instance");
 
     // Try to use a non-existent alias
     let result = aka.replace_with_mode("non-existent-alias", ProcessingMode::Direct).expect("Failed to replace");
@@ -119,7 +123,7 @@ fn test_usage_count_with_daemon_mode() {
     let cache_path = cache_temp_dir.path().to_path_buf();
 
     // Create AKA instance with temp cache directory
-    let mut aka = AKA::new_with_cache_dir(false, &Some(config_file), Some(&cache_path)).expect("Failed to create AKA instance");
+    let mut aka = AKA::new(false, cache_path.to_path_buf()).expect("Failed to create AKA instance");
 
     // Use an alias with daemon mode
     let result = aka.replace_with_mode("test-alias", ProcessingMode::Daemon).expect("Failed to replace");
@@ -137,7 +141,7 @@ fn test_cache_loading_directly() {
 
     // Create AKA instance and use an alias to create cache
     {
-        let mut aka = AKA::new_with_cache_dir(false, &Some(config_file.clone()), Some(&cache_path)).expect("Failed to create AKA instance");
+        let mut aka = AKA::new(false, cache_path.to_path_buf()).expect("Failed to create AKA instance");
         let result = aka.replace_with_mode("test-alias", ProcessingMode::Direct).expect("Failed to replace");
         assert_eq!(result.trim(), "echo \"test command\"");
     }
@@ -145,7 +149,7 @@ fn test_cache_loading_directly() {
     // Load cache directly using the config hash
     let hash = aka_lib::hash_config_file(&config_file).expect("Failed to hash config");
 
-    let loaded_cache = load_alias_cache_with_base(&hash, Some(&cache_path)).expect("Failed to load cache");
+    let loaded_cache = load_alias_cache(&hash, &cache_path).expect("Failed to load cache");
     assert!(loaded_cache.is_some(), "Cache should be loaded");
 
     let aliases = loaded_cache.unwrap();
@@ -160,7 +164,7 @@ fn test_cache_debug() {
 
     // Create AKA instance and use aliases
     {
-        let mut aka = AKA::new_with_cache_dir(false, &Some(config_file.clone()), Some(&cache_path)).expect("Failed to create AKA instance");
+        let mut aka = AKA::new(false, cache_path.to_path_buf()).expect("Failed to create AKA instance");
 
         // Use test-alias 3 times
         for i in 1..=3 {
@@ -183,7 +187,7 @@ fn test_cache_debug() {
 
     // Load cache and verify counts
     let hash = aka_lib::hash_config_file(&config_file).expect("Failed to hash config");
-    let loaded_cache = load_alias_cache_with_base(&hash, Some(&cache_path)).expect("Failed to load cache");
+    let loaded_cache = load_alias_cache(&hash, &cache_path).expect("Failed to load cache");
     assert!(loaded_cache.is_some(), "Cache should be loaded");
 
     let aliases = loaded_cache.unwrap();

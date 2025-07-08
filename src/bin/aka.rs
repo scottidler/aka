@@ -50,7 +50,9 @@ impl DaemonClient {
         debug!("🔌 DaemonClient::send_request called");
         debug!("📤 Request: {:?}", request);
 
-        let socket_path = determine_socket_path()?;
+        let home_dir = dirs::home_dir()
+            .ok_or_else(|| eyre::eyre!("Unable to determine home directory"))?;
+        let socket_path = determine_socket_path(&home_dir)?;
         debug!("🔌 Connecting to socket: {:?}", socket_path);
 
         let mut stream = UnixStream::connect(&socket_path)
@@ -97,7 +99,11 @@ fn get_daemon_status_emoji() -> &'static str {
     use std::io::{BufRead, BufReader, Write};
 
     // Check daemon status quickly and return appropriate emoji
-    let socket_path = match determine_socket_path() {
+    let home_dir = match dirs::home_dir() {
+        Some(dir) => dir,
+        None => return "❓", // Unknown - can't determine home directory
+    };
+    let socket_path = match determine_socket_path(&home_dir) {
         Ok(path) => path,
         Err(_) => return "❓", // Unknown - can't determine socket path
     };
@@ -502,7 +508,9 @@ WantedBy=default.target
         }
 
         // Check socket file
-        let socket_path = determine_socket_path()?;
+        let home_dir = dirs::home_dir()
+            .ok_or_else(|| eyre::eyre!("Unable to determine home directory"))?;
+        let socket_path = determine_socket_path(&home_dir)?;
         let socket_exists = socket_path.exists();
         if socket_exists {
             println!("🔌 Socket file: ✅ Found at {:?}", socket_path);
@@ -647,13 +655,15 @@ WantedBy=default.target
         }
 
         // Clean up socket file regardless of platform
-        if let Ok(socket_path) = determine_socket_path() {
-            if socket_path.exists() {
-                use std::fs;
-                if let Err(e) = fs::remove_file(&socket_path) {
-                    println!("⚠️  Failed to remove socket file: {}", e);
-                } else {
-                    println!("🧹 Removed stale socket file");
+        if let Ok(home_dir) = dirs::home_dir().ok_or_else(|| eyre::eyre!("Unable to determine home directory")) {
+            if let Ok(socket_path) = determine_socket_path(&home_dir) {
+                if socket_path.exists() {
+                    use std::fs;
+                    if let Err(e) = fs::remove_file(&socket_path) {
+                        println!("⚠️  Failed to remove socket file: {}", e);
+                    } else {
+                        println!("🧹 Removed stale socket file");
+                    }
                 }
             }
         }
@@ -774,7 +784,9 @@ fn handle_regular_command(opts: &AkaOpts) -> Result<i32> {
     if let Some(ref command) = &opts.command {
         if let Command::HealthCheck = command {
             debug!("🏥 Explicit health check command requested");
-            return execute_health_check(&opts.config);
+            let home_dir = dirs::home_dir()
+                .ok_or_else(|| eyre::eyre!("Unable to determine home directory"))?;
+            return execute_health_check(&home_dir);
         }
     }
 
@@ -783,7 +795,9 @@ fn handle_regular_command(opts: &AkaOpts) -> Result<i32> {
     debug!("📋 About to run execute_health_check with config: {:?}", opts.config);
 
     // Run health check to determine system state
-    let health_status = execute_health_check(&opts.config)?;
+    let home_dir = dirs::home_dir()
+        .ok_or_else(|| eyre::eyre!("Unable to determine home directory"))?;
+    let health_status = execute_health_check(&home_dir)?;
     debug!("📊 Health check completed with status: {}", health_status);
 
     match health_status {
@@ -829,7 +843,18 @@ fn handle_command_via_daemon_with_fallback(opts: &AkaOpts) -> Result<i32> {
     let mut timing = TimingCollector::new(ProcessingMode::Daemon);
 
     // Quick check if daemon is available
-    match determine_socket_path() {
+    let home_dir = match dirs::home_dir() {
+        Some(dir) => dir,
+        None => {
+            debug!("❌ Cannot determine home directory, using direct path");
+            let mut direct_timing = TimingCollector::new(ProcessingMode::Direct);
+            let result = handle_command_direct_timed(opts, &mut direct_timing);
+            let timing_data = direct_timing.finalize();
+            log_timing(timing_data);
+            return result;
+        }
+    };
+    match determine_socket_path(&home_dir) {
         Ok(socket_path) => {
             debug!("🔌 Socket path determined: {:?}", socket_path);
             if socket_path.exists() {
@@ -974,7 +999,9 @@ fn handle_command_direct_timed(opts: &AkaOpts, timing: &mut TimingCollector) -> 
     debug!("🔍 Direct processing options: eol={}, config={:?}", opts.eol, opts.config);
 
     timing.start_config_load();
-    let mut aka = AKA::new(opts.eol, &opts.config)?;
+    let home_dir = dirs::home_dir()
+        .ok_or_else(|| eyre::eyre!("Unable to determine home directory"))?;
+    let mut aka = AKA::new(opts.eol, home_dir)?;
     timing.end_config_load();
 
     debug!("✅ Config loaded, {} aliases available", aka.spec.aliases.len());
@@ -1069,7 +1096,8 @@ mod tests {
     #[test]
     fn test_daemon_client_socket_path() {
         // Test that we can determine socket path
-        let result = determine_socket_path();
+        let home_dir = std::env::temp_dir();
+        let result = determine_socket_path(&home_dir);
         // Should either succeed or fail gracefully
         match result {
             Ok(path) => assert!(path.to_string_lossy().contains("aka")),
@@ -1106,7 +1134,14 @@ fn main() {
     let opts = AkaOpts::parse();
 
     // Set up logging
-    if let Err(e) = setup_logging() {
+    let home_dir = match dirs::home_dir() {
+        Some(dir) => dir,
+        None => {
+            eprintln!("Error: Unable to determine home directory");
+            exit(1);
+        }
+    };
+    if let Err(e) = setup_logging(&home_dir) {
         eprintln!("Warning: Failed to set up logging: {}", e);
     }
 

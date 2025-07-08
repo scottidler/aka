@@ -296,11 +296,8 @@ pub fn get_timing_file_path() -> Result<PathBuf> {
     Ok(config_dir.join("aka").join("timing_data.csv"))
 }
 
-pub fn get_config_path() -> Result<PathBuf> {
-    let config_path = dirs::config_dir()
-        .ok_or_else(|| eyre!("Could not determine config directory"))?
-        .join("aka")
-        .join("aka.yml");
+pub fn get_config_path(home_dir: &PathBuf) -> Result<PathBuf> {
+    let config_path = home_dir.join(".config").join("aka").join("aka.yml");
 
     if config_path.exists() {
         Ok(config_path)
@@ -318,7 +315,7 @@ pub fn test_config(file: &PathBuf) -> Result<PathBuf> {
     Err(eyre!("config {:?} not found!", file))
 }
 
-pub fn setup_logging() -> Result<()> {
+pub fn setup_logging(home_dir: &PathBuf) -> Result<()> {
     if is_benchmark_mode() {
         // In benchmark mode, log to stdout for visibility
         env_logger::Builder::from_env(env_logger::Env::default().filter_or("RUST_LOG", "info"))
@@ -326,10 +323,7 @@ pub fn setup_logging() -> Result<()> {
             .init();
     } else {
         // In normal mode, log to file
-        let log_dir = dirs::data_local_dir()
-            .ok_or_else(|| eyre!("Could not determine local data directory"))?
-            .join("aka")
-            .join("logs");
+        let log_dir = home_dir.join(".local").join("share").join("aka").join("logs");
 
         std::fs::create_dir_all(&log_dir)?;
         let log_file_path = log_dir.join("aka.log");
@@ -353,17 +347,15 @@ pub fn hash_config_file(config_path: &PathBuf) -> Result<String> {
     Ok(format!("{:016x}", hash))
 }
 
-pub fn get_hash_cache_path() -> Result<PathBuf> {
-    let cache_dir = dirs::data_local_dir()
-        .ok_or_else(|| eyre!("Could not determine local data directory"))?
-        .join("aka");
+pub fn get_hash_cache_path(home_dir: &PathBuf) -> Result<PathBuf> {
+    let cache_dir = home_dir.join(".local").join("share").join("aka");
 
     std::fs::create_dir_all(&cache_dir)?;
     Ok(cache_dir.join("config.hash"))
 }
 
-pub fn get_stored_hash() -> Result<Option<String>> {
-    let hash_path = get_hash_cache_path()?;
+pub fn get_stored_hash(home_dir: &PathBuf) -> Result<Option<String>> {
+    let hash_path = get_hash_cache_path(home_dir)?;
     if hash_path.exists() {
         let stored_hash = std::fs::read_to_string(&hash_path)?;
         Ok(Some(stored_hash.trim().to_string()))
@@ -372,23 +364,23 @@ pub fn get_stored_hash() -> Result<Option<String>> {
     }
 }
 
-pub fn store_hash(hash: &str) -> Result<()> {
-    let hash_path = get_hash_cache_path()?;
+pub fn store_hash(hash: &str, home_dir: &PathBuf) -> Result<()> {
+    let hash_path = get_hash_cache_path(home_dir)?;
     std::fs::write(&hash_path, hash)?;
     Ok(())
 }
 
-pub fn execute_health_check(config: &Option<PathBuf>) -> Result<i32> {
+pub fn execute_health_check(home_dir: &PathBuf) -> Result<i32> {
     use std::os::unix::net::UnixStream;
     use std::io::{BufRead, BufReader, Write};
     use serde_json;
 
     debug!("🔍 Starting comprehensive health check");
-    debug!("🔍 Health check input: config = {:?}", config);
+    debug!("🔍 Health check input: home_dir = {:?}", home_dir);
 
     // Step 1: Check daemon health first
     debug!("📋 Step 1: Checking daemon health");
-    if let Ok(socket_path) = determine_socket_path() {
+    if let Ok(socket_path) = determine_socket_path(home_dir) {
         debug!("🔌 Socket path determined: {:?}", socket_path);
         if socket_path.exists() {
             debug!("✅ Daemon socket exists, testing connection");
@@ -449,32 +441,7 @@ pub fn execute_health_check(config: &Option<PathBuf>) -> Result<i32> {
     // Step 2: Daemon not available, check config file cache
     debug!("📋 Step 2: Daemon unavailable, checking config cache");
 
-    let config_path = match config {
-        Some(file) => {
-            debug!("🔍 Using specified config file: {:?}", file);
-            if !file.exists() {
-                debug!("❌ Health check failed: specified config file {:?} not found", file);
-                debug!("🎯 Health check result: CONFIG_NOT_FOUND (returning 1)");
-                return Ok(1); // Config file not found
-            }
-            file.clone()
-        }
-        None => {
-            debug!("🔍 No config specified, using default config path");
-            let default_config = get_config_path();
-            match default_config {
-                Ok(path) => {
-                    debug!("✅ Default config path resolved: {:?}", path);
-                    path
-                }
-                Err(e) => {
-                    debug!("❌ Health check failed: no config file found: {}", e);
-                    debug!("🎯 Health check result: CONFIG_NOT_FOUND (returning 1)");
-                    return Ok(1); // Config file not found
-                }
-            }
-        }
-    };
+    let config_path = get_config_path(home_dir)?;
 
     // Step 3: Calculate current config hash
     debug!("📋 Step 3: Calculating current config hash");
@@ -492,7 +459,7 @@ pub fn execute_health_check(config: &Option<PathBuf>) -> Result<i32> {
 
     // Step 4: Compare with stored hash
     debug!("📋 Step 4: Comparing with stored hash");
-    let stored_hash = get_stored_hash().unwrap_or(None);
+    let stored_hash = get_stored_hash(home_dir).unwrap_or(None);
 
     match stored_hash {
         Some(stored) => {
@@ -522,7 +489,7 @@ pub fn execute_health_check(config: &Option<PathBuf>) -> Result<i32> {
             debug!("✅ Fresh config loaded successfully");
 
             // Config is valid, store the new hash
-            if let Err(e) = store_hash(&current_hash) {
+            if let Err(e) = store_hash(&current_hash, home_dir) {
                 debug!("⚠️ Warning: could not store config hash: {}", e);
             } else {
                 debug!("✅ New config hash stored: {}", current_hash);
@@ -560,25 +527,18 @@ pub struct AKA {
     pub eol: bool,
     pub spec: Spec,
     pub config_hash: String,
-    pub cache_dir: Option<PathBuf>,
+    pub home_dir: PathBuf,
 }
 
 impl AKA {
-    pub fn new(eol: bool, config: &Option<PathBuf>) -> Result<Self> {
-        Self::new_with_cache_dir(eol, config, None)
-    }
-
-    pub fn new_with_cache_dir(eol: bool, config: &Option<PathBuf>, cache_dir: Option<&PathBuf>) -> Result<Self> {
+    pub fn new(eol: bool, home_dir: PathBuf) -> Result<Self> {
         use std::time::Instant;
 
         let start_total = Instant::now();
 
-        // Time config path resolution
+        // Config path is always derived from home_dir
         let start_path = Instant::now();
-        let config_path = match config {
-            Some(file) => test_config(file)?,
-            None => get_config_path()?,
-        };
+        let config_path = get_config_path(&home_dir)?;
         let path_duration = start_path.elapsed();
 
         // Calculate config hash
@@ -593,7 +553,7 @@ impl AKA {
 
         // Try to load from cache first
         let start_cache = Instant::now();
-        if let Some(cached_aliases) = load_alias_cache_with_base(&config_hash, cache_dir)? {
+        if let Some(cached_aliases) = load_alias_cache(&config_hash, &home_dir)? {
             debug!("📋 Using cached aliases with usage counts");
             debug!("📋 Cache loaded {} aliases", cached_aliases.len());
             // Log a sample alias count for debugging
@@ -604,7 +564,7 @@ impl AKA {
         } else {
             debug!("📋 No cache found, initializing usage counts to 0");
             // Initialize all counts to 0 (they already are due to skip_deserializing) and save to cache
-            save_alias_cache_with_base(&config_hash, &spec.aliases, cache_dir)?;
+            save_alias_cache(&config_hash, &spec.aliases, &home_dir)?;
         }
         let cache_duration = start_cache.elapsed();
 
@@ -616,7 +576,7 @@ impl AKA {
         debug!("  🗃️  Cache handling: {:.3}ms", cache_duration.as_secs_f64() * 1000.0);
         debug!("  🎯 Total AKA::new(): {:.3}ms", total_duration.as_secs_f64() * 1000.0);
 
-        Ok(AKA { eol, spec, config_hash, cache_dir: cache_dir.cloned() })
+        Ok(AKA { eol, spec, config_hash, home_dir })
     }
 
     pub fn use_alias(&self, alias: &Alias, pos: usize) -> bool {
@@ -764,7 +724,7 @@ impl AKA {
 
             // Save updated usage counts to cache if any aliases were used
             if replaced {
-                if let Err(e) = save_alias_cache_with_base(&self.config_hash, &self.spec.aliases, self.cache_dir.as_ref()) {
+                if let Err(e) = save_alias_cache(&self.config_hash, &self.spec.aliases, &self.home_dir) {
                     debug!("⚠️ Failed to save alias cache: {}", e);
                 }
             }
@@ -783,7 +743,7 @@ pub fn print_alias(alias: &Alias) {
 }
 
 // Utility function to determine socket path for daemon
-pub fn determine_socket_path() -> Result<PathBuf> {
+pub fn determine_socket_path(home_dir: &PathBuf) -> Result<PathBuf> {
     // Try XDG_RUNTIME_DIR first
     if let Ok(runtime_dir) = std::env::var("XDG_RUNTIME_DIR") {
         let path = PathBuf::from(runtime_dir).join("aka").join("daemon.sock");
@@ -791,14 +751,13 @@ pub fn determine_socket_path() -> Result<PathBuf> {
     }
 
     // Fallback to ~/.local/share/aka/
-    let home_dir = dirs::home_dir()
-        .ok_or_else(|| eyre!("Could not determine home directory"))?;
-
     Ok(home_dir.join(".local/share/aka/daemon.sock"))
 }
 
-pub fn get_alias_cache_path(config_hash: &str) -> Result<PathBuf> {
-    get_alias_cache_path_with_base(config_hash, None)
+pub fn get_alias_cache_path(config_hash: &str, home_dir: &PathBuf) -> Result<PathBuf> {
+    let data_dir = home_dir.join(".local").join("share").join("aka");
+    std::fs::create_dir_all(&data_dir)?;
+    Ok(data_dir.join(format!("{}.json", config_hash)))
 }
 
 pub fn get_alias_cache_path_with_base(config_hash: &str, base_dir: Option<&PathBuf>) -> Result<PathBuf> {
@@ -820,8 +779,29 @@ pub fn get_alias_cache_path_with_base(config_hash: &str, base_dir: Option<&PathB
     Ok(data_dir.join(format!("{}.json", config_hash)))
 }
 
-pub fn load_alias_cache(config_hash: &str) -> Result<Option<HashMap<String, Alias>>> {
-    load_alias_cache_with_base(config_hash, None)
+pub fn load_alias_cache(config_hash: &str, home_dir: &PathBuf) -> Result<Option<HashMap<String, Alias>>> {
+    let cache_path = get_alias_cache_path(config_hash, home_dir)?;
+
+    if !cache_path.exists() {
+        debug!("Cache file doesn't exist: {:?}", cache_path);
+        return Ok(None);
+    }
+
+    debug!("Loading alias cache from: {:?}", cache_path);
+    let content = std::fs::read_to_string(&cache_path)?;
+    let cache: AliasCache = serde_json::from_str(&content)?;
+
+    // Restore names from HashMap keys since they might be empty in the cache
+    let mut aliases_with_names = HashMap::new();
+    for (key, mut alias) in cache.aliases {
+        if alias.name.is_empty() {
+            alias.name = key.clone();
+        }
+        aliases_with_names.insert(key, alias);
+    }
+
+    debug!("Loaded {} aliases from cache", aliases_with_names.len());
+    Ok(Some(aliases_with_names))
 }
 
 pub fn load_alias_cache_with_base(config_hash: &str, base_dir: Option<&PathBuf>) -> Result<Option<HashMap<String, Alias>>> {
@@ -849,8 +829,22 @@ pub fn load_alias_cache_with_base(config_hash: &str, base_dir: Option<&PathBuf>)
     Ok(Some(aliases_with_names))
 }
 
-pub fn save_alias_cache(config_hash: &str, aliases: &HashMap<String, Alias>) -> Result<()> {
-    save_alias_cache_with_base(config_hash, aliases, None)
+pub fn save_alias_cache(config_hash: &str, aliases: &HashMap<String, Alias>, home_dir: &PathBuf) -> Result<()> {
+    let cache_path = get_alias_cache_path(config_hash, home_dir)?;
+
+    let cache = AliasCache {
+        aliases: aliases.clone(),
+    };
+
+    let content = serde_json::to_string_pretty(&cache)?;
+
+    // Write to temporary file first, then rename (atomic operation)
+    let temp_path = cache_path.with_extension("tmp");
+    std::fs::write(&temp_path, content)?;
+    std::fs::rename(&temp_path, &cache_path)?;
+
+    debug!("Saved alias cache to: {:?}", cache_path);
+    Ok(())
 }
 
 pub fn save_alias_cache_with_base(config_hash: &str, aliases: &HashMap<String, Alias>, base_dir: Option<&PathBuf>) -> Result<()> {

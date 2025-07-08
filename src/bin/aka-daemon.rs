@@ -59,25 +59,22 @@ impl DaemonServer {
         Self::new_with_cache_dir(config, None)
     }
 
-    fn new_with_cache_dir(config: &Option<PathBuf>, cache_dir: Option<&std::path::Path>) -> Result<Self, Box<dyn std::error::Error>> {
+    fn new_with_cache_dir(config: &Option<PathBuf>, _cache_dir: Option<&std::path::Path>) -> Result<Self, Box<dyn std::error::Error>> {
         use std::time::Instant;
 
         let start_daemon_init = Instant::now();
         debug!("🚀 Daemon initializing, loading config...");
 
         // Determine config path
+        let home_dir = dirs::home_dir()
+            .ok_or_else(|| eyre!("Unable to determine home directory"))?;
         let config_path = match config {
             Some(path) => path.clone(),
-            None => aka_lib::get_config_path()?,
+            None => aka_lib::get_config_path(&home_dir)?,
         };
 
         // Load initial config
-        let aka = if let Some(cache_dir) = cache_dir {
-            let cache_dir_pathbuf = cache_dir.to_path_buf();
-            AKA::new_with_cache_dir(false, &Some(config_path.clone()), Some(&cache_dir_pathbuf))?
-        } else {
-            AKA::new(false, &Some(config_path.clone()))?
-        };
+        let aka = AKA::new(false, home_dir.clone())?;
         let aka = Arc::new(RwLock::new(aka));
 
         // Calculate initial config hash
@@ -85,7 +82,7 @@ impl DaemonServer {
         let config_hash = Arc::new(RwLock::new(initial_hash.clone()));
 
         // Store hash for CLI comparison
-        if let Err(e) = store_hash(&initial_hash) {
+        if let Err(e) = store_hash(&initial_hash, &home_dir) {
             warn!("Failed to store initial config hash: {}", e);
         }
 
@@ -157,7 +154,9 @@ impl DaemonServer {
         debug!("🔄 Config hash changed: {} -> {}", current_hash, new_hash);
 
         // Load new config (this will create the new cache or load existing one)
-        let mut new_aka = AKA::new(false, &Some(self.config_path.clone()))?;
+        let home_dir = dirs::home_dir()
+            .ok_or_else(|| eyre!("Unable to determine home directory"))?;
+        let mut new_aka = AKA::new(false, home_dir.clone())?;
 
         // If we have an old cache, migrate counts to the new one
         if current_hash != new_hash {
@@ -165,7 +164,7 @@ impl DaemonServer {
                 debug!("⚠️ Failed to migrate alias counts: {}", e);
             } else {
                 // Save the migrated aliases back to cache
-                if let Err(e) = aka_lib::save_alias_cache(&new_hash, &new_aka.spec.aliases) {
+                if let Err(e) = aka_lib::save_alias_cache(&new_hash, &new_aka.spec.aliases, &home_dir) {
                     debug!("⚠️ Failed to save migrated alias cache: {}", e);
                 }
             }
@@ -184,7 +183,7 @@ impl DaemonServer {
         }
 
         // Store hash for CLI comparison
-        if let Err(e) = store_hash(&new_hash) {
+        if let Err(e) = store_hash(&new_hash, &home_dir) {
             warn!("Failed to store updated config hash: {}", e);
         }
 
@@ -335,14 +334,16 @@ impl DaemonServer {
                                     debug!("🔄 Auto-reload: hash changed {} -> {}", current_hash, new_hash);
 
                                     // Load new config
-                                    match AKA::new(false, &Some(config_path_for_watcher.clone())) {
+                                    let home_dir = dirs::home_dir().unwrap_or_else(|| std::path::PathBuf::from("/tmp"));
+                                    match AKA::new(false, home_dir.clone()) {
                                         Ok(mut new_aka) => {
                                             // Migrate usage counts from old cache to new cache
                                             if let Err(e) = aka_lib::migrate_alias_counts(&current_hash, &new_hash, &mut new_aka.spec.aliases) {
                                                 debug!("⚠️ Failed to migrate alias counts: {}", e);
                                             } else {
                                                 // Save the migrated aliases back to cache
-                                                if let Err(e) = aka_lib::save_alias_cache(&new_hash, &new_aka.spec.aliases) {
+                                                let home_dir = dirs::home_dir().unwrap_or_else(|| std::path::PathBuf::from("/tmp"));
+                                                if let Err(e) = aka_lib::save_alias_cache(&new_hash, &new_aka.spec.aliases, &home_dir) {
                                                     debug!("⚠️ Failed to save migrated alias cache: {}", e);
                                                 }
                                             }
@@ -374,7 +375,8 @@ impl DaemonServer {
                                             }
 
                                             // Store hash for CLI comparison
-                                            if let Err(e) = store_hash(&new_hash) {
+                                            let home_dir = dirs::home_dir().unwrap_or_else(|| std::path::PathBuf::from("/tmp"));
+                                            if let Err(e) = store_hash(&new_hash, &home_dir) {
                                                 warn!("Failed to store updated config hash: {}", e);
                                             }
 
@@ -498,14 +500,20 @@ fn main() {
     let opts = DaemonOpts::parse();
 
     // Set up logging
-    if let Err(e) = setup_logging() {
+    let home_dir = dirs::home_dir()
+        .ok_or_else(|| eyre!("Unable to determine home directory"))
+        .unwrap_or_else(|e| {
+            eprintln!("Error: {}", e);
+            std::process::exit(1);
+        });
+    if let Err(e) = setup_logging(&home_dir) {
         eprintln!("Warning: Failed to set up logging: {}", e);
     }
 
     info!("🚀 AKA Daemon starting...");
 
     // Determine socket path
-    let socket_path = match determine_socket_path() {
+    let socket_path = match determine_socket_path(&home_dir) {
         Ok(path) => path,
         Err(e) => {
             error!("Failed to determine socket path: {}", e);

@@ -19,12 +19,14 @@ aliases:
 fn test_yaml_parsing_performance_validation() {
     let temp_dir = TempDir::new().expect("Failed to create temp dir");
     let cache_temp_dir = TempDir::new().expect("Failed to create cache temp dir");
-    let config_file = temp_dir.path().join("aka.yml");
+    let config_dir = cache_temp_dir.path().join(".config").join("aka");
+    fs::create_dir_all(&config_dir).expect("Failed to create config dir");
+    let config_file = config_dir.join("aka.yml");
     fs::write(&config_file, VALID_CONFIG).expect("Failed to write config");
 
     // Measure YAML parsing time (this is what we proved in our logs)
     let start = std::time::Instant::now();
-    let mut aka = AKA::new_with_cache_dir(false, &Some(config_file.clone()), Some(&cache_temp_dir.path().to_path_buf())).expect("Config should load");
+    let mut aka = AKA::new(false, cache_temp_dir.path().to_path_buf()).expect("Config should load");
     let duration = start.elapsed();
 
     println!("YAML parsing time: {:?}", duration);
@@ -44,7 +46,9 @@ fn test_yaml_parsing_performance_validation() {
 fn test_config_loading_consistency() {
     let temp_dir = TempDir::new().expect("Failed to create temp dir");
     let cache_temp_dir = TempDir::new().expect("Failed to create cache temp dir");
-    let config_file = temp_dir.path().join("aka.yml");
+    let config_dir = cache_temp_dir.path().join(".config").join("aka");
+    fs::create_dir_all(&config_dir).expect("Failed to create config dir");
+    let config_file = config_dir.join("aka.yml");
     fs::write(&config_file, VALID_CONFIG).expect("Failed to write config");
 
     // Load config multiple times to test consistency
@@ -53,7 +57,7 @@ fn test_config_loading_consistency() {
 
     for i in 0..iterations {
         let start = std::time::Instant::now();
-        let mut aka = AKA::new_with_cache_dir(false, &Some(config_file.clone()), Some(&cache_temp_dir.path().to_path_buf())).expect("Config should load");
+        let mut aka = AKA::new(false, cache_temp_dir.path().to_path_buf()).expect("Config should load");
         let duration = start.elapsed();
         durations.push(duration);
 
@@ -80,10 +84,12 @@ fn test_config_loading_consistency() {
 fn test_alias_transformation_correctness() {
     let temp_dir = TempDir::new().expect("Failed to create temp dir");
     let cache_temp_dir = TempDir::new().expect("Failed to create cache temp dir");
-    let config_file = temp_dir.path().join("aka.yml");
+    let config_dir = cache_temp_dir.path().join(".config").join("aka");
+    fs::create_dir_all(&config_dir).expect("Failed to create config dir");
+    let config_file = config_dir.join("aka.yml");
     fs::write(&config_file, VALID_CONFIG).expect("Failed to write config");
 
-    let mut aka = AKA::new_with_cache_dir(false, &Some(config_file), Some(&cache_temp_dir.path().to_path_buf())).expect("Config should load");
+    let mut aka = AKA::new(false, cache_temp_dir.path().to_path_buf()).expect("Config should load");
 
     // Test various transformation scenarios (validates daemon vs direct produce same results)
     let test_cases = vec![
@@ -116,11 +122,13 @@ fn test_architecture_proof_summary() {
     // Test 1: YAML parsing timing
     let temp_dir = TempDir::new().expect("Failed to create temp dir");
     let cache_temp_dir = TempDir::new().expect("Failed to create cache temp dir");
-    let config_file = temp_dir.path().join("aka.yml");
+    let config_dir = cache_temp_dir.path().join(".config").join("aka");
+    fs::create_dir_all(&config_dir).expect("Failed to create config dir");
+    let config_file = config_dir.join("aka.yml");
     fs::write(&config_file, VALID_CONFIG).expect("Failed to write config");
 
     let start = std::time::Instant::now();
-    let mut aka = AKA::new_with_cache_dir(false, &Some(config_file), Some(&cache_temp_dir.path().to_path_buf())).expect("Config should load");
+    let mut aka = AKA::new(false, cache_temp_dir.path().to_path_buf()).expect("Config should load");
     let yaml_time = start.elapsed();
 
     println!("📊 YAML parsing time: {:?}", yaml_time);
