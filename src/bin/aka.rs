@@ -38,13 +38,12 @@ use aka_lib::{
 struct DaemonClient;
 
 impl DaemonClient {
-    fn send_request(request: DaemonRequest) -> Result<DaemonResponse, DaemonError> {
+    fn send_request(request: DaemonRequest) -> Result<DaemonResponse> {
         let home_dir = dirs::home_dir()
-            .ok_or_else(|| DaemonError::UnknownError("Unable to determine home directory".to_string()))?;
-        let socket_path = determine_socket_path(&home_dir)
-            .map_err(|e| DaemonError::UnknownError(e.to_string()))?;
+            .ok_or_else(|| eyre::eyre!("Unable to determine home directory"))?;
+        let socket_path = determine_socket_path(&home_dir)?;
 
-        Self::send_request_with_timeout(request, &socket_path)
+        Self::send_request_with_timeout(request, &socket_path).map_err(|e| e.into())
     }
 
     fn send_request_with_timeout(request: DaemonRequest, socket_path: &PathBuf) -> Result<DaemonResponse, DaemonError> {
@@ -203,7 +202,7 @@ impl DaemonClient {
 
     fn send_request_timed(request: DaemonRequest, timing: &mut TimingCollector) -> Result<DaemonResponse, DaemonError> {
         timing.start_ipc();
-        let result = Self::send_request(request);
+        let result = Self::send_request(request).map_err(|e| DaemonError::UnknownError(e.to_string()));
         timing.end_ipc();
         result
     }
