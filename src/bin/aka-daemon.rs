@@ -56,10 +56,6 @@ struct DaemonServer {
 
 impl DaemonServer {
     fn new(config: &Option<PathBuf>) -> Result<Self> {
-        Self::new_with_cache_dir(config, None)
-    }
-
-    fn new_with_cache_dir(config: &Option<PathBuf>, _cache_dir: Option<&std::path::Path>) -> Result<Self> {
         use std::time::Instant;
 
         let start_daemon_init = Instant::now();
