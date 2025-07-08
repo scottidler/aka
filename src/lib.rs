@@ -86,16 +86,11 @@ impl TimingCollector {
     }
 
     pub fn finalize(self) -> TimingData {
-        let total_duration = self.start_time.elapsed();
-        let config_load_duration = self.config_start.map(|start| start.elapsed());
-        let ipc_duration = self.ipc_start.map(|start| start.elapsed());
-        let processing_duration = self.processing_start.map(|start| start.elapsed()).unwrap_or_default();
-
         TimingData {
-            total_duration,
-            config_load_duration,
-            ipc_duration,
-            processing_duration,
+            total_duration: self.start_time.elapsed(),
+            config_load_duration: self.config_start.map(|start| start.elapsed()),
+            ipc_duration: self.ipc_start.map(|start| start.elapsed()),
+            processing_duration: self.processing_start.map(|start| start.elapsed()).unwrap_or_default(),
             mode: self.mode,
             timestamp: std::time::SystemTime::now(),
         }
@@ -104,53 +99,53 @@ impl TimingCollector {
 
 impl TimingData {
     pub fn log_detailed(&self) {
+        // Only log detailed timing if benchmark mode is enabled
+        if !is_benchmark_mode() {
+            return;
+        }
+
         let emoji = match self.mode {
             ProcessingMode::Daemon => "👹",
             ProcessingMode::Direct => "📥",
         };
 
-        debug!("🕒 Timing Report [{}]:", emoji);
-        debug!("  📊 Total: {:.3}ms", self.total_duration.as_secs_f64() * 1000.0);
+        info!("{} === TIMING BREAKDOWN ({:?}) ===", emoji, self.mode);
+        info!("  🎯 Total execution: {:.3}ms", self.total_duration.as_secs_f64() * 1000.0);
 
         if let Some(config_duration) = self.config_load_duration {
-            debug!("  📋 Config Load: {:.3}ms", config_duration.as_secs_f64() * 1000.0);
+            info!("  📋 Config loading: {:.3}ms ({:.1}%)",
+                config_duration.as_secs_f64() * 1000.0,
+                (config_duration.as_secs_f64() / self.total_duration.as_secs_f64()) * 100.0
+            );
         }
 
         if let Some(ipc_duration) = self.ipc_duration {
-            debug!("  📡 IPC: {:.3}ms", ipc_duration.as_secs_f64() * 1000.0);
+            info!("  🔌 IPC communication: {:.3}ms ({:.1}%)",
+                ipc_duration.as_secs_f64() * 1000.0,
+                (ipc_duration.as_secs_f64() / self.total_duration.as_secs_f64()) * 100.0
+            );
         }
 
-        debug!("  ⚙️  Processing: {:.3}ms", self.processing_duration.as_secs_f64() * 1000.0);
+        info!("  ⚙️  Processing: {:.3}ms ({:.1}%)",
+            self.processing_duration.as_secs_f64() * 1000.0,
+            (self.processing_duration.as_secs_f64() / self.total_duration.as_secs_f64()) * 100.0
+        );
 
-        // Calculate percentages
-        let total_ms = self.total_duration.as_secs_f64() * 1000.0;
-        if total_ms > 0.0 {
-            if let Some(config_duration) = self.config_load_duration {
-                let config_ms = config_duration.as_secs_f64() * 1000.0;
-                let config_pct = (config_ms / total_ms) * 100.0;
-                debug!("  📋 Config Load: {:.1}%", config_pct);
-            }
-
-            if let Some(ipc_duration) = self.ipc_duration {
-                let ipc_ms = ipc_duration.as_secs_f64() * 1000.0;
-                let ipc_pct = (ipc_ms / total_ms) * 100.0;
-                debug!("  📡 IPC: {:.1}%", ipc_pct);
-            }
-
-            let processing_ms = self.processing_duration.as_secs_f64() * 1000.0;
-            let processing_pct = (processing_ms / total_ms) * 100.0;
-            debug!("  ⚙️  Processing: {:.1}%", processing_pct);
-        }
+        // Calculate overhead
+        let accounted = self.config_load_duration.unwrap_or_default() +
+                       self.ipc_duration.unwrap_or_default() +
+                       self.processing_duration;
+        let overhead = self.total_duration.saturating_sub(accounted);
+        info!("  🏗️  Overhead: {:.3}ms ({:.1}%)",
+            overhead.as_secs_f64() * 1000.0,
+            (overhead.as_secs_f64() / self.total_duration.as_secs_f64()) * 100.0
+        );
     }
 
     pub fn to_csv_line(&self) -> String {
-        let mode_str = match self.mode {
-            ProcessingMode::Daemon => "daemon",
-            ProcessingMode::Direct => "direct",
-        };
-
-        format!("{},{:.3},{:.3},{:.3},{:.3}",
-            mode_str,
+        format!("{},{:?},{:.3},{:.3},{:.3},{:.3}",
+            self.timestamp.duration_since(std::time::UNIX_EPOCH).unwrap().as_millis(),
+            self.mode,
             self.total_duration.as_secs_f64() * 1000.0,
             self.config_load_duration.map(|d| d.as_secs_f64() * 1000.0).unwrap_or(0.0),
             self.ipc_duration.map(|d| d.as_secs_f64() * 1000.0).unwrap_or(0.0),
@@ -161,54 +156,71 @@ impl TimingData {
 
 fn parse_csv_line(line: &str) -> Result<TimingData> {
     let parts: Vec<&str> = line.split(',').collect();
-    if parts.len() != 5 {
+    if parts.len() != 6 {
         return Err(eyre!("Invalid CSV line format"));
     }
 
-    let mode = match parts[0] {
-        "daemon" => ProcessingMode::Daemon,
-        "direct" => ProcessingMode::Direct,
-        _ => return Err(eyre!("Invalid mode: {}", parts[0])),
+    let timestamp_ms: u64 = parts[0].parse().map_err(|_| eyre!("Invalid timestamp"))?;
+    let mode = match parts[1] {
+        "Daemon" => ProcessingMode::Daemon,
+        "Direct" => ProcessingMode::Direct,
+        _ => return Err(eyre!("Invalid processing mode")),
     };
 
-    let total_duration = Duration::from_secs_f64(parts[1].parse::<f64>()? / 1000.0);
-    let config_load_duration = if parts[2] == "0" {
-        None
-    } else {
-        Some(Duration::from_secs_f64(parts[2].parse::<f64>()? / 1000.0))
-    };
-    let ipc_duration = if parts[3] == "0" {
-        None
-    } else {
-        Some(Duration::from_secs_f64(parts[3].parse::<f64>()? / 1000.0))
-    };
-    let processing_duration = Duration::from_secs_f64(parts[4].parse::<f64>()? / 1000.0);
+    let total_ms: f64 = parts[2].parse().map_err(|_| eyre!("Invalid total duration"))?;
+    let config_ms: f64 = parts[3].parse().map_err(|_| eyre!("Invalid config duration"))?;
+    let ipc_ms: f64 = parts[4].parse().map_err(|_| eyre!("Invalid IPC duration"))?;
+    let processing_ms: f64 = parts[5].parse().map_err(|_| eyre!("Invalid processing duration"))?;
 
     Ok(TimingData {
-        total_duration,
-        config_load_duration,
-        ipc_duration,
-        processing_duration,
+        total_duration: Duration::from_secs_f64(total_ms / 1000.0),
+        config_load_duration: if config_ms > 0.0 { Some(Duration::from_secs_f64(config_ms / 1000.0)) } else { None },
+        ipc_duration: if ipc_ms > 0.0 { Some(Duration::from_secs_f64(ipc_ms / 1000.0)) } else { None },
+        processing_duration: Duration::from_secs_f64(processing_ms / 1000.0),
         mode,
-        timestamp: std::time::SystemTime::now(),
+        timestamp: std::time::UNIX_EPOCH + Duration::from_millis(timestamp_ms),
     })
 }
 
+// Global timing storage for analysis
+use std::sync::Mutex;
+use lazy_static::lazy_static;
+
+lazy_static! {
+    static ref TIMING_LOG: Mutex<Vec<TimingData>> = Mutex::new(Vec::new());
+}
+
 pub fn log_timing(timing: TimingData) {
+    // Only log detailed breakdown if benchmark mode is enabled
     if is_benchmark_mode() {
         timing.log_detailed();
+    }
 
-        // Also append to CSV file for analysis
-        if let Ok(timing_file) = get_timing_file_path() {
+    // Always store in memory for CLI commands (minimal overhead)
+    if let Ok(mut log) = TIMING_LOG.lock() {
+        log.push(timing.clone());
+
+        // Keep only last 1000 entries to prevent memory bloat
+        let len = log.len();
+        if len > 1000 {
+            log.drain(0..len - 1000);
+        }
+    }
+
+    // Only write to CSV file if benchmark mode is enabled
+    if is_benchmark_mode() {
+        if let Ok(timing_file_path) = get_timing_file_path() {
+            // Ensure directory exists
+            if let Some(parent) = timing_file_path.parent() {
+                let _ = std::fs::create_dir_all(parent);
+            }
+
             let csv_line = timing.to_csv_line();
-            let header = "mode,total_ms,config_load_ms,ipc_ms,processing_ms";
-
-            let needs_header = !timing_file.exists();
-            if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(&timing_file) {
+            if let Ok(mut file) = OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(timing_file_path) {
                 use std::io::Write;
-                if needs_header {
-                    let _ = writeln!(file, "{}", header);
-                }
                 let _ = writeln!(file, "{}", csv_line);
             }
         }
@@ -216,71 +228,72 @@ pub fn log_timing(timing: TimingData) {
 }
 
 pub fn export_timing_csv() -> Result<String> {
-    let timing_file = get_timing_file_path()?;
-    if !timing_file.exists() {
-        return Ok("No timing data available".to_string());
-    }
+    let mut csv = String::from("timestamp,mode,total_ms,config_ms,ipc_ms,processing_ms\n");
 
-    let content = std::fs::read_to_string(&timing_file)?;
-    Ok(content)
-}
-
-pub fn get_timing_summary() -> Result<(Duration, Duration, usize, usize)> {
-    let timing_file = get_timing_file_path()?;
-    if !timing_file.exists() {
-        return Ok((Duration::from_secs(0), Duration::from_secs(0), 0, 0));
-    }
-
-    let content = std::fs::read_to_string(&timing_file)?;
-    let lines: Vec<&str> = content.lines().collect();
-
-    if lines.len() <= 1 { // Header only or empty
-        return Ok((Duration::from_secs(0), Duration::from_secs(0), 0, 0));
-    }
-
-    let mut daemon_count = 0;
-    let mut direct_count = 0;
-    let mut total_daemon_time = Duration::from_secs(0);
-    let mut total_direct_time = Duration::from_secs(0);
-
-    for line in lines.iter().skip(1) { // Skip header
-        if let Ok(timing) = parse_csv_line(line) {
-            match timing.mode {
-                ProcessingMode::Daemon => {
-                    daemon_count += 1;
-                    total_daemon_time += timing.total_duration;
-                }
-                ProcessingMode::Direct => {
-                    direct_count += 1;
-                    total_direct_time += timing.total_duration;
+    // Load from persistent file if it exists
+    if let Ok(timing_file_path) = get_timing_file_path() {
+        if let Ok(content) = std::fs::read_to_string(timing_file_path) {
+            for line in content.lines() {
+                if !line.trim().is_empty() {
+                    csv.push_str(line);
+                    csv.push('\n');
                 }
             }
         }
     }
 
-    let avg_daemon_time = if daemon_count > 0 {
-        total_daemon_time / daemon_count as u32
+    // Also include current session data
+    if let Ok(log) = TIMING_LOG.lock() {
+        for timing in log.iter() {
+            csv.push_str(&timing.to_csv_line());
+            csv.push('\n');
+        }
+    }
+
+    Ok(csv)
+}
+
+pub fn get_timing_summary() -> Result<(Duration, Duration, usize, usize)> {
+    let mut all_timings = Vec::new();
+
+    // Load from persistent file if it exists
+    if let Ok(timing_file_path) = get_timing_file_path() {
+        if let Ok(content) = std::fs::read_to_string(timing_file_path) {
+            for line in content.lines() {
+                if let Ok(timing) = parse_csv_line(line) {
+                    all_timings.push(timing);
+                }
+            }
+        }
+    }
+
+    // Also include current session data
+    if let Ok(log) = TIMING_LOG.lock() {
+        all_timings.extend(log.iter().cloned());
+    }
+
+    let daemon_timings: Vec<_> = all_timings.iter().filter(|t| matches!(t.mode, ProcessingMode::Daemon)).collect();
+    let direct_timings: Vec<_> = all_timings.iter().filter(|t| matches!(t.mode, ProcessingMode::Direct)).collect();
+
+    let daemon_avg = if !daemon_timings.is_empty() {
+        daemon_timings.iter().map(|t| t.total_duration).sum::<Duration>() / daemon_timings.len() as u32
     } else {
-        Duration::from_secs(0)
+        Duration::default()
     };
 
-    let avg_direct_time = if direct_count > 0 {
-        total_direct_time / direct_count as u32
+    let direct_avg = if !direct_timings.is_empty() {
+        direct_timings.iter().map(|t| t.total_duration).sum::<Duration>() / direct_timings.len() as u32
     } else {
-        Duration::from_secs(0)
+        Duration::default()
     };
 
-    Ok((avg_daemon_time, avg_direct_time, daemon_count, direct_count))
+    Ok((daemon_avg, direct_avg, daemon_timings.len(), direct_timings.len()))
 }
 
 pub fn get_timing_file_path() -> Result<PathBuf> {
-    let data_dir = dirs::data_local_dir()
-        .ok_or_else(|| eyre!("Could not determine local data directory"))?
-        .join("aka")
-        .join("logs");
-
-    std::fs::create_dir_all(&data_dir)?;
-    Ok(data_dir.join("timing.csv"))
+    let config_dir = dirs::config_dir()
+        .ok_or_else(|| eyre!("Could not determine config directory"))?;
+    Ok(config_dir.join("aka").join("timing_data.csv"))
 }
 
 pub fn get_config_path() -> Result<PathBuf> {
@@ -338,6 +351,31 @@ pub fn hash_config_file(config_path: &PathBuf) -> Result<String> {
     let content = std::fs::read(config_path)?;
     let hash = xxh3_64(&content);
     Ok(format!("{:016x}", hash))
+}
+
+pub fn get_hash_cache_path() -> Result<PathBuf> {
+    let cache_dir = dirs::data_local_dir()
+        .ok_or_else(|| eyre!("Could not determine local data directory"))?
+        .join("aka");
+
+    std::fs::create_dir_all(&cache_dir)?;
+    Ok(cache_dir.join("config.hash"))
+}
+
+pub fn get_stored_hash() -> Result<Option<String>> {
+    let hash_path = get_hash_cache_path()?;
+    if hash_path.exists() {
+        let stored_hash = std::fs::read_to_string(&hash_path)?;
+        Ok(Some(stored_hash.trim().to_string()))
+    } else {
+        Ok(None)
+    }
+}
+
+pub fn store_hash(hash: &str) -> Result<()> {
+    let hash_path = get_hash_cache_path()?;
+    std::fs::write(&hash_path, hash)?;
+    Ok(())
 }
 
 pub fn execute_health_check(config: &Option<PathBuf>) -> Result<i32> {
@@ -408,8 +446,8 @@ pub fn execute_health_check(config: &Option<PathBuf>) -> Result<i32> {
         debug!("❌ Cannot determine daemon socket path");
     }
 
-    // Step 2: Daemon not available, validate config directly
-    debug!("📋 Step 2: Daemon unavailable, validating config directly");
+    // Step 2: Daemon not available, check config file cache
+    debug!("📋 Step 2: Daemon unavailable, checking config cache");
 
     let config_path = match config {
         Some(file) => {
@@ -438,29 +476,72 @@ pub fn execute_health_check(config: &Option<PathBuf>) -> Result<i32> {
         }
     };
 
-    // Step 3: Try to load and validate the config
-    debug!("📋 Step 3: Attempting to load and validate config");
+    // Step 3: Calculate current config hash
+    debug!("📋 Step 3: Calculating current config hash");
+    let current_hash = match hash_config_file(&config_path) {
+        Ok(hash) => {
+            debug!("✅ Current config hash calculated: {}", hash);
+            hash
+        }
+        Err(e) => {
+            debug!("❌ Health check failed: cannot read config file: {}", e);
+            debug!("🎯 Health check result: CONFIG_READ_ERROR (returning 1)");
+            return Ok(1); // Cannot read config file
+        }
+    };
 
+    // Step 4: Compare with stored hash
+    debug!("📋 Step 4: Comparing with stored hash");
+    let stored_hash = get_stored_hash().unwrap_or(None);
+
+    match stored_hash {
+        Some(stored) => {
+            debug!("🔍 Found stored hash: {}", stored);
+            if stored == current_hash {
+                debug!("✅ Hash matches! Config cache is valid, can use direct mode");
+                debug!("🎯 Health check result: CACHE_VALID (returning 0)");
+                return Ok(0);
+            } else {
+                debug!("⚠️ Hash mismatch: stored={}, current={}", stored, current_hash);
+                debug!("📋 Cache invalid, need fresh config load");
+            }
+        }
+        None => {
+            debug!("⚠️ No stored hash found, need fresh config load");
+        }
+    }
+
+    // Step 5: Hash doesn't match or no stored hash, validate config fresh
+    debug!("📋 Step 5: Cache invalid, attempting fresh config load");
+
+    // Try to load and parse the config
     let loader = Loader::new();
-    debug!("🔄 Loading config from: {:?}", config_path);
+    debug!("🔄 Loading fresh config from: {:?}", config_path);
     match loader.load(&config_path) {
         Ok(spec) => {
-            debug!("✅ Config loaded successfully");
+            debug!("✅ Fresh config loaded successfully");
+
+            // Config is valid, store the new hash
+            if let Err(e) = store_hash(&current_hash) {
+                debug!("⚠️ Warning: could not store config hash: {}", e);
+            } else {
+                debug!("✅ New config hash stored: {}", current_hash);
+            }
 
             // Check if we have any aliases
             if spec.aliases.is_empty() {
-                debug!("⚠️ Config valid but no aliases defined");
+                debug!("⚠️ Fresh config valid but no aliases defined");
                 debug!("🎯 Health check result: NO_ALIASES (returning 3)");
                 return Ok(3); // No aliases defined
             }
 
-            debug!("✅ Config valid with {} aliases", spec.aliases.len());
-            debug!("🎯 Health check result: CONFIG_VALID (returning 0)");
+            debug!("✅ Fresh config valid with {} aliases", spec.aliases.len());
+            debug!("🎯 Health check result: FRESH_CONFIG_VALID (returning 0)");
             Ok(0) // All good
         }
         Err(e) => {
             debug!("❌ Health check failed: config file invalid: {}", e);
-            debug!("🚨 Config validation failed - aka cannot be used");
+            debug!("🚨 All health check methods failed - ZLE should not use aka");
             debug!("🎯 Health check result: CONFIG_INVALID (returning 2)");
             Ok(2) // Config file invalid - critical failure
         }

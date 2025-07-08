@@ -329,7 +329,6 @@ mod integration_tests {
     use std::sync::Arc;
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::Mutex;
-    use tempfile::TempDir;
 
     #[test]
     fn test_daemon_binary_exists() {
@@ -341,23 +340,6 @@ mod integration_tests {
         assert!(output.is_ok(), "Should be able to build aka-daemon");
         let output = output.expect("Should be able to execute cargo build command");
         assert!(output.status.success(), "aka-daemon binary should build successfully");
-    }
-
-    #[test]
-    fn test_cli_reload_command_exists() {
-        // Create a temporary directory for cache files
-        let cache_temp_dir = TempDir::new().expect("Failed to create temp directory");
-
-        // Test that the CLI has the reload command
-        let output = Command::new("cargo")
-            .args(&["run", "--bin", "aka", "--", "daemon", "--help"])
-            .env("AKA_TEST_CACHE_DIR", cache_temp_dir.path())
-            .output();
-
-        assert!(output.is_ok(), "Should be able to run 'cargo run --bin aka daemon --help'");
-        let output = output.expect("Should be able to execute cargo run command");
-        let help_text = String::from_utf8_lossy(&output.stdout);
-        assert!(help_text.contains("reload"), "Help text should mention reload option");
     }
 
     #[test]

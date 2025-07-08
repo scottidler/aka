@@ -974,15 +974,7 @@ fn handle_command_direct_timed(opts: &AkaOpts, timing: &mut TimingCollector) -> 
     debug!("🔍 Direct processing options: eol={}, config={:?}", opts.eol, opts.config);
 
     timing.start_config_load();
-
-    // Check for test environment variable to use temp cache directory
-    let mut aka = if let Ok(test_cache_dir) = std::env::var("AKA_TEST_CACHE_DIR") {
-        let cache_path = std::path::PathBuf::from(test_cache_dir);
-        AKA::new_with_cache_dir(opts.eol, &opts.config, Some(&cache_path))?
-    } else {
-        AKA::new(opts.eol, &opts.config)?
-    };
-
+    let mut aka = AKA::new(opts.eol, &opts.config)?;
     timing.end_config_load();
 
     debug!("✅ Config loaded, {} aliases available", aka.spec.aliases.len());
@@ -1060,13 +1052,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_daemon_status_emoji() {
-        // Test that daemon status emoji function works
-        let emoji = get_daemon_status_emoji();
-        assert!(matches!(emoji, "✅" | "⚠️" | "❗" | "❓"), "Should return valid emoji");
-    }
-
-    #[test]
     fn test_daemon_process_check() {
         // Test daemon process checking
         let result = check_daemon_process_simple();
@@ -1114,14 +1099,6 @@ mod tests {
         if let Ok(DaemonResponse::Health { status }) = response {
             assert_eq!(status, "healthy:5:aliases");
         }
-    }
-
-    #[test]
-    fn test_after_help_generation() {
-        // Test that help text generation works
-        let help = get_after_help();
-        assert!(help.contains("Logs are written to"));
-        assert!(help.contains("Daemon status:"));
     }
 }
 

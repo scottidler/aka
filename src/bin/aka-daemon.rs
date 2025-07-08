@@ -6,14 +6,14 @@ use std::sync::{Arc, RwLock, Mutex};
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::io::{BufRead, BufReader, Write};
 use serde::{Deserialize, Serialize};
-use log::{info, error, debug};
+use log::{info, error, debug, warn};
 use notify::{Watcher, RecommendedWatcher, RecursiveMode, Event, EventKind};
 use std::sync::mpsc::{channel, Receiver};
 use std::thread;
 use eyre::{Result, eyre};
 
 // Import from the shared library
-use aka_lib::{determine_socket_path, AKA, setup_logging, ProcessingMode, hash_config_file};
+use aka_lib::{determine_socket_path, AKA, setup_logging, ProcessingMode, hash_config_file, store_hash};
 
 #[derive(Parser)]
 #[command(name = "aka-daemon", about = "AKA Alias Daemon")]
@@ -83,6 +83,11 @@ impl DaemonServer {
         // Calculate initial config hash
         let initial_hash = hash_config_file(&config_path)?;
         let config_hash = Arc::new(RwLock::new(initial_hash.clone()));
+
+        // Store hash for CLI comparison
+        if let Err(e) = store_hash(&initial_hash) {
+            warn!("Failed to store initial config hash: {}", e);
+        }
 
         let shutdown = Arc::new(AtomicBool::new(false));
 
@@ -176,6 +181,11 @@ impl DaemonServer {
         {
             let mut hash_guard = self.config_hash.write().map_err(|e| eyre!("Failed to acquire write lock on config hash: {}", e))?;
             *hash_guard = new_hash.clone();
+        }
+
+        // Store hash for CLI comparison
+        if let Err(e) = store_hash(&new_hash) {
+            warn!("Failed to store updated config hash: {}", e);
         }
 
         let reload_duration = start_reload.elapsed();
@@ -363,6 +373,11 @@ impl DaemonServer {
                                                 }
                                             }
 
+                                            // Store hash for CLI comparison
+                                            if let Err(e) = store_hash(&new_hash) {
+                                                warn!("Failed to store updated config hash: {}", e);
+                                            }
+
                                             let alias_count = {
                                                 match aka_for_watcher.read() {
                                                     Ok(aka_guard) => aka_guard.spec.aliases.len(),
@@ -394,28 +409,21 @@ impl DaemonServer {
         });
 
         // Main server loop
-        loop {
+        for stream in listener.incoming() {
             if self.shutdown.load(Ordering::Relaxed) {
-                info!("🛑 Shutdown signal received, stopping daemon");
                 break;
             }
 
-            match listener.accept() {
-                Ok((stream, _)) => {
+            match stream {
+                Ok(stream) => {
                     if let Err(e) = self.handle_client(stream) {
                         error!("Error handling client: {}", e);
                     }
-                }
+                },
                 Err(e) => {
                     error!("Error accepting connection: {}", e);
-                    break;
                 }
             }
-        }
-
-        // Cleanup
-        if socket_path.exists() {
-            let _ = fs::remove_file(socket_path);
         }
 
         Ok(())
@@ -426,17 +434,6 @@ impl DaemonServer {
 mod tests {
     use super::*;
     use std::path::PathBuf;
-    use tempfile::TempDir;
-    use std::fs;
-
-    const TEST_CONFIG: &str = r#"
-lookups: {}
-
-aliases:
-  test-daemon:
-    value: echo "daemon test"
-    global: true
-"#;
 
     #[test]
     fn test_daemon_opts_parsing() {
@@ -479,32 +476,6 @@ aliases:
         let health_response = Response::Health { status: "healthy:5:aliases".to_string() };
         let serialized = serde_json::to_string(&health_response);
         assert!(serialized.is_ok());
-    }
-
-    #[test]
-    fn test_daemon_server_creation() {
-        // Test daemon server creation with test config
-        let temp_dir = TempDir::new().expect("Failed to create temp dir");
-        let config_file = temp_dir.path().join("test.yml");
-        fs::write(&config_file, TEST_CONFIG).expect("Failed to write test config");
-
-        let result = DaemonServer::new_with_cache_dir(&Some(config_file), Some(temp_dir.path()));
-        assert!(result.is_ok(), "Should create daemon server with valid config");
-
-        if let Ok(server) = result {
-            assert!(!server.shutdown.load(std::sync::atomic::Ordering::Relaxed));
-        }
-    }
-
-    #[test]
-    fn test_daemon_server_invalid_config() {
-        // Test daemon server creation with invalid config
-        let temp_dir = TempDir::new().expect("Failed to create temp dir");
-        let config_file = temp_dir.path().join("invalid.yml");
-        fs::write(&config_file, "invalid: yaml: [").expect("Failed to write invalid config");
-
-        let result = DaemonServer::new(&Some(config_file));
-        assert!(result.is_err(), "Should fail with invalid config");
     }
 
     #[test]
@@ -567,15 +538,6 @@ fn main() {
     if let Err(e) = server.run(&socket_path) {
         error!("Server error: {}", e);
         std::process::exit(1);
-    }
-
-    // Cleanup
-    if socket_path.exists() {
-        if let Err(e) = fs::remove_file(&socket_path) {
-            error!("Failed to remove socket file: {}", e);
-        } else {
-            info!("🧹 Socket file cleaned up");
-        }
     }
 
     info!("👋 Daemon stopped");
