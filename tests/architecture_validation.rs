@@ -17,7 +17,6 @@ aliases:
 
 #[test]
 fn test_yaml_parsing_performance_validation() {
-    let temp_dir = TempDir::new().expect("Failed to create temp dir");
     let cache_temp_dir = TempDir::new().expect("Failed to create cache temp dir");
     let config_dir = cache_temp_dir.path().join(".config").join("aka");
     fs::create_dir_all(&config_dir).expect("Failed to create config dir");
@@ -44,7 +43,6 @@ fn test_yaml_parsing_performance_validation() {
 
 #[test]
 fn test_config_loading_consistency() {
-    let temp_dir = TempDir::new().expect("Failed to create temp dir");
     let cache_temp_dir = TempDir::new().expect("Failed to create cache temp dir");
     let config_dir = cache_temp_dir.path().join(".config").join("aka");
     fs::create_dir_all(&config_dir).expect("Failed to create config dir");
@@ -82,7 +80,6 @@ fn test_config_loading_consistency() {
 
 #[test]
 fn test_alias_transformation_correctness() {
-    let temp_dir = TempDir::new().expect("Failed to create temp dir");
     let cache_temp_dir = TempDir::new().expect("Failed to create cache temp dir");
     let config_dir = cache_temp_dir.path().join(".config").join("aka");
     fs::create_dir_all(&config_dir).expect("Failed to create config dir");
@@ -120,7 +117,6 @@ fn test_architecture_proof_summary() {
     println!("==================================");
 
     // Test 1: YAML parsing timing
-    let temp_dir = TempDir::new().expect("Failed to create temp dir");
     let cache_temp_dir = TempDir::new().expect("Failed to create cache temp dir");
     let config_dir = cache_temp_dir.path().join(".config").join("aka");
     fs::create_dir_all(&config_dir).expect("Failed to create config dir");

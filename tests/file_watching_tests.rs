@@ -53,7 +53,7 @@ aliases:
 
     #[test]
     fn test_manual_config_reload() {
-        let (config_temp_dir, cache_temp_dir) = setup_test_environment("manual_reload");
+        let (_config_temp_dir, cache_temp_dir) = setup_test_environment("manual_reload");
         let cache_path = cache_temp_dir.path().to_path_buf();
 
         // Create temporary config file
@@ -85,7 +85,7 @@ aliases:
 
     #[test]
     fn test_config_file_modification_detection() {
-        let (config_temp_dir, cache_temp_dir) = setup_test_environment("modification_detection");
+        let (_config_temp_dir, cache_temp_dir) = setup_test_environment("modification_detection");
 
         // Create temporary config file
         let config_dir = cache_temp_dir.path().join(".config").join("aka");
@@ -116,7 +116,7 @@ aliases:
 
     #[test]
     fn test_config_validation_after_reload() {
-        let (config_temp_dir, cache_temp_dir) = setup_test_environment("config_validation");
+        let (_config_temp_dir, cache_temp_dir) = setup_test_environment("config_validation");
         let cache_path = cache_temp_dir.path().to_path_buf();
         let config_dir = cache_temp_dir.path().join(".config").join("aka");
         fs::create_dir_all(&config_dir).expect("Failed to create config dir");
@@ -146,7 +146,7 @@ invalid_yaml: [
 
     #[test]
     fn test_alias_functionality_after_reload() {
-        let (config_temp_dir, cache_temp_dir) = setup_test_environment("alias_functionality");
+        let (_config_temp_dir, cache_temp_dir) = setup_test_environment("alias_functionality");
         let cache_path = cache_temp_dir.path().to_path_buf();
         let config_dir = cache_temp_dir.path().join(".config").join("aka");
         fs::create_dir_all(&config_dir).expect("Failed to create config dir");
@@ -199,7 +199,7 @@ invalid_yaml: [
 
     #[test]
     fn test_alias_count_tracking() {
-        let (config_temp_dir, cache_temp_dir) = setup_test_environment("alias_count_tracking");
+        let (_config_temp_dir, cache_temp_dir) = setup_test_environment("alias_count_tracking");
         let cache_path = cache_temp_dir.path().to_path_buf();
         let config_dir = cache_temp_dir.path().join(".config").join("aka");
         fs::create_dir_all(&config_dir).expect("Failed to create config dir");
@@ -227,7 +227,7 @@ invalid_yaml: [
 
     #[test]
     fn test_global_vs_local_aliases_after_reload() {
-        let (config_temp_dir, cache_temp_dir) = setup_test_environment("global_vs_local");
+        let (_config_temp_dir, cache_temp_dir) = setup_test_environment("global_vs_local");
         let cache_path = cache_temp_dir.path().to_path_buf();
         let config_dir = cache_temp_dir.path().join(".config").join("aka");
         fs::create_dir_all(&config_dir).expect("Failed to create config dir");

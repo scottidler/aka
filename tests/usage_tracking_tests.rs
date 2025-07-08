@@ -36,7 +36,7 @@ aliases:
 
 #[test]
 fn test_usage_count_initialization() {
-    let (_config_temp_dir, config_file, cache_temp_dir) = setup_test_environment("initialization");
+    let (_config_temp_dir, _config_file, cache_temp_dir) = setup_test_environment("initialization");
     let cache_path = cache_temp_dir.path().to_path_buf();
 
     // Create AKA instance with temp cache directory
@@ -50,7 +50,7 @@ fn test_usage_count_initialization() {
 
 #[test]
 fn test_usage_count_increment() {
-    let (_config_temp_dir, config_file, cache_temp_dir) = setup_test_environment("increment");
+    let (_config_temp_dir, _config_file, cache_temp_dir) = setup_test_environment("increment");
     let cache_path = cache_temp_dir.path().to_path_buf();
 
     // Create AKA instance with temp cache directory
@@ -75,7 +75,7 @@ fn test_usage_count_increment() {
 
 #[test]
 fn test_usage_count_persistence() {
-    let (_config_temp_dir, config_file, cache_temp_dir) = setup_test_environment("persistence");
+    let (_config_temp_dir, _config_file, cache_temp_dir) = setup_test_environment("persistence");
     let cache_path = cache_temp_dir.path().to_path_buf();
 
     // Create AKA instance and use an alias
@@ -101,7 +101,7 @@ fn test_usage_count_persistence() {
 
 #[test]
 fn test_no_count_increment_for_unused_aliases() {
-    let (_config_temp_dir, config_file, cache_temp_dir) = setup_test_environment("no_increment");
+    let (_config_temp_dir, _config_file, cache_temp_dir) = setup_test_environment("no_increment");
     let cache_path = cache_temp_dir.path().to_path_buf();
 
     // Create AKA instance with temp cache directory
@@ -119,7 +119,7 @@ fn test_no_count_increment_for_unused_aliases() {
 
 #[test]
 fn test_usage_count_with_daemon_mode() {
-    let (_config_temp_dir, config_file, cache_temp_dir) = setup_test_environment("daemon_mode");
+    let (_config_temp_dir, _config_file, cache_temp_dir) = setup_test_environment("daemon_mode");
     let cache_path = cache_temp_dir.path().to_path_buf();
 
     // Create AKA instance with temp cache directory

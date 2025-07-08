@@ -150,15 +150,12 @@ impl DaemonServer {
             }
         }
 
-        // Update stored config
+        // Update stored config and hash atomically (hold both locks simultaneously)
         {
             let mut aka_guard = self.aka.write().map_err(|e| eyre!("Failed to acquire write lock on AKA: {}", e))?;
-            *aka_guard = new_aka;
-        }
-
-        // Update hash
-        {
             let mut hash_guard = self.config_hash.write().map_err(|e| eyre!("Failed to acquire write lock on config hash: {}", e))?;
+
+            *aka_guard = new_aka;
             *hash_guard = new_hash.clone();
         }
 
@@ -330,26 +327,18 @@ impl DaemonServer {
                                                 }
                                             }
 
-                                            // Update stored config
+                                            // Update stored config and hash atomically (hold both locks simultaneously)
                                             {
-                                                match aka_for_watcher.write() {
-                                                    Ok(mut aka_guard) => {
+                                                match (aka_for_watcher.write(), config_hash_for_watcher.write()) {
+                                                    (Ok(mut aka_guard), Ok(mut hash_guard)) => {
                                                         *aka_guard = new_aka;
+                                                        *hash_guard = new_hash.clone();
                                                     }
-                                                    Err(e) => {
+                                                    (Err(e), _) => {
                                                         error!("Failed to acquire write lock on AKA: {}", e);
                                                         continue;
                                                     }
-                                                }
-                                            }
-
-                                            // Update hash
-                                            {
-                                                match config_hash_for_watcher.write() {
-                                                    Ok(mut hash_guard) => {
-                                                        *hash_guard = new_hash.clone();
-                                                    }
-                                                    Err(e) => {
+                                                    (_, Err(e)) => {
                                                         error!("Failed to acquire write lock on config hash: {}", e);
                                                         continue;
                                                     }
