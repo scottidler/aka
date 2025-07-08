@@ -401,9 +401,20 @@ pub fn get_config_path(home_dir: &PathBuf) -> Result<PathBuf> {
     if config_path.exists() {
         Ok(config_path)
     } else {
-        eprintln!("Error: Config file not found at {:?}", config_path);
-        eprintln!("Please create the config file first.");
-        Err(eyre!("Config file {:?} not found", config_path))
+        Err(eyre!("Config file not found at {:?}. Please create the config file first.", config_path))
+    }
+}
+
+pub fn get_config_path_with_override(home_dir: &PathBuf, override_path: &Option<PathBuf>) -> Result<PathBuf> {
+    match override_path {
+        Some(path) => {
+            if path.exists() {
+                Ok(path.clone())
+            } else {
+                Err(eyre!("Custom config file not found at {:?}", path))
+            }
+        }
+        None => get_config_path(home_dir),
     }
 }
 
@@ -470,64 +481,59 @@ pub fn store_hash(hash: &str, home_dir: &PathBuf) -> Result<()> {
 }
 
 pub fn execute_health_check(home_dir: &PathBuf) -> Result<i32> {
-    use std::os::unix::net::UnixStream;
-    use std::io::{BufRead, BufReader, Write};
-    use serde_json;
+    debug!("🏥 === HEALTH CHECK START ===");
+    debug!("📋 Health check will determine the best processing path");
 
-    debug!("🔍 Starting comprehensive health check");
-    debug!("🔍 Health check input: home_dir = {:?}", home_dir);
-
-    // Step 1: Check daemon health first
+    // Step 1: Check if daemon is available and healthy
     debug!("📋 Step 1: Checking daemon health");
     if let Ok(socket_path) = determine_socket_path(home_dir) {
-        debug!("🔌 Socket path determined: {:?}", socket_path);
+        debug!("🔌 Daemon socket path: {:?}", socket_path);
         if socket_path.exists() {
-            debug!("✅ Daemon socket exists, testing connection");
+            debug!("✅ Daemon socket exists, testing health");
 
             // Try to connect and send health request
-            match UnixStream::connect(&socket_path) {
-                Ok(mut stream) => {
-                    debug!("🔗 Connected to daemon successfully, sending health request");
+            if let Ok(mut stream) = std::os::unix::net::UnixStream::connect(&socket_path) {
+                use std::io::{BufRead, BufReader, Write};
 
-                    let health_request = r#"{"type":"Health"}"#;
-                    debug!("📤 Sending health request: {}", health_request);
+                let health_request = serde_json::json!({
+                    "type": "Health"
+                });
 
-                    if let Ok(_) = writeln!(stream, "{}", health_request) {
-                        let mut reader = BufReader::new(&stream);
-                        let mut response_line = String::new();
+                debug!("📤 Sending health request to daemon");
+                if let Ok(_) = writeln!(stream, "{}", health_request) {
+                    let mut reader = BufReader::new(&stream);
+                    let mut response_line = String::new();
 
-                        match reader.read_line(&mut response_line) {
-                            Ok(_) => {
-                                debug!("📥 Received daemon response: {}", response_line.trim());
+                    match reader.read_line(&mut response_line) {
+                        Ok(_) => {
+                            debug!("📥 Received daemon response: {}", response_line.trim());
 
-                                if let Ok(response) = serde_json::from_str::<serde_json::Value>(&response_line.trim()) {
-                                    if let Some(status) = response.get("status").and_then(|s| s.as_str()) {
-                                        debug!("🔍 Daemon status parsed: {}", status);
-                                        if status.starts_with("healthy:") && status.contains(":aliases") {
-                                            debug!("✅ Daemon is healthy and has config loaded: {}", status);
-                                            debug!("🎯 Health check result: DAEMON_HEALTHY (returning 0)");
-                                            return Ok(0); // Daemon healthy - best case
-                                        } else {
-                                            debug!("⚠️ Daemon status indicates unhealthy: {}", status);
-                                        }
+                            if let Ok(response) = serde_json::from_str::<serde_json::Value>(&response_line.trim()) {
+                                if let Some(status) = response.get("status").and_then(|s| s.as_str()) {
+                                    debug!("🔍 Daemon status parsed: {}", status);
+                                    if status.starts_with("healthy:") && status.contains(":aliases") {
+                                        debug!("✅ Daemon is healthy and has config loaded: {}", status);
+                                        debug!("🎯 Health check result: DAEMON_HEALTHY (returning 0)");
+                                        return Ok(0); // Daemon healthy - best case
                                     } else {
-                                        debug!("⚠️ Daemon response missing status field");
+                                        debug!("⚠️ Daemon status indicates unhealthy: {}", status);
                                     }
                                 } else {
-                                    debug!("⚠️ Failed to parse daemon response as JSON");
+                                    debug!("⚠️ Daemon response missing status field");
                                 }
-                            }
-                            Err(e) => {
-                                debug!("⚠️ Failed to read daemon response: {}", e);
+                            } else {
+                                debug!("⚠️ Failed to parse daemon response as JSON");
                             }
                         }
-                    } else {
-                        debug!("⚠️ Failed to send health request to daemon");
+                        Err(e) => {
+                            debug!("⚠️ Failed to read daemon response: {}", e);
+                        }
                     }
+                } else {
+                    debug!("⚠️ Failed to send health request to daemon");
                 }
-                Err(e) => {
-                    debug!("⚠️ Failed to connect to daemon socket: {}", e);
-                }
+            } else {
+                debug!("⚠️ Failed to connect to daemon socket");
             }
             debug!("❌ Daemon socket exists but health check failed");
         } else {
@@ -540,7 +546,14 @@ pub fn execute_health_check(home_dir: &PathBuf) -> Result<i32> {
     // Step 2: Daemon not available, check config file cache
     debug!("📋 Step 2: Daemon unavailable, checking config cache");
 
-    let config_path = get_config_path(home_dir)?;
+    let config_path = match get_config_path(home_dir) {
+        Ok(path) => path,
+        Err(e) => {
+            debug!("❌ Health check failed: config file not found: {}", e);
+            debug!("🎯 Health check result: CONFIG_NOT_FOUND (returning 1)");
+            return Ok(1); // Config file not found
+        }
+    };
 
     // Step 3: Calculate current config hash
     debug!("📋 Step 3: Calculating current config hash");
@@ -580,7 +593,7 @@ pub fn execute_health_check(home_dir: &PathBuf) -> Result<i32> {
     // Step 5: Hash doesn't match or no stored hash, validate config fresh
     debug!("📋 Step 5: Cache invalid, attempting fresh config load");
 
-    // Try to load and parse the config
+    // Use the same loader as direct mode for consistency
     let loader = Loader::new();
     debug!("🔄 Loading fresh config from: {:?}", config_path);
     match loader.load(&config_path) {
@@ -635,16 +648,14 @@ impl AKA {
 
         let start_total = Instant::now();
 
-        // Config path is always derived from home_dir
-        let start_path = Instant::now();
+        // Config path is always derived from home_dir using the same function
         let config_path = get_config_path(&home_dir)?;
-        let path_duration = start_path.elapsed();
 
         // Calculate config hash
         let config_hash = hash_config_file(&config_path)?;
         debug!("🔒 Config hash: {}", config_hash);
 
-        // Time loader creation and config loading
+        // Time loader creation and config loading - use same loader as health check
         let start_load = Instant::now();
         let loader = Loader::new();
         let mut spec = loader.load(&config_path)?;
@@ -670,7 +681,6 @@ impl AKA {
         let total_duration = start_total.elapsed();
 
         debug!("🏗️  AKA::new() timing breakdown:");
-        debug!("  📂 Path resolution: {:.3}ms", path_duration.as_secs_f64() * 1000.0);
         debug!("  📋 Config loading: {:.3}ms", load_duration.as_secs_f64() * 1000.0);
         debug!("  🗃️  Cache handling: {:.3}ms", cache_duration.as_secs_f64() * 1000.0);
         debug!("  🎯 Total AKA::new(): {:.3}ms", total_duration.as_secs_f64() * 1000.0);

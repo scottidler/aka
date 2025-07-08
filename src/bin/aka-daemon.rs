@@ -13,7 +13,7 @@ use std::thread;
 use eyre::{Result, eyre};
 
 // Import from the shared library
-use aka_lib::{determine_socket_path, AKA, setup_logging, ProcessingMode, hash_config_file, store_hash, DaemonRequest, DaemonResponse};
+use aka_lib::{determine_socket_path, get_config_path_with_override, AKA, setup_logging, ProcessingMode, hash_config_file, store_hash, DaemonRequest, DaemonResponse};
 
 #[derive(Parser)]
 #[command(name = "aka-daemon", about = "AKA Alias Daemon")]
@@ -45,13 +45,10 @@ impl DaemonServer {
         let start_daemon_init = Instant::now();
         debug!("🚀 Daemon initializing, loading config...");
 
-        // Determine config path
+        // Determine config path using the same logic as direct mode
         let home_dir = dirs::home_dir()
             .ok_or_else(|| eyre!("Unable to determine home directory"))?;
-        let config_path = match config {
-            Some(path) => path.clone(),
-            None => aka_lib::get_config_path(&home_dir)?,
-        };
+        let config_path = get_config_path_with_override(&home_dir, config)?;
 
         // Load initial config
         let aka = AKA::new(false, home_dir.clone())?;

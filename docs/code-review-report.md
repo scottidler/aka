@@ -62,14 +62,40 @@ This report identifies **14 critical issues** found during comprehensive analysi
 
 **Conclusion**: The main race condition has been resolved with a simple, effective fix. Remaining issues are lower priority and may not require immediate attention.
 
-### 4. Inconsistent Configuration Handling
-**Status**: PENDING
-**Impact**: High
-**Location**: `src/bin/aka.rs` vs `src/bin/aka-daemon.rs`
-- Different config loading paths between daemon and direct mode
-- No validation of config changes in daemon mode
-- Missing error handling for malformed configs
-- Could cause silent failures or unexpected behavior
+## Issue #4: Inconsistent Configuration Handling
+
+**Status**: ✅ **RESOLVED**
+
+**Problem**:
+- Config loading scattered across multiple places with different validation
+- Daemon and direct mode use different config paths/loading logic
+- No unified config validation layer
+
+**Solution Implemented**:
+1. **Unified config path resolution**: Created `get_config_path()` and `get_config_path_with_override()` functions used consistently by both daemon and direct mode
+2. **Enhanced validation**: Added comprehensive validation to existing `Loader` with detailed error messages for:
+   - Empty/invalid alias names and values
+   - Undefined lookup references
+   - Circular references
+   - Dangerous commands
+   - File accessibility issues
+3. **Consistent initialization**: Both daemon and direct mode now use identical config loading logic
+
+**Files Modified**:
+- `src/lib.rs`: Added unified config path functions, fixed health check consistency
+- `src/cfg/loader.rs`: Enhanced with comprehensive validation and error reporting
+- `src/bin/aka-daemon.rs`: Updated to use unified config path resolution
+- `tests/config_consistency_tests.rs`: Added 9 comprehensive tests
+
+**Test Results**: ✅ All 9 new tests pass, all 71 existing tests still pass
+
+**Validation**:
+- ✅ Config path resolution identical between daemon and direct mode
+- ✅ Validation catches common config errors with helpful messages
+- ✅ Both modes produce identical results for same inputs
+- ✅ No warnings or build errors
+
+---
 
 ### 5. Missing Validation in Protocol Messages
 **Status**: PENDING
@@ -168,8 +194,8 @@ This report identifies **14 critical issues** found during comprehensive analysi
 - ✅ Daemon error handling (FIXED)
 - ✅ Race conditions in auto-reload (MOSTLY FIXED - 96% improvement)
 
-### High Risk (3 issues)
-- Inconsistent configuration handling
+### High Risk (2 issues - 1 RESOLVED ✅)
+- ✅ Inconsistent configuration handling (FIXED)
 - Missing protocol validation
 - Incomplete error context
 
