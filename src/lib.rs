@@ -839,8 +839,9 @@ impl AKA {
 
             if replaced_alias {
                 replaced = true;
+                // Only update space when we actually replace an alias
+                space = space_str;
             }
-            space = space_str;
 
             let beg = pos + 1;
             let end = beg + count;
@@ -893,7 +894,8 @@ impl AKA {
         if (alias.global && cmdline.contains(&alias.value))
             || (!alias.global && pos == 0 && cmdline.starts_with(&alias.value))
         {
-            Ok((current_arg.to_string(), 0, false, " "))
+            let space = if alias.space { " " } else { "" };
+            Ok((current_arg.to_string(), 0, false, space))
         } else {
             let space = if alias.space { " " } else { "" };
             let (v, c) = alias.replace(remainders)?;
@@ -1096,4 +1098,228 @@ pub fn migrate_alias_counts_with_base(old_hash: &str, new_hash: &str, new_aliase
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashMap;
+    use cfg::spec::Defaults;
+
+    fn create_test_aka_with_aliases(aliases: HashMap<String, Alias>) -> AKA {
+        let spec = Spec {
+            defaults: Defaults { version: 1 },
+            aliases,
+            lookups: HashMap::new(),
+        };
+
+        AKA {
+            eol: true,  // Enable eol mode for variadic aliases
+            spec,
+            config_hash: "test_hash".to_string(),
+            home_dir: std::env::temp_dir(),
+        }
+    }
+
+    #[test]
+    fn test_alias_with_space_true() {
+        let mut aliases = HashMap::new();
+        aliases.insert("ls".to_string(), Alias {
+            name: "ls".to_string(),
+            value: "eza".to_string(),
+            space: true,
+            global: false,
+            count: 0,
+        });
+
+        let mut aka = create_test_aka_with_aliases(aliases);
+        let result = aka.replace("ls").unwrap();
+
+        // Should have trailing space
+        assert_eq!(result, "eza ");
+    }
+
+    #[test]
+    fn test_alias_with_space_false() {
+        let mut aliases = HashMap::new();
+        aliases.insert("gc".to_string(), Alias {
+            name: "gc".to_string(),
+            value: "git commit -m\"".to_string(),
+            space: false,
+            global: false,
+            count: 0,
+        });
+
+        let mut aka = create_test_aka_with_aliases(aliases);
+        let result = aka.replace("gc").unwrap();
+
+        // Should NOT have trailing space
+        assert_eq!(result, "git commit -m\"");
+    }
+
+    #[test]
+    fn test_alias_with_space_false_complex() {
+        let mut aliases = HashMap::new();
+        aliases.insert("ping10".to_string(), Alias {
+            name: "ping10".to_string(),
+            value: "ping 10.10.10.".to_string(),
+            space: false,
+            global: false,
+            count: 0,
+        });
+
+        let mut aka = create_test_aka_with_aliases(aliases);
+        let result = aka.replace("ping10").unwrap();
+
+        // Should NOT have trailing space
+        assert_eq!(result, "ping 10.10.10.");
+    }
+
+    #[test]
+    fn test_multiple_aliases_space_preserved() {
+        let mut aliases = HashMap::new();
+        aliases.insert("gc".to_string(), Alias {
+            name: "gc".to_string(),
+            value: "git commit -m\"".to_string(),
+            space: false,
+            global: false,
+            count: 0,
+        });
+        aliases.insert("ls".to_string(), Alias {
+            name: "ls".to_string(),
+            value: "eza".to_string(),
+            space: true,
+            global: false,
+            count: 0,
+        });
+
+        let mut aka = create_test_aka_with_aliases(aliases);
+
+        // Test space: false
+        let result1 = aka.replace("gc").unwrap();
+        assert_eq!(result1, "git commit -m\"");
+
+        // Test space: true
+        let result2 = aka.replace("ls").unwrap();
+        assert_eq!(result2, "eza ");
+    }
+
+    #[test]
+    fn test_alias_with_arguments_space_false() {
+        let mut aliases = HashMap::new();
+        aliases.insert("gc".to_string(), Alias {
+            name: "gc".to_string(),
+            value: "git commit -m\"".to_string(),
+            space: false,
+            global: false,
+            count: 0,
+        });
+
+        let mut aka = create_test_aka_with_aliases(aliases);
+        let result = aka.replace("gc some message").unwrap();
+
+        // Should NOT have trailing space even with arguments
+        assert_eq!(result, "git commit -m\" some message");
+    }
+
+    #[test]
+    fn test_alias_with_arguments_space_true() {
+        let mut aliases = HashMap::new();
+        aliases.insert("ls".to_string(), Alias {
+            name: "ls".to_string(),
+            value: "eza".to_string(),
+            space: true,
+            global: false,
+            count: 0,
+        });
+
+        let mut aka = create_test_aka_with_aliases(aliases);
+        let result = aka.replace("ls -la").unwrap();
+
+        // Should have trailing space
+        assert_eq!(result, "eza -la ");
+    }
+
+    #[test]
+    fn test_no_alias_replacement_no_space_change() {
+        let aliases = HashMap::new();
+        let mut aka = create_test_aka_with_aliases(aliases);
+
+        let result = aka.replace("nonexistent").unwrap();
+
+        // No alias found, should return empty string
+        assert_eq!(result, "");
+    }
+
+    #[test]
+    fn test_variadic_alias_space_false() {
+        let mut aliases = HashMap::new();
+        aliases.insert("echo_all".to_string(), Alias {
+            name: "echo_all".to_string(),
+            value: "echo $@".to_string(),
+            space: false,
+            global: false,
+            count: 0,
+        });
+
+        let mut aka = create_test_aka_with_aliases(aliases);
+        let result = aka.replace("echo_all hello world").unwrap();
+
+        // Should NOT have trailing space
+        assert_eq!(result, "echo hello world");
+    }
+
+    #[test]
+    fn test_variadic_alias_space_true() {
+        let mut aliases = HashMap::new();
+        aliases.insert("echo_all".to_string(), Alias {
+            name: "echo_all".to_string(),
+            value: "echo $@".to_string(),
+            space: true,
+            global: false,
+            count: 0,
+        });
+
+        let mut aka = create_test_aka_with_aliases(aliases);
+        let result = aka.replace("echo_all hello world").unwrap();
+
+        // Should have trailing space
+        assert_eq!(result, "echo hello world ");
+    }
+
+    #[test]
+    fn test_positional_alias_space_false() {
+        let mut aliases = HashMap::new();
+        aliases.insert("greet".to_string(), Alias {
+            name: "greet".to_string(),
+            value: "echo Hello $1".to_string(),
+            space: false,
+            global: false,
+            count: 0,
+        });
+
+        let mut aka = create_test_aka_with_aliases(aliases);
+        let result = aka.replace("greet World").unwrap();
+
+        // Should NOT have trailing space
+        assert_eq!(result, "echo Hello World");
+    }
+
+    #[test]
+    fn test_positional_alias_space_true() {
+        let mut aliases = HashMap::new();
+        aliases.insert("greet".to_string(), Alias {
+            name: "greet".to_string(),
+            value: "echo Hello $1".to_string(),
+            space: true,
+            global: false,
+            count: 0,
+        });
+
+        let mut aka = create_test_aka_with_aliases(aliases);
+        let result = aka.replace("greet World").unwrap();
+
+        // Should have trailing space
+        assert_eq!(result, "echo Hello World ");
+    }
 }
