@@ -22,17 +22,99 @@ use aka_lib::{
     get_timing_summary,
     DaemonRequest,
     DaemonResponse,
-    DaemonError,
-    validate_socket_path,
-    should_retry_daemon_error,
-    categorize_daemon_error,
-    DAEMON_CONNECTION_TIMEOUT_MS,
-    DAEMON_READ_TIMEOUT_MS,
-    DAEMON_WRITE_TIMEOUT_MS,
-    DAEMON_TOTAL_TIMEOUT_MS,
-    DAEMON_RETRY_DELAY_MS,
-    DAEMON_MAX_RETRIES,
 };
+
+// Daemon client constants and types - moved from shared library
+const DAEMON_CONNECTION_TIMEOUT_MS: u64 = 100;  // 100ms to connect
+const DAEMON_READ_TIMEOUT_MS: u64 = 200;        // 200ms to read response
+const DAEMON_WRITE_TIMEOUT_MS: u64 = 50;        // 50ms to write request
+const DAEMON_TOTAL_TIMEOUT_MS: u64 = 300;       // 300ms total operation limit
+const DAEMON_RETRY_DELAY_MS: u64 = 50;          // 50ms between retries
+const DAEMON_MAX_RETRIES: u32 = 1;              // Only 1 retry attempt
+
+#[derive(Debug, Clone)]
+enum DaemonError {
+    ConnectionTimeout,
+    ReadTimeout,
+    WriteTimeout,
+    ConnectionRefused,
+    SocketNotFound,
+    SocketPermissionDenied,
+    ProtocolError(String),
+    DaemonShutdown,
+    TotalOperationTimeout,
+    UnknownError(String),
+}
+
+impl std::fmt::Display for DaemonError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            DaemonError::ConnectionTimeout => write!(f, "Daemon connection timeout"),
+            DaemonError::ReadTimeout => write!(f, "Daemon read timeout"),
+            DaemonError::WriteTimeout => write!(f, "Daemon write timeout"),
+            DaemonError::ConnectionRefused => write!(f, "Daemon connection refused"),
+            DaemonError::SocketNotFound => write!(f, "Daemon socket not found"),
+            DaemonError::SocketPermissionDenied => write!(f, "Daemon socket permission denied"),
+            DaemonError::ProtocolError(msg) => write!(f, "Daemon protocol error: {}", msg),
+            DaemonError::DaemonShutdown => write!(f, "Daemon is shutting down"),
+            DaemonError::TotalOperationTimeout => write!(f, "Total daemon operation timeout"),
+            DaemonError::UnknownError(msg) => write!(f, "Unknown daemon error: {}", msg),
+        }
+    }
+}
+
+impl std::error::Error for DaemonError {}
+
+fn should_retry_daemon_error(error: &DaemonError) -> bool {
+    match error {
+        DaemonError::ConnectionTimeout => true,
+        DaemonError::ConnectionRefused => true,
+        DaemonError::ReadTimeout => false,  // Don't retry read timeouts
+        DaemonError::WriteTimeout => false, // Don't retry write timeouts
+        DaemonError::SocketNotFound => false,
+        DaemonError::SocketPermissionDenied => false,
+        DaemonError::ProtocolError(_) => false,
+        DaemonError::DaemonShutdown => false,
+        DaemonError::TotalOperationTimeout => false,
+        DaemonError::UnknownError(_) => false,
+    }
+}
+
+fn categorize_daemon_error(error: &std::io::Error) -> DaemonError {
+    use std::io::ErrorKind;
+    match error.kind() {
+        ErrorKind::TimedOut => DaemonError::ConnectionTimeout,
+        ErrorKind::ConnectionRefused => DaemonError::ConnectionRefused,
+        ErrorKind::NotFound => DaemonError::SocketNotFound,
+        ErrorKind::PermissionDenied => DaemonError::SocketPermissionDenied,
+        ErrorKind::WouldBlock => DaemonError::ReadTimeout,
+        _ => DaemonError::UnknownError(error.to_string()),
+    }
+}
+
+fn validate_socket_path(socket_path: &PathBuf) -> Result<(), DaemonError> {
+    if !socket_path.exists() {
+        return Err(DaemonError::SocketNotFound);
+    }
+
+    // Check if it's actually a socket (not a regular file)
+    match std::fs::metadata(socket_path) {
+        Ok(metadata) => {
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::FileTypeExt;
+                if !metadata.file_type().is_socket() {
+                    return Err(DaemonError::SocketNotFound);
+                }
+            }
+        }
+        Err(e) => {
+            return Err(categorize_daemon_error(&e));
+        }
+    }
+
+    Ok(())
+}
 
 // Daemon client for sending requests
 struct DaemonClient;
