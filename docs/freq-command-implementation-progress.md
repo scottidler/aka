@@ -112,7 +112,7 @@ Based on the user's request, the `freq` command should:
    - CLI interface testing
 
 ### Key Implementation Features
-- **Sorting Algorithm**: 
+- **Sorting Algorithm**:
   ```rust
   aliases.sort_by(|a, b| {
       match b.count.cmp(&a.count) {
@@ -180,4 +180,4 @@ The implementation includes comprehensive testing:
 - **Formatting**: Consistent with existing command output styles
 
 ## Conclusion
-The freq command implementation is nearly complete with robust architecture, comprehensive testing, and proper integration. The main remaining task is debugging and resolving the runtime execution issue that's preventing the command from working correctly. Once this is fixed, the implementation will be fully functional and ready for use. 
+The freq command implementation is nearly complete with robust architecture, comprehensive testing, and proper integration. The main remaining task is debugging and resolving the runtime execution issue that's preventing the command from working correctly. Once this is fixed, the implementation will be fully functional and ready for use.
