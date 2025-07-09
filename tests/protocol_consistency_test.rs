@@ -20,10 +20,10 @@ fn test_protocol_consistency() {
             patterns: vec!["pattern".to_string()]
         },
         DaemonRequest::Freq {
-            top: Some(10),
+            count: 10,
         },
         DaemonRequest::Freq {
-            top: None,
+            count: 0,
         },
         DaemonRequest::Health,
         DaemonRequest::ReloadConfig,
@@ -47,7 +47,7 @@ fn test_protocol_consistency() {
                 assert_eq!(g1, g2);
                 assert_eq!(p1, p2);
             },
-            (DaemonRequest::Freq { top: t1 }, DaemonRequest::Freq { top: t2 }) => {
+            (DaemonRequest::Freq { count: t1 }, DaemonRequest::Freq { count: t2 }) => {
                 assert_eq!(t1, t2);
             },
             (DaemonRequest::Health, DaemonRequest::Health) => {},
@@ -198,7 +198,7 @@ fn test_request_type_differentiation() {
         r#"{"type":"Health"}"#,
         r#"{"type":"Query","cmdline":"test","eol":true}"#,
         r#"{"type":"List","global":false,"patterns":[]}"#,
-        r#"{"type":"Freq","top":10}"#,
+        r#"{"type":"Freq","count":10}"#,
         r#"{"type":"ReloadConfig"}"#,
         r#"{"type":"Shutdown"}"#,
     ];
@@ -218,7 +218,7 @@ fn test_request_type_differentiation() {
                 assert_eq!(global, false);
                 assert_eq!(patterns.len(), 0);
             },
-            DaemonRequest::Freq { top: _ } => {},
+            DaemonRequest::Freq { count: _ } => {},
             DaemonRequest::ReloadConfig => {},
             DaemonRequest::Shutdown => {},
         }

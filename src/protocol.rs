@@ -111,7 +111,7 @@ mod tests {
         let requests = vec![
             DaemonRequest::Query { cmdline: "test".to_string(), eol: false },
             DaemonRequest::List { global: true, patterns: vec!["pattern".to_string()] },
-            DaemonRequest::Freq { top: Some(10) },
+            DaemonRequest::Freq { count: 10 },
             DaemonRequest::Health,
             DaemonRequest::ReloadConfig,
             DaemonRequest::Shutdown,
