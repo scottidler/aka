@@ -1,6 +1,6 @@
 use eyre::Result;
 use regex::Regex;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 use std::str::FromStr;
 
 const fn default_true() -> bool {
@@ -15,11 +15,20 @@ const fn default_zero() -> u64 {
     0
 }
 
+fn deserialize_trimmed_string<'de, D>(deserializer: D) -> Result<String, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let s = String::deserialize(deserializer)?;
+    Ok(s.trim().to_string())
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
 pub struct Alias {
     #[serde(skip_deserializing)]
     pub name: String,
 
+    #[serde(deserialize_with = "deserialize_trimmed_string")]
     pub value: String,
 
     #[serde(default = "default_true")]
@@ -105,7 +114,7 @@ impl FromStr for Alias {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         Ok(Self {
             name: String::new(),
-            value: s.to_owned(),
+            value: s.trim().to_owned(),
             space: true,
             global: false,
             count: 0,

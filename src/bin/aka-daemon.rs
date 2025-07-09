@@ -253,12 +253,25 @@ impl DaemonServer {
                     let max_count_len = aliases.iter().map(|a| a.count.to_string().len()).max().unwrap_or(0);
 
                     aliases.iter()
-                        .map(|alias| format!("{:>count_width$} {} -> {}",
-                            alias.count,
-                            alias.name,
-                            alias.value,
-                            count_width = max_count_len
-                        ))
+                        .map(|alias| {
+                            let prefix = format!("{:>count_width$} {} -> ",
+                                alias.count,
+                                alias.name,
+                                count_width = max_count_len
+                            );
+                            let indent = " ".repeat(prefix.len());
+
+                            if alias.value.contains('\n') {
+                                let lines: Vec<&str> = alias.value.split('\n').collect();
+                                let mut result = format!("{}{}", prefix, lines[0]);
+                                for line in &lines[1..] {
+                                    result.push_str(&format!("\n{}{}", indent, line));
+                                }
+                                result
+                            } else {
+                                format!("{}{}", prefix, alias.value)
+                            }
+                        })
                         .collect::<Vec<_>>()
                         .join("\n")
                 };

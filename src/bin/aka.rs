@@ -1251,19 +1251,30 @@ fn handle_command_direct_timed(opts: &AkaOpts, timing: &mut TimingCollector) -> 
                 // Apply count limit
                 aliases.truncate(freq_opts.count);
 
-                // Display frequency statistics
+                                // Display frequency statistics
                 if aliases.is_empty() {
                     println!("No aliases found.");
                 } else {
                     let max_count_len = aliases.iter().map(|a| a.count.to_string().len()).max().unwrap_or(0);
 
                     for alias in &aliases {
-                        println!("{:>count_width$} {} -> {}",
+                        let prefix = format!("{:>count_width$} {} -> ",
                             alias.count,
                             alias.name,
-                            alias.value,
                             count_width = max_count_len
                         );
+                        let indent = " ".repeat(prefix.len());
+
+                        if alias.value.contains('\n') {
+                            let lines: Vec<&str> = alias.value.split('\n').collect();
+                            print!("{}{}", prefix, lines[0]);
+                            for line in &lines[1..] {
+                                print!("\n{}{}", indent, line);
+                            }
+                            println!();
+                        } else {
+                            println!("{}{}", prefix, alias.value);
+                        }
                     }
                 }
 
