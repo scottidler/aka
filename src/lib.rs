@@ -1,5 +1,5 @@
 use eyre::{eyre, Result};
-use log::{info, debug};
+use log::{info, debug, warn};
 use std::fs::OpenOptions;
 use std::path::PathBuf;
 use std::time::{Instant, Duration};
@@ -212,24 +212,24 @@ impl TimingData {
             ProcessingMode::Direct => "📥",
         };
 
-        info!("{} === TIMING BREAKDOWN ({:?}) ===", emoji, self.mode);
-        info!("  🎯 Total execution: {:.3}ms", self.total_duration.as_secs_f64() * 1000.0);
+        debug!("{} === TIMING BREAKDOWN ({:?}) ===", emoji, self.mode);
+        debug!("  🎯 Total execution: {:.3}ms", self.total_duration.as_secs_f64() * 1000.0);
 
         if let Some(config_duration) = self.config_load_duration {
-            info!("  📋 Config loading: {:.3}ms ({:.1}%)",
+            debug!("  📋 Config loading: {:.3}ms ({:.1}%)",
                 config_duration.as_secs_f64() * 1000.0,
                 (config_duration.as_secs_f64() / self.total_duration.as_secs_f64()) * 100.0
             );
         }
 
         if let Some(ipc_duration) = self.ipc_duration {
-            info!("  🔌 IPC communication: {:.3}ms ({:.1}%)",
+            debug!("  🔌 IPC communication: {:.3}ms ({:.1}%)",
                 ipc_duration.as_secs_f64() * 1000.0,
                 (ipc_duration.as_secs_f64() / self.total_duration.as_secs_f64()) * 100.0
             );
         }
 
-        info!("  ⚙️  Processing: {:.3}ms ({:.1}%)",
+        debug!("  ⚙️  Processing: {:.3}ms ({:.1}%)",
             self.processing_duration.as_secs_f64() * 1000.0,
             (self.processing_duration.as_secs_f64() / self.total_duration.as_secs_f64()) * 100.0
         );
@@ -239,7 +239,7 @@ impl TimingData {
                        self.ipc_duration.unwrap_or_default() +
                        self.processing_duration;
         let overhead = self.total_duration.saturating_sub(accounted);
-        info!("  🏗️  Overhead: {:.3}ms ({:.1}%)",
+        debug!("  🏗️  Overhead: {:.3}ms ({:.1}%)",
             overhead.as_secs_f64() * 1000.0,
             (overhead.as_secs_f64() / self.total_duration.as_secs_f64()) * 100.0
         );
@@ -394,9 +394,11 @@ pub fn get_timing_summary() -> Result<(Duration, Duration, usize, usize)> {
 }
 
 pub fn get_timing_file_path() -> Result<PathBuf> {
-    let config_dir = dirs::config_dir()
-        .ok_or_else(|| eyre!("Could not determine config directory"))?;
-    Ok(config_dir.join("aka").join("timing_data.csv"))
+    let data_dir = dirs::data_local_dir()
+        .ok_or_else(|| eyre!("Could not determine local data directory"))?
+        .join("aka");
+    std::fs::create_dir_all(&data_dir)?;
+    Ok(data_dir.join("timing_data.csv"))
 }
 
 pub fn get_config_path(home_dir: &PathBuf) -> Result<PathBuf> {
@@ -689,8 +691,7 @@ impl AKA {
         // Try to load from cache first
         let start_cache = Instant::now();
         if let Some(cached_aliases) = load_alias_cache(&config_hash, &home_dir)? {
-            debug!("📋 Using cached aliases with usage counts");
-            debug!("📋 Cache loaded {} aliases", cached_aliases.len());
+            debug!("📋 Using cached aliases with usage counts ({} aliases)", cached_aliases.len());
             // Log a sample alias count for debugging
             if let Some((name, alias)) = cached_aliases.iter().next() {
                 debug!("📋 Sample alias '{}' has count: {}", name, alias.count);
@@ -705,10 +706,10 @@ impl AKA {
 
         let total_duration = start_total.elapsed();
 
-        debug!("🏗️  AKA::new() timing breakdown:");
+        debug!("🏗️  AKA initialization complete:");
         debug!("  📋 Config loading: {:.3}ms", load_duration.as_secs_f64() * 1000.0);
         debug!("  🗃️  Cache handling: {:.3}ms", cache_duration.as_secs_f64() * 1000.0);
-        debug!("  🎯 Total AKA::new(): {:.3}ms", total_duration.as_secs_f64() * 1000.0);
+        debug!("  🎯 Total time: {:.3}ms", total_duration.as_secs_f64() * 1000.0);
 
         Ok(AKA { eol, spec, config_hash, home_dir })
     }
@@ -859,7 +860,7 @@ impl AKA {
             // Save updated usage counts to cache if any aliases were used
             if replaced {
                 if let Err(e) = save_alias_cache(&self.config_hash, &self.spec.aliases, &self.home_dir) {
-                    debug!("⚠️ Failed to save alias cache: {}", e);
+                    warn!("⚠️ Failed to save alias cache: {}", e);
                 }
             }
         }

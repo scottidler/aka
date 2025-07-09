@@ -168,7 +168,7 @@ impl DaemonServer {
         };
 
         let message = format!("Config reloaded: {} aliases in {:.3}ms", alias_count, reload_duration.as_secs_f64() * 1000.0);
-        info!("✅ {}", message);
+        debug!("✅ {}", message);
 
         Ok(message)
     }
@@ -197,66 +197,78 @@ impl DaemonServer {
                 let mut aka_guard = self.aka.write().map_err(|e| eyre!("Failed to acquire write lock on AKA: {}", e))?;
                 // Update AKA's eol setting to match the request
                 aka_guard.eol = eol;
+                debug!("📤 Processing query: {}", cmdline);
                 match aka_guard.replace_with_mode(&cmdline, ProcessingMode::Daemon) {
-                    Ok(result) => Response::Success { data: result },
-                    Err(e) => Response::Error { message: e.to_string() },
+                    Ok(result) => {
+                        debug!("✅ Query processed successfully");
+                        Response::Success { data: result }
+                    },
+                    Err(e) => {
+                        warn!("❌ Query processing failed: {}", e);
+                        Response::Error { message: e.to_string() }
+                    },
                 }
             },
             Request::List { global, patterns } => {
                 let aka_guard = self.aka.read().map_err(|e| eyre!("Failed to acquire read lock on AKA: {}", e))?;
-                let mut aliases: Vec<_> = aka_guard.spec.aliases.values().cloned().collect();
-                aliases.sort_by_key(|a| a.name.clone());
 
-                if global {
-                    aliases = aliases.into_iter().filter(|alias| alias.global).collect();
-                }
+                debug!("📤 Processing list request (global: {}, patterns: {:?})", global, patterns);
 
-                let filtered_aliases: Vec<_> = if patterns.is_empty() {
-                    aliases
-                } else {
-                    aliases.into_iter()
-                        .filter(|alias| patterns.iter().any(|pattern| alias.name.starts_with(pattern)))
-                        .collect()
-                };
-
-                let output = filtered_aliases.iter()
-                    .map(|alias| format!("{}: {}", alias.name, alias.value))
+                // Use iterator chains instead of collecting into Vec - much more memory efficient
+                let output = aka_guard.spec.aliases
+                    .iter()
+                    .filter(|(_, alias)| !global || alias.global)
+                    .filter(|(name, _)| patterns.is_empty() ||
+                            patterns.iter().any(|pattern| name.starts_with(pattern)))
+                    .map(|(name, alias)| format!("{}: {}", name, alias.value))
                     .collect::<Vec<_>>()
                     .join("\n");
 
+                debug!("✅ List processed successfully");
                 Response::Success { data: output }
             },
             Request::Health => {
-                // Enhanced health check - confirm config is loaded and valid
                 let aka_guard = self.aka.read().map_err(|e| eyre!("Failed to acquire read lock on AKA: {}", e))?;
-                let alias_count = aka_guard.spec.aliases.len();
-                let current_hash = {
-                    let hash_guard = self.config_hash.read().map_err(|e| eyre!("Failed to acquire read lock on config hash: {}", e))?;
-                    hash_guard.clone()
+                let hash_guard = self.config_hash.read().map_err(|e| eyre!("Failed to acquire read lock on config hash: {}", e))?;
+
+                debug!("📤 Processing health check");
+
+                // Check if config is in sync
+                let current_hash = match hash_config_file(&self.config_path) {
+                    Ok(hash) => hash,
+                    Err(e) => {
+                        warn!("❌ Failed to calculate config hash: {}", e);
+                        let error_response = Response::Error { message: format!("Failed to calculate config hash: {}", e) };
+                        let response_json = serde_json::to_string(&error_response)?;
+                        writeln!(stream, "{}", response_json)?;
+                        return Ok(());
+                    }
                 };
 
-                // Check if config file has changed
-                match hash_config_file(&self.config_path) {
-                    Ok(file_hash) => {
-                        let sync_status = if file_hash == current_hash { "synced" } else { "stale" };
-                        let status = format!("healthy:{}:aliases:{}:{}", alias_count, current_hash[..8].to_string(), sync_status);
-                        Response::Health { status }
-                    },
-                    Err(_) => {
-                        let status = format!("healthy:{}:aliases:{}:unknown", alias_count, current_hash[..8].to_string());
-                        Response::Health { status }
-                    }
-                }
+                let status = if current_hash == *hash_guard {
+                    format!("healthy:{}:synced", aka_guard.spec.aliases.len())
+                } else {
+                    format!("healthy:{}:stale", aka_guard.spec.aliases.len())
+                };
+
+                debug!("✅ Health check complete: {}", status);
+                Response::Health { status }
             },
             Request::ReloadConfig => {
-                info!("Config reload request received");
+                debug!("📤 Processing config reload request");
                 match self.reload_config() {
-                    Ok(message) => Response::ConfigReloaded { success: true, message },
-                    Err(e) => Response::ConfigReloaded { success: false, message: e.to_string() },
+                    Ok(message) => {
+                        debug!("✅ Config reload completed successfully");
+                        Response::ConfigReloaded { success: true, message }
+                    },
+                    Err(e) => {
+                        warn!("❌ Config reload failed: {}", e);
+                        Response::ConfigReloaded { success: false, message: e.to_string() }
+                    },
                 }
             },
             Request::Shutdown => {
-                info!("Shutdown request received");
+                debug!("Shutdown request received");
                 self.shutdown.store(true, Ordering::Relaxed);
                 Response::Success { data: "Shutting down".to_string() }
             },
@@ -283,7 +295,7 @@ impl DaemonServer {
 
         // Create Unix socket listener
         let listener = UnixListener::bind(socket_path)?;
-        info!("📡 Socket listening at: {:?}", socket_path);
+        debug!("📡 Socket listening at: {:?}", socket_path);
 
         // Start background file watching thread
         let reload_receiver = Arc::clone(&self.reload_receiver);
@@ -367,7 +379,7 @@ impl DaemonServer {
                                                 }
                                             };
 
-                                            info!("🔄 Config auto-reloaded: {} aliases", alias_count);
+                                            debug!("🔄 Config auto-reloaded: {} aliases", alias_count);
                                         },
                                         Err(e) => {
                                             error!("Failed to auto-reload config: {}", e);
@@ -494,7 +506,7 @@ fn main() {
         eprintln!("Warning: Failed to set up logging: {}", e);
     }
 
-    info!("🚀 AKA Daemon starting...");
+            info!("🚀 AKA Daemon starting...");
 
     // Determine socket path
     let socket_path = match determine_socket_path(&home_dir) {
@@ -517,14 +529,14 @@ fn main() {
     // Set up signal handling
     let shutdown_clone = server.shutdown.clone();
     if let Err(e) = ctrlc::set_handler(move || {
-        info!("🛑 Shutdown signal received");
+        debug!("🛑 Shutdown signal received");
         shutdown_clone.store(true, Ordering::Relaxed);
     }) {
         error!("Error setting signal handler: {}", e);
         std::process::exit(1);
     }
 
-    info!("✅ Daemon running (PID: {})", std::process::id());
+            info!("✅ Daemon running (PID: {})", std::process::id());
 
     // Run the server
     if let Err(e) = server.run(&socket_path) {
@@ -532,5 +544,5 @@ fn main() {
         std::process::exit(1);
     }
 
-    info!("👋 Daemon stopped");
+            info!("👋 Daemon stopped");
 }

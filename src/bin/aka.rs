@@ -1,6 +1,6 @@
 use clap::{Parser, Subcommand};
 use eyre::Result;
-use log::debug;
+use log::{debug, info, warn};
 use std::path::PathBuf;
 use std::process::exit;
 use std::os::unix::net::UnixStream;
@@ -958,7 +958,7 @@ fn handle_regular_command(opts: &AkaOpts) -> Result<i32> {
 }
 
 fn handle_command_via_daemon_with_fallback(opts: &AkaOpts) -> Result<i32> {
-    debug!("🎯 === DAEMON-WITH-FALLBACK PROCESSING ===");
+    debug!("🎯 Processing command via daemon with fallback");
     debug!("🔍 Attempting daemon path first");
 
     // Start timing for daemon attempt
@@ -968,7 +968,7 @@ fn handle_command_via_daemon_with_fallback(opts: &AkaOpts) -> Result<i32> {
     let home_dir = match dirs::home_dir() {
         Some(dir) => dir,
         None => {
-            debug!("❌ Cannot determine home directory, using direct path");
+            warn!("❌ Cannot determine home directory, using direct path");
             let mut direct_timing = TimingCollector::new(ProcessingMode::Direct);
             let result = handle_command_direct_timed(opts, &mut direct_timing);
             let timing_data = direct_timing.finalize();
@@ -985,7 +985,7 @@ fn handle_command_via_daemon_with_fallback(opts: &AkaOpts) -> Result<i32> {
                 // Try daemon approach with timing
                 match handle_command_via_daemon_only_timed(opts, &mut timing) {
                     Ok(result) => {
-                        debug!("✅ Daemon path successful, returning result: {}", result);
+                        debug!("✅ Daemon path successful");
                         debug!("🎯 === DAEMON-WITH-FALLBACK COMPLETE (DAEMON SUCCESS) ===");
 
                         // Log daemon timing
@@ -995,22 +995,22 @@ fn handle_command_via_daemon_with_fallback(opts: &AkaOpts) -> Result<i32> {
                         return Ok(result);
                     },
                     Err(e) => {
-                        debug!("⚠️ Daemon path failed: {}, falling back to direct", e);
+                        warn!("⚠️ Daemon path failed: {}, falling back to direct", e);
                         debug!("🔄 Daemon communication failed, will try direct path");
                     }
                 }
             } else {
-                debug!("❌ Socket file does not exist: {:?}", socket_path);
+                debug!("❌ Socket file does not exist, using direct path");
                 debug!("📁 No daemon socket, using direct path");
             }
         }
         Err(e) => {
-            debug!("❌ Cannot determine socket path: {}, using direct path", e);
+            warn!("❌ Cannot determine socket path: {}, using direct path", e);
         }
     }
 
     // Fallback to direct processing with timing
-    debug!("🔄 Falling back to direct config processing");
+                info!("🔄 Falling back to direct config processing");
     debug!("🔀 Routing to handle_command_direct");
 
     let mut direct_timing = TimingCollector::new(ProcessingMode::Direct);
@@ -1020,12 +1020,12 @@ fn handle_command_via_daemon_with_fallback(opts: &AkaOpts) -> Result<i32> {
     let timing_data = direct_timing.finalize();
     log_timing(timing_data);
 
-    debug!("🎯 === DAEMON-WITH-FALLBACK COMPLETE (DIRECT FALLBACK) ===");
+    debug!("🎯 Direct fallback complete");
     result
 }
 
 fn handle_command_via_daemon_only_timed(opts: &AkaOpts, timing: &mut TimingCollector) -> Result<i32> {
-    debug!("🎯 === DAEMON-ONLY PROCESSING ===");
+    debug!("🎯 Processing command via daemon only");
     debug!("🔍 Daemon-only handler - NO fallback to config loading");
     debug!("📋 Health check already confirmed daemon was healthy");
 
@@ -1040,32 +1040,32 @@ fn handle_command_via_daemon_only_timed(opts: &AkaOpts, timing: &mut TimingColle
                     cmdline: query_opts.cmdline.clone(),
                     eol: opts.eol,
                 };
-                debug!("📤 Sending daemon request: Query({}, eol={})", query_opts.cmdline, opts.eol);
+                debug!("📤 Sending daemon query: {}", query_opts.cmdline);
 
                 match DaemonClient::send_request_timed(request, timing) {
                     Ok(DaemonResponse::Success { data }) => {
-                        debug!("✅ Daemon query successful, got response: {}", data);
+                        debug!("✅ Daemon query successful");
                         println!("{}", data);
                         timing.end_processing();
                         debug!("🎯 === DAEMON-ONLY COMPLETE (SUCCESS) ===");
                         Ok(0)
                     },
                     Ok(DaemonResponse::Error { message }) => {
-                        debug!("❌ Daemon returned error: {}", message);
+                        warn!("❌ Daemon returned error: {}", message);
                         eprintln!("Daemon error: {}", message);
                         timing.end_processing();
                         debug!("🎯 === DAEMON-ONLY COMPLETE (DAEMON ERROR) ===");
                         Ok(1)
                     },
                     Ok(response) => {
-                        debug!("❌ Daemon returned unexpected response: {:?}", response);
+                        warn!("❌ Daemon returned unexpected response: {:?}", response);
                         eprintln!("Unexpected daemon response");
                         timing.end_processing();
                         debug!("🎯 === DAEMON-ONLY COMPLETE (UNEXPECTED RESPONSE) ===");
                         Ok(1)
                     },
                     Err(e) => {
-                        debug!("❌ Daemon request failed: {}", e);
+                        warn!("❌ Daemon request failed: {}", e);
                         debug!("🔄 Daemon communication failed, will fallback to direct mode");
                         timing.end_processing();
                         debug!("🎯 === DAEMON-ONLY COMPLETE (COMMUNICATION ERROR) ===");
@@ -1078,6 +1078,7 @@ fn handle_command_via_daemon_only_timed(opts: &AkaOpts, timing: &mut TimingColle
                     global: list_opts.global,
                     patterns: list_opts.patterns.clone()
                 };
+                debug!("📤 Sending daemon list request");
                 match DaemonClient::send_request_timed(request, timing) {
                     Ok(DaemonResponse::Success { data }) => {
                         debug!("✅ Daemon list successful");
@@ -1086,19 +1087,19 @@ fn handle_command_via_daemon_only_timed(opts: &AkaOpts, timing: &mut TimingColle
                         Ok(0)
                     },
                     Ok(DaemonResponse::Error { message }) => {
-                        debug!("❌ Daemon returned error: {}", message);
+                        warn!("❌ Daemon returned error: {}", message);
                         eprintln!("Daemon error: {}", message);
                         timing.end_processing();
                         Ok(1)
                     },
                     Ok(_) => {
-                        debug!("❌ Daemon returned unexpected response");
+                        warn!("❌ Daemon returned unexpected response");
                         eprintln!("Unexpected daemon response");
                         timing.end_processing();
                         Ok(1)
                     },
                     Err(e) => {
-                        debug!("❌ Daemon request failed: {}", e);
+                        warn!("❌ Daemon request failed: {}", e);
                         debug!("🔄 Daemon communication failed, will fallback to direct mode");
                         timing.end_processing();
                         Ok(1)
@@ -1106,7 +1107,7 @@ fn handle_command_via_daemon_only_timed(opts: &AkaOpts, timing: &mut TimingColle
                 }
             }
             _ => {
-                debug!("❌ Command not supported in daemon-only mode");
+                warn!("❌ Command not supported in daemon-only mode");
                 eprintln!("Command not supported in daemon mode");
                 timing.end_processing();
                 Ok(1)
@@ -1119,32 +1120,57 @@ fn handle_command_via_daemon_only_timed(opts: &AkaOpts, timing: &mut TimingColle
 }
 
 fn handle_command_direct_timed(opts: &AkaOpts, timing: &mut TimingCollector) -> Result<i32> {
-    debug!("🎯 === DIRECT PROCESSING ===");
-    debug!("📁 Loading config for direct processing (cache-aware)");
-    debug!("🔍 Direct processing options: eol={}, config={:?}", opts.eol, opts.config);
+    debug!("🎯 Processing command directly");
+    debug!("🔍 Direct processing - loading config fresh");
 
     timing.start_config_load();
-    let home_dir = dirs::home_dir()
-        .ok_or_else(|| eyre::eyre!("Unable to determine home directory"))?;
-    let mut aka = AKA::new(opts.eol, home_dir)?;
+
+    // Get home directory
+    let home_dir = match dirs::home_dir() {
+        Some(dir) => dir,
+        None => {
+            warn!("❌ Cannot determine home directory");
+            return Err(eyre::eyre!("Unable to determine home directory"));
+        }
+    };
+
+    // Create AKA instance (this loads config)
+    let mut aka = match AKA::new(opts.eol, home_dir) {
+        Ok(aka) => {
+            debug!("✅ AKA instance created successfully");
+            aka
+        },
+        Err(e) => {
+            warn!("❌ Failed to create AKA instance: {}", e);
+            return Err(e);
+        }
+    };
+
     timing.end_config_load();
-
-    debug!("✅ Config loaded, {} aliases available", aka.spec.aliases.len());
-
     timing.start_processing();
 
-    if let Some(ref command) = opts.command {
-        debug!("🔍 Processing command in direct mode: {:?}", command);
+    if let Some(ref command) = &opts.command {
+        debug!("🔍 Processing command: {:?}", command);
         match command {
             Command::Query(query_opts) => {
-                debug!("🔍 Processing query: {}", query_opts.cmdline);
-                let result = aka.replace_with_mode(&query_opts.cmdline, ProcessingMode::Direct)?;
-                debug!("✅ Query processed, result: {}", result);
-                println!("{result}");
-                timing.end_processing();
-                debug!("🎯 === DIRECT PROCESSING COMPLETE (QUERY SUCCESS) ===");
+                debug!("📤 Processing query: {}", query_opts.cmdline);
+                match aka.replace_with_mode(&query_opts.cmdline, ProcessingMode::Direct) {
+                    Ok(result) => {
+                        debug!("✅ Query processed successfully");
+                        println!("{}", result);
+                        timing.end_processing();
+                        Ok(0)
+                    },
+                    Err(e) => {
+                        warn!("❌ Query processing failed: {}", e);
+                        eprintln!("Error: {}", e);
+                        timing.end_processing();
+                        Ok(1)
+                    }
+                }
             }
             Command::List(list_opts) => {
+                debug!("📤 Processing list request");
                 let mut aliases: Vec<_> = aka.spec.aliases.values().cloned().collect();
                 aliases.sort_by_key(|a| a.name.clone());
 
@@ -1152,51 +1178,33 @@ fn handle_command_direct_timed(opts: &AkaOpts, timing: &mut TimingCollector) -> 
                     aliases = aliases.into_iter().filter(|alias| alias.global).collect();
                 }
 
-                if list_opts.patterns.is_empty() {
-                    for alias in aliases {
-                        print_alias(&alias);
-                    }
+                let filtered_aliases: Vec<_> = if list_opts.patterns.is_empty() {
+                    aliases
                 } else {
-                    for alias in aliases {
-                        if list_opts.patterns.iter().any(|pattern| alias.name.starts_with(pattern)) {
-                            print_alias(&alias);
-                        }
-                    }
+                    aliases.into_iter()
+                        .filter(|alias| list_opts.patterns.iter().any(|pattern| alias.name.starts_with(pattern)))
+                        .collect()
+                };
+
+                for alias in &filtered_aliases {
+                    print_alias(alias);
                 }
-                timing.end_processing();
-            }
 
-            Command::CompleteAliases => {
-                let mut keys: Vec<_> = aka.spec.aliases
-                    .keys()
-                    .filter(|name| name.len() > 1 && !name.starts_with('|'))
-                    .cloned()
-                    .collect();
-                keys.sort();
-                for name in keys {
-                    println!("{name}");
-                }
+                debug!("✅ Listed {} aliases", filtered_aliases.len());
                 timing.end_processing();
-                return Ok(0);
+                Ok(0)
             }
-
-            Command::HealthCheck => {
-                // Already handled above
+            _ => {
+                warn!("❌ Command not supported in direct mode");
+                eprintln!("Command not supported in direct mode");
                 timing.end_processing();
-                return Ok(0);
-            }
-
-            Command::Daemon(_) => {
-                // Should not reach here
-                timing.end_processing();
-                return Ok(0);
+                Ok(1)
             }
         }
     } else {
         timing.end_processing();
+        Ok(0)
     }
-
-    Ok(0)
 }
 
 #[cfg(test)]
