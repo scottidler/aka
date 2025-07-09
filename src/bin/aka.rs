@@ -931,35 +931,30 @@ fn route_command_by_health_status(
 ) -> Result<i32> {
     match health_status {
         0 => {
-            // Health check passed - it could be daemon or direct
-            debug!("✅ Health check passed (status=0), proceeding with daemon-first approach");
+            // Health check passed - daemon is healthy, use daemon
+            debug!("✅ Health check passed (status=0), daemon is healthy");
             debug!("🔀 Routing to handle_command_via_daemon_with_fallback");
             handle_command_via_daemon_with_fallback(opts)
         },
-        1 => {
-            debug!("❌ Health check failed: config file not found (status=1)");
-            debug!("🚨 Returning error to user");
-            eprintln!("Error: Configuration file not found");
-            Ok(1)
-        },
-        2 => {
-            debug!("❌ Health check failed: config file invalid (status=2)");
-            debug!("🚨 Returning error to user");
-            eprintln!("Error: Configuration file is invalid");
-            Ok(2)
-        },
-        3 => {
-            debug!("⚠️ Health check passed but no aliases defined (status=3)");
-            debug!("📝 Returning empty result to user");
-            // Still process the command, just return empty result
-            println!("");
-            Ok(0)
-        },
         _ => {
-            debug!("❌ Health check returned unknown status: {}", health_status);
-            debug!("🚨 Returning unknown error to user");
-            eprintln!("Error: Unknown health check status");
-            Ok(1)
+            // Any non-zero status means fallback to direct mode
+            debug!("⚠️ Health check returned status={}, falling back to direct mode", health_status);
+            debug!("🔀 Routing directly to handle_command_direct_timed");
+
+            // Log the specific reason for fallback
+            match health_status {
+                1 => debug!("📋 Reason: Config file not found"),
+                2 => debug!("📋 Reason: Config file invalid"),
+                3 => debug!("📋 Reason: No aliases defined"),
+                4 => debug!("📋 Reason: Stale socket detected"),
+                _ => debug!("📋 Reason: Unknown health check status"),
+            }
+
+            let mut timing = TimingCollector::new(ProcessingMode::Direct);
+            let result = handle_command_direct_timed(opts, &mut timing);
+            let timing_data = timing.finalize();
+            log_timing(timing_data);
+            result
         }
     }
 }
