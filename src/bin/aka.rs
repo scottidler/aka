@@ -211,7 +211,7 @@ impl DaemonClient {
 fn get_after_help() -> &'static str {
     let daemon_status = get_daemon_status_emoji();
     Box::leak(format!(
-        "Logs are written to: ~/.local/share/aka/logs/aka.log\nDaemon status: {}",
+        "Logs are written to: ~/.local/share/aka/logs/aka.log\n\nDaemon status: {}",
         daemon_status
     ).into_boxed_str())
 }
@@ -1118,7 +1118,7 @@ fn handle_command_via_daemon_only_timed(opts: &AkaOpts, timing: &mut TimingColle
             Command::Freq(freq_opts) => {
                 debug!("📤 Preparing daemon frequency request");
                 let request = DaemonRequest::Freq {
-                    top: Some(freq_opts.count),
+                    count: freq_opts.count,
                 };
                 debug!("📤 Sending daemon frequency request");
                 match DaemonClient::send_request_timed(request, timing) {

@@ -227,10 +227,10 @@ impl DaemonServer {
                 debug!("✅ List processed successfully");
                 Response::Success { data: output }
             },
-            Request::Freq { top } => {
+            Request::Freq { count } => {
                 let aka_guard = self.aka.read().map_err(|e| eyre!("Failed to acquire read lock on AKA: {}", e))?;
 
-                debug!("📤 Processing frequency request (top: {:?})", top);
+                debug!("📤 Processing frequency request (count: {:?})", count);
 
                 // Collect aliases and sort by count (descending) then by name (ascending)
                 let mut aliases: Vec<_> = aka_guard.spec.aliases.values().cloned().collect();
@@ -241,10 +241,8 @@ impl DaemonServer {
                     }
                 });
 
-                // Apply top limit if specified
-                if let Some(top_limit) = top {
-                    aliases.truncate(top_limit);
-                }
+                // Apply count limit if specified
+                aliases.truncate(count);
 
                 // Format output
                 let output = if aliases.is_empty() {

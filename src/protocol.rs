@@ -24,7 +24,7 @@ pub enum DaemonRequest {
     },
     /// Show alias usage frequency statistics
     Freq {
-        top: Option<usize>,
+        count: usize,
     },
     /// Health check request
     Health,
