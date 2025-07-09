@@ -227,6 +227,45 @@ impl DaemonServer {
                 debug!("✅ List processed successfully");
                 Response::Success { data: output }
             },
+            Request::Freq { top } => {
+                let aka_guard = self.aka.read().map_err(|e| eyre!("Failed to acquire read lock on AKA: {}", e))?;
+
+                debug!("📤 Processing frequency request (top: {:?})", top);
+
+                // Collect aliases and sort by count (descending) then by name (ascending)
+                let mut aliases: Vec<_> = aka_guard.spec.aliases.values().cloned().collect();
+                aliases.sort_by(|a, b| {
+                    match b.count.cmp(&a.count) {
+                        std::cmp::Ordering::Equal => a.name.cmp(&b.name),
+                        other => other,
+                    }
+                });
+
+                // Apply top limit if specified
+                if let Some(top_limit) = top {
+                    aliases.truncate(top_limit);
+                }
+
+                // Format output
+                let output = if aliases.is_empty() {
+                    "No aliases found.".to_string()
+                } else {
+                    let max_count_len = aliases.iter().map(|a| a.count.to_string().len()).max().unwrap_or(0);
+
+                    aliases.iter()
+                        .map(|alias| format!("{:>count_width$} {} -> {}",
+                            alias.count,
+                            alias.name,
+                            alias.value,
+                            count_width = max_count_len
+                        ))
+                        .collect::<Vec<_>>()
+                        .join("\n")
+                };
+
+                debug!("✅ Frequency processed successfully for {} aliases", aliases.len());
+                Response::Success { data: output }
+            },
             Request::Health => {
                 let aka_guard = self.aka.read().map_err(|e| eyre!("Failed to acquire read lock on AKA: {}", e))?;
                 let hash_guard = self.config_hash.read().map_err(|e| eyre!("Failed to acquire read lock on config hash: {}", e))?;

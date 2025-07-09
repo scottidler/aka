@@ -22,6 +22,10 @@ pub enum DaemonRequest {
         global: bool,
         patterns: Vec<String>
     },
+    /// Show alias usage frequency statistics
+    Freq {
+        top: Option<usize>,
+    },
     /// Health check request
     Health,
     /// Request daemon to reload configuration
@@ -107,6 +111,7 @@ mod tests {
         let requests = vec![
             DaemonRequest::Query { cmdline: "test".to_string(), eol: false },
             DaemonRequest::List { global: true, patterns: vec!["pattern".to_string()] },
+            DaemonRequest::Freq { top: Some(10) },
             DaemonRequest::Health,
             DaemonRequest::ReloadConfig,
             DaemonRequest::Shutdown,

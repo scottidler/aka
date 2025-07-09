@@ -298,6 +298,9 @@ enum Command {
     #[clap(name = "query", about = "query for aka substitutions")]
     Query(QueryOpts),
 
+    #[clap(name = "freq", about = "show alias usage frequency statistics")]
+    Freq(FreqOpts),
+
     #[clap(name = "daemon", about = "manage aka daemon")]
     Daemon(DaemonOpts),
 
@@ -352,6 +355,12 @@ struct DaemonOpts {
 
     #[clap(long, help = "Show timing summary")]
     timing_summary: bool,
+}
+
+#[derive(Parser, Debug)]
+struct FreqOpts {
+    #[clap(short, long, default_value = "10", help = "show only top N aliases by frequency")]
+    count: usize,
 }
 
 // Basic service manager for proof of concept
@@ -1106,6 +1115,39 @@ fn handle_command_via_daemon_only_timed(opts: &AkaOpts, timing: &mut TimingColle
                     }
                 }
             }
+            Command::Freq(freq_opts) => {
+                debug!("📤 Preparing daemon frequency request");
+                let request = DaemonRequest::Freq {
+                    top: Some(freq_opts.count),
+                };
+                debug!("📤 Sending daemon frequency request");
+                match DaemonClient::send_request_timed(request, timing) {
+                    Ok(DaemonResponse::Success { data }) => {
+                        debug!("✅ Daemon frequency successful");
+                        println!("{}", data);
+                        timing.end_processing();
+                        Ok(0)
+                    },
+                    Ok(DaemonResponse::Error { message }) => {
+                        warn!("❌ Daemon returned error: {}", message);
+                        eprintln!("Daemon error: {}", message);
+                        timing.end_processing();
+                        Ok(1)
+                    },
+                    Ok(_) => {
+                        warn!("❌ Daemon returned unexpected response");
+                        eprintln!("Unexpected daemon response");
+                        timing.end_processing();
+                        Ok(1)
+                    },
+                    Err(e) => {
+                        warn!("❌ Daemon request failed: {}", e);
+                        debug!("🔄 Daemon communication failed, will fallback to direct mode");
+                        timing.end_processing();
+                        Ok(1)
+                    }
+                }
+            }
             _ => {
                 warn!("❌ Command not supported in daemon-only mode");
                 eprintln!("Command not supported in daemon mode");
@@ -1191,6 +1233,41 @@ fn handle_command_direct_timed(opts: &AkaOpts, timing: &mut TimingCollector) -> 
                 }
 
                 debug!("✅ Listed {} aliases", filtered_aliases.len());
+                timing.end_processing();
+                Ok(0)
+            }
+            Command::Freq(freq_opts) => {
+                debug!("📤 Processing frequency request");
+                let mut aliases: Vec<_> = aka.spec.aliases.values().cloned().collect();
+
+                // Sort by count (descending) then by name (ascending)
+                aliases.sort_by(|a, b| {
+                    match b.count.cmp(&a.count) {
+                        std::cmp::Ordering::Equal => a.name.cmp(&b.name),
+                        other => other,
+                    }
+                });
+
+                // Apply count limit
+                aliases.truncate(freq_opts.count);
+
+                // Display frequency statistics
+                if aliases.is_empty() {
+                    println!("No aliases found.");
+                } else {
+                    let max_count_len = aliases.iter().map(|a| a.count.to_string().len()).max().unwrap_or(0);
+
+                    for alias in &aliases {
+                        println!("{:>count_width$} {} -> {}",
+                            alias.count,
+                            alias.name,
+                            alias.value,
+                            count_width = max_count_len
+                        );
+                    }
+                }
+
+                debug!("✅ Showed frequency for {} aliases", aliases.len());
                 timing.end_processing();
                 Ok(0)
             }
