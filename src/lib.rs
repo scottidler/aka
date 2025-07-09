@@ -906,6 +906,39 @@ pub fn print_alias(alias: &Alias) {
     }
 }
 
+pub fn format_freq_output(aliases: &[Alias]) -> String {
+    if aliases.is_empty() {
+        return "No aliases found.".to_string();
+    }
+
+    // Calculate the maximum alias name width for alignment
+    let max_name_width = aliases
+        .iter()
+        .map(|alias| alias.name.len())
+        .max()
+        .unwrap_or(0);
+
+    aliases
+        .iter()
+        .map(|alias| {
+            let prefix = format!("{:>4} {:>width$} -> ", alias.count, alias.name, width = max_name_width);
+            let indent = " ".repeat(prefix.len());
+
+            if alias.value.contains('\n') {
+                let lines: Vec<&str> = alias.value.split('\n').collect();
+                let mut result = format!("{}{}", prefix, lines[0]);
+                for line in &lines[1..] {
+                    result.push_str(&format!("\n{}{}", indent, line));
+                }
+                result
+            } else {
+                format!("{}{}", prefix, alias.value)
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 // Utility function to determine socket path for daemon
 pub fn determine_socket_path(home_dir: &PathBuf) -> Result<PathBuf> {
     // Try XDG_RUNTIME_DIR first

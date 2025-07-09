@@ -259,17 +259,13 @@ impl DaemonServer {
                 let mut aliases: Vec<_> = aka_guard.spec.aliases.values().cloned().collect();
                 aliases.sort_by(|a, b| b.count.cmp(&a.count).then_with(|| a.name.cmp(&b.name)));
 
-                let limited_aliases = if count > 0 {
+                let limited_aliases: Vec<_> = if count > 0 {
                     aliases.into_iter().take(count).collect()
                 } else {
                     aliases
                 };
 
-                let output = limited_aliases
-                    .iter()
-                    .map(|alias| format!("{:>4} {}", alias.count, alias.name))
-                    .collect::<Vec<_>>()
-                    .join("\n");
+                let output = aka_lib::format_freq_output(&limited_aliases);
 
                 debug!("✅ Frequency processed successfully");
                 Response::Success { data: output }

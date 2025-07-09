@@ -1249,44 +1249,20 @@ fn handle_command_direct_timed(opts: &AkaOpts, timing: &mut TimingCollector) -> 
                 let mut aliases: Vec<_> = aka.spec.aliases.values().cloned().collect();
 
                 // Sort by count (descending) then by name (ascending)
-                aliases.sort_by(|a, b| {
-                    match b.count.cmp(&a.count) {
-                        std::cmp::Ordering::Equal => a.name.cmp(&b.name),
-                        other => other,
-                    }
-                });
+                aliases.sort_by(|a, b| b.count.cmp(&a.count).then_with(|| a.name.cmp(&b.name)));
 
                 // Apply count limit
-                aliases.truncate(freq_opts.count);
-
-                                // Display frequency statistics
-                if aliases.is_empty() {
-                    println!("No aliases found.");
+                let limited_aliases: Vec<_> = if freq_opts.count > 0 {
+                    aliases.into_iter().take(freq_opts.count).collect()
                 } else {
-                    let max_count_len = aliases.iter().map(|a| a.count.to_string().len()).max().unwrap_or(0);
+                    aliases
+                };
 
-                    for alias in &aliases {
-                        let prefix = format!("{:>count_width$} {} -> ",
-                            alias.count,
-                            alias.name,
-                            count_width = max_count_len
-                        );
-                        let indent = " ".repeat(prefix.len());
+                // Display frequency statistics using shared formatting
+                let output = aka_lib::format_freq_output(&limited_aliases);
+                println!("{}", output);
 
-                        if alias.value.contains('\n') {
-                            let lines: Vec<&str> = alias.value.split('\n').collect();
-                            print!("{}{}", prefix, lines[0]);
-                            for line in &lines[1..] {
-                                print!("\n{}{}", indent, line);
-                            }
-                            println!();
-                        } else {
-                            println!("{}{}", prefix, alias.value);
-                        }
-                    }
-                }
-
-                debug!("✅ Showed frequency for {} aliases", aliases.len());
+                debug!("✅ Showed frequency for {} aliases", limited_aliases.len());
                 timing.end_processing();
                 Ok(0)
             }
