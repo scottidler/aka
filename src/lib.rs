@@ -28,9 +28,19 @@ pub use protocol::{DaemonRequest, DaemonResponse};
 pub use error::{AkaError, ErrorContext, ValidationError, enhance_error};
 
 // JSON cache structure for aliases with usage counts
-#[derive(Serialize, Deserialize)]
-struct AliasCache {
-    aliases: HashMap<String, Alias>,
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct AliasCache {
+    pub hash: String,
+    pub aliases: HashMap<String, Alias>,
+}
+
+impl Default for AliasCache {
+    fn default() -> Self {
+        Self {
+            hash: String::new(),
+            aliases: HashMap::new(),
+        }
+    }
 }
 
 // Check if benchmark mode is enabled
@@ -391,26 +401,20 @@ pub fn hash_config_file(config_path: &PathBuf) -> Result<String> {
     Ok(format!("{:016x}", hash))
 }
 
-pub fn get_hash_cache_path(home_dir: &PathBuf) -> Result<PathBuf> {
-    let cache_dir = home_dir.join(".local").join("share").join("aka");
-
-    std::fs::create_dir_all(&cache_dir)?;
-    Ok(cache_dir.join("config.hash"))
-}
-
 pub fn get_stored_hash(home_dir: &PathBuf) -> Result<Option<String>> {
-    let hash_path = get_hash_cache_path(home_dir)?;
-    if hash_path.exists() {
-        let stored_hash = std::fs::read_to_string(&hash_path)?;
-        Ok(Some(stored_hash.trim().to_string()))
-    } else {
+    // Get hash from the cache file instead of separate config.hash file
+    let cache = load_alias_cache(home_dir)?;
+    if cache.hash.is_empty() {
         Ok(None)
+    } else {
+        Ok(Some(cache.hash))
     }
 }
 
-pub fn store_hash(hash: &str, home_dir: &PathBuf) -> Result<()> {
-    let hash_path = get_hash_cache_path(home_dir)?;
-    std::fs::write(&hash_path, hash)?;
+pub fn store_hash(hash: &str, _home_dir: &PathBuf) -> Result<()> {
+    // Hash is now stored in the cache file itself, so this is a no-op
+    // The hash gets stored when we save the cache via sync_cache_with_config
+    debug!("Hash storage is now handled by cache file (hash: {})", hash);
     Ok(())
 }
 
@@ -619,20 +623,15 @@ impl AKA {
         let mut spec = loader.load(&config_path)?;
         let load_duration = start_load.elapsed();
 
-        // Try to load from cache first
+        // Sync cache with config
         let start_cache = Instant::now();
-        if let Some(cached_aliases) = load_alias_cache(&config_hash, &home_dir)? {
-            debug!("📋 Using cached aliases with usage counts ({} aliases)", cached_aliases.len());
-            // Log a sample alias count for debugging
-            if let Some((name, alias)) = cached_aliases.iter().next() {
-                debug!("📋 Sample alias '{}' has count: {}", name, alias.count);
-            }
-            spec.aliases = cached_aliases;
-        } else {
-            debug!("📋 No cache found, initializing usage counts to 0");
-            // Initialize all counts to 0 (they already are due to skip_deserializing) and save to cache
-            save_alias_cache(&config_hash, &spec.aliases, &home_dir)?;
+        let cache = sync_cache_with_config(&home_dir)?;
+        debug!("📋 Using cached aliases with usage counts ({} aliases)", cache.aliases.len());
+        // Log a sample alias count for debugging
+        if let Some((name, alias)) = cache.aliases.iter().next() {
+            debug!("📋 Sample alias '{}' has count: {}", name, alias.count);
         }
+        spec.aliases = cache.aliases;
         let cache_duration = start_cache.elapsed();
 
         let total_duration = start_total.elapsed();
@@ -782,7 +781,11 @@ impl AKA {
 
             // Save updated usage counts to cache if any aliases were used
             if replaced {
-                if let Err(e) = save_alias_cache(&self.config_hash, &self.spec.aliases, &self.home_dir) {
+                let cache = AliasCache {
+                    hash: self.config_hash.clone(),
+                    aliases: self.spec.aliases.clone(),
+                };
+                if let Err(e) = save_alias_cache(&cache, &self.home_dir) {
                     warn!("⚠️ Failed to save alias cache: {}", e);
                 }
             }
@@ -870,13 +873,13 @@ pub fn determine_socket_path(home_dir: &PathBuf) -> Result<PathBuf> {
     Ok(home_dir.join(".local/share/aka/daemon.sock"))
 }
 
-pub fn get_alias_cache_path(config_hash: &str, home_dir: &PathBuf) -> Result<PathBuf> {
+pub fn get_alias_cache_path(home_dir: &PathBuf) -> Result<PathBuf> {
     let data_dir = home_dir.join(".local").join("share").join("aka");
     std::fs::create_dir_all(&data_dir)?;
-    Ok(data_dir.join(format!("{}.json", config_hash)))
+    Ok(data_dir.join("aka.json"))
 }
 
-pub fn get_alias_cache_path_with_base(config_hash: &str, base_dir: Option<&PathBuf>) -> Result<PathBuf> {
+pub fn get_alias_cache_path_with_base(base_dir: Option<&PathBuf>) -> Result<PathBuf> {
     let data_dir = match base_dir {
         Some(dir) => dir.clone(),
         None => {
@@ -892,67 +895,66 @@ pub fn get_alias_cache_path_with_base(config_hash: &str, base_dir: Option<&PathB
     };
 
     std::fs::create_dir_all(&data_dir)?;
-    Ok(data_dir.join(format!("{}.json", config_hash)))
+    Ok(data_dir.join("aka.json"))
 }
 
-pub fn load_alias_cache(config_hash: &str, home_dir: &PathBuf) -> Result<Option<HashMap<String, Alias>>> {
-    let cache_path = get_alias_cache_path(config_hash, home_dir)?;
+
+
+pub fn calculate_config_hash(home_dir: &PathBuf) -> Result<String> {
+    let config_path = get_config_path(home_dir)?;
+    hash_config_file(&config_path)
+}
+
+pub fn load_alias_cache(home_dir: &PathBuf) -> Result<AliasCache> {
+    let cache_path = get_alias_cache_path(home_dir)?;
 
     if !cache_path.exists() {
-        debug!("Cache file doesn't exist: {:?}", cache_path);
-        return Ok(None);
+        debug!("Cache file doesn't exist: {:?}, returning default", cache_path);
+        return Ok(AliasCache::default());
     }
 
     debug!("Loading alias cache from: {:?}", cache_path);
     let content = std::fs::read_to_string(&cache_path)?;
-    let cache: AliasCache = serde_json::from_str(&content)?;
+    let mut cache: AliasCache = serde_json::from_str(&content)?;
 
     // Restore names from HashMap keys since they might be empty in the cache
-    let mut aliases_with_names = HashMap::new();
-    for (key, mut alias) in cache.aliases {
+    for (key, alias) in cache.aliases.iter_mut() {
         if alias.name.is_empty() {
             alias.name = key.clone();
         }
-        aliases_with_names.insert(key, alias);
     }
 
-    debug!("Loaded {} aliases from cache", aliases_with_names.len());
-    Ok(Some(aliases_with_names))
+    debug!("Loaded {} aliases from cache with hash: {}", cache.aliases.len(), cache.hash);
+    Ok(cache)
 }
 
-pub fn load_alias_cache_with_base(config_hash: &str, base_dir: Option<&PathBuf>) -> Result<Option<HashMap<String, Alias>>> {
-    let cache_path = get_alias_cache_path_with_base(config_hash, base_dir)?;
+pub fn load_alias_cache_with_base(base_dir: Option<&PathBuf>) -> Result<AliasCache> {
+    let cache_path = get_alias_cache_path_with_base(base_dir)?;
 
     if !cache_path.exists() {
-        debug!("Cache file doesn't exist: {:?}", cache_path);
-        return Ok(None);
+        debug!("Cache file doesn't exist: {:?}, returning default", cache_path);
+        return Ok(AliasCache::default());
     }
 
     debug!("Loading alias cache from: {:?}", cache_path);
     let content = std::fs::read_to_string(&cache_path)?;
-    let cache: AliasCache = serde_json::from_str(&content)?;
+    let mut cache: AliasCache = serde_json::from_str(&content)?;
 
     // Restore names from HashMap keys since they might be empty in the cache
-    let mut aliases_with_names = HashMap::new();
-    for (key, mut alias) in cache.aliases {
+    for (key, alias) in cache.aliases.iter_mut() {
         if alias.name.is_empty() {
             alias.name = key.clone();
         }
-        aliases_with_names.insert(key, alias);
     }
 
-    debug!("Loaded {} aliases from cache", aliases_with_names.len());
-    Ok(Some(aliases_with_names))
+    debug!("Loaded {} aliases from cache with hash: {}", cache.aliases.len(), cache.hash);
+    Ok(cache)
 }
 
-pub fn save_alias_cache(config_hash: &str, aliases: &HashMap<String, Alias>, home_dir: &PathBuf) -> Result<()> {
-    let cache_path = get_alias_cache_path(config_hash, home_dir)?;
+pub fn save_alias_cache(cache: &AliasCache, home_dir: &PathBuf) -> Result<()> {
+    let cache_path = get_alias_cache_path(home_dir)?;
 
-    let cache = AliasCache {
-        aliases: aliases.clone(),
-    };
-
-    let content = serde_json::to_string_pretty(&cache)?;
+    let content = serde_json::to_string_pretty(cache)?;
 
     // Write to temporary file first, then rename (atomic operation)
     let temp_path = cache_path.with_extension("tmp");
@@ -963,14 +965,10 @@ pub fn save_alias_cache(config_hash: &str, aliases: &HashMap<String, Alias>, hom
     Ok(())
 }
 
-pub fn save_alias_cache_with_base(config_hash: &str, aliases: &HashMap<String, Alias>, base_dir: Option<&PathBuf>) -> Result<()> {
-    let cache_path = get_alias_cache_path_with_base(config_hash, base_dir)?;
+pub fn save_alias_cache_with_base(cache: &AliasCache, base_dir: Option<&PathBuf>) -> Result<()> {
+    let cache_path = get_alias_cache_path_with_base(base_dir)?;
 
-    let cache = AliasCache {
-        aliases: aliases.clone(),
-    };
-
-    let content = serde_json::to_string_pretty(&cache)?;
+    let content = serde_json::to_string_pretty(cache)?;
 
     // Write to temporary file first, then rename (atomic operation)
     let temp_path = cache_path.with_extension("tmp");
@@ -981,31 +979,56 @@ pub fn save_alias_cache_with_base(config_hash: &str, aliases: &HashMap<String, A
     Ok(())
 }
 
-pub fn migrate_alias_counts(old_hash: &str, new_hash: &str, new_aliases: &mut HashMap<String, Alias>) -> Result<()> {
-    migrate_alias_counts_with_base(old_hash, new_hash, new_aliases, None)
-}
+pub fn sync_cache_with_config(home_dir: &PathBuf) -> Result<AliasCache> {
+    // 1. Calculate current YAML hash
+    let current_hash = calculate_config_hash(home_dir)?;
 
-pub fn migrate_alias_counts_with_base(old_hash: &str, new_hash: &str, new_aliases: &mut HashMap<String, Alias>, base_dir: Option<&PathBuf>) -> Result<()> {
-    if let Some(old_aliases) = load_alias_cache_with_base(old_hash, base_dir)? {
-        debug!("Migrating usage counts from old config hash: {}", old_hash);
+    // 2. Load existing cache (or default)
+    let mut cache = load_alias_cache(home_dir)?;
 
-        for (key, new_alias) in new_aliases.iter_mut() {
-            if let Some(old_alias) = old_aliases.get(key) {
-                new_alias.count = old_alias.count;
-                debug!("Migrated count {} for alias: {}", old_alias.count, key);
-            }
-        }
+    // 3. Check if hash changed
+    if cache.hash != current_hash {
+        // 4. Merge existing counts with new config
+        cache = merge_cache_with_config(cache, current_hash, home_dir)?;
 
-        // Save the new cache with migrated counts
-        save_alias_cache_with_base(new_hash, new_aliases, base_dir)?;
-
-        debug!("Migration complete, saved new cache with hash: {}", new_hash);
-    } else {
-        debug!("No old cache found for migration from hash: {}", old_hash);
+        // 5. Save updated cache (hash is embedded)
+        save_alias_cache(&cache, home_dir)?;
     }
 
-    Ok(())
+    Ok(cache)
 }
+
+
+
+pub fn merge_cache_with_config(
+    old_cache: AliasCache,
+    new_hash: String,
+    home_dir: &PathBuf
+) -> Result<AliasCache> {
+    // 1. Load new config from YAML
+    let config_path = get_config_path(home_dir)?;
+    let loader = Loader::new();
+    let new_spec = loader.load(&config_path)?;
+
+    // 2. Create new cache with new hash
+    let mut new_cache = AliasCache {
+        hash: new_hash,
+        aliases: HashMap::new(),
+    };
+
+    // 3. For each alias in new config:
+    for (name, mut alias) in new_spec.aliases {
+        // Preserve count if alias existed before
+        if let Some(old_alias) = old_cache.aliases.get(&name) {
+            alias.count = old_alias.count;
+        }
+        new_cache.aliases.insert(name, alias);
+    }
+
+    Ok(new_cache)
+}
+
+
 
 #[cfg(test)]
 mod tests {
@@ -1229,4 +1252,6 @@ mod tests {
         // Should have trailing space
         assert_eq!(result, "echo Hello World ");
     }
+
+
 }

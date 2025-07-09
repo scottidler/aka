@@ -130,22 +130,10 @@ impl DaemonServer {
 
         debug!("🔄 Config hash changed: {} -> {}", current_hash, new_hash);
 
-        // Load new config (this will create the new cache or load existing one)
+        // Load new config using sync function
         let home_dir = dirs::home_dir()
             .ok_or_else(|| eyre!("Unable to determine home directory"))?;
-        let mut new_aka = AKA::new(false, home_dir.clone())?;
-
-        // If we have an old cache, migrate counts to the new one
-        if current_hash != new_hash {
-            if let Err(e) = aka_lib::migrate_alias_counts(&current_hash, &new_hash, &mut new_aka.spec.aliases) {
-                debug!("⚠️ Failed to migrate alias counts: {}", e);
-            } else {
-                // Save the migrated aliases back to cache
-                if let Err(e) = aka_lib::save_alias_cache(&new_hash, &new_aka.spec.aliases, &home_dir) {
-                    debug!("⚠️ Failed to save migrated alias cache: {}", e);
-                }
-            }
-        }
+        let new_aka = AKA::new(false, home_dir.clone())?;
 
         // Update stored config and hash atomically (hold both locks simultaneously)
         {
@@ -314,19 +302,9 @@ impl DaemonServer {
     ) -> Result<()> {
         debug!("🔄 Auto-reload: hash changed {} -> {}", current_hash, new_hash);
 
-        // Load new config
+        // Load new config using sync function
         match AKA::new(false, home_dir.clone()) {
-            Ok(mut new_aka) => {
-                // Migrate usage counts from old cache to new cache
-                if let Err(e) = aka_lib::migrate_alias_counts(&current_hash, &new_hash, &mut new_aka.spec.aliases) {
-                    debug!("⚠️ Failed to migrate alias counts: {}", e);
-                } else {
-                    // Save the migrated aliases back to cache
-                    if let Err(e) = aka_lib::save_alias_cache(&new_hash, &new_aka.spec.aliases, &home_dir) {
-                        debug!("⚠️ Failed to save migrated alias cache: {}", e);
-                    }
-                }
-
+            Ok(new_aka) => {
                 // Update stored config and hash atomically (hold both locks simultaneously)
                 {
                     match (aka_for_watcher.write(), config_hash_for_watcher.write()) {
@@ -350,22 +328,12 @@ impl DaemonServer {
                     warn!("Failed to store updated config hash: {}", e);
                 }
 
-                let alias_count = {
-                    match aka_for_watcher.read() {
-                        Ok(aka_guard) => aka_guard.spec.aliases.len(),
-                        Err(e) => {
-                            error!("Failed to acquire read lock on AKA: {}", e);
-                            0
-                        }
-                    }
-                };
-
-                debug!("🔄 Config auto-reloaded: {} aliases", alias_count);
+                debug!("✅ Auto-reload completed successfully");
                 Ok(())
-            },
+            }
             Err(e) => {
-                error!("Failed to auto-reload config: {}", e);
-                Err(eyre!("Failed to auto-reload config: {}", e))
+                error!("Failed to reload config: {}", e);
+                Err(eyre!("Failed to reload config: {}", e))
             }
         }
     }

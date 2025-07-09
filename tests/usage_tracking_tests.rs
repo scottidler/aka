@@ -136,7 +136,7 @@ fn test_usage_count_with_daemon_mode() {
 
 #[test]
 fn test_cache_loading_directly() {
-    let (_config_temp_dir, config_file, cache_temp_dir) = setup_test_environment("cache_loading");
+    let (_config_temp_dir, _config_file, cache_temp_dir) = setup_test_environment("cache_loading");
     let cache_path = cache_temp_dir.path().to_path_buf();
 
     // Create AKA instance and use an alias to create cache
@@ -146,20 +146,17 @@ fn test_cache_loading_directly() {
         assert_eq!(result.trim(), "echo \"test command\"");
     }
 
-    // Load cache directly using the config hash
-    let hash = aka_lib::hash_config_file(&config_file).expect("Failed to hash config");
+    // Load cache directly using the new function
+    let loaded_cache = load_alias_cache(&cache_path).expect("Failed to load cache");
+    assert!(!loaded_cache.aliases.is_empty(), "Cache should have aliases");
 
-    let loaded_cache = load_alias_cache(&hash, &cache_path).expect("Failed to load cache");
-    assert!(loaded_cache.is_some(), "Cache should be loaded");
-
-    let aliases = loaded_cache.unwrap();
-    let test_alias = aliases.get("test-alias").expect("test-alias should exist in cache");
+    let test_alias = loaded_cache.aliases.get("test-alias").expect("test-alias should exist in cache");
     assert_eq!(test_alias.count, 1, "test-alias should have count 1 in cache");
 }
 
 #[test]
 fn test_cache_debug() {
-    let (_config_temp_dir, config_file, cache_temp_dir) = setup_test_environment("cache_debug");
+    let (_config_temp_dir, _config_file, cache_temp_dir) = setup_test_environment("cache_debug");
     let cache_path = cache_temp_dir.path().to_path_buf();
 
     // Create AKA instance and use aliases
@@ -185,17 +182,14 @@ fn test_cache_debug() {
         }
     }
 
-    // Load cache and verify counts
-    let hash = aka_lib::hash_config_file(&config_file).expect("Failed to hash config");
-    let loaded_cache = load_alias_cache(&hash, &cache_path).expect("Failed to load cache");
-    assert!(loaded_cache.is_some(), "Cache should be loaded");
+    // Load cache and verify counts using the new function
+    let loaded_cache = load_alias_cache(&cache_path).expect("Failed to load cache");
+    assert!(!loaded_cache.aliases.is_empty(), "Cache should have aliases");
 
-    let aliases = loaded_cache.unwrap();
-
-    let test_alias = aliases.get("test-alias").expect("test-alias should exist in cache");
+    let test_alias = loaded_cache.aliases.get("test-alias").expect("test-alias should exist in cache");
     assert_eq!(test_alias.count, 3, "test-alias should have count 3 in cache");
 
-    let another_alias = aliases.get("another-alias").expect("another-alias should exist in cache");
+    let another_alias = loaded_cache.aliases.get("another-alias").expect("another-alias should exist in cache");
     assert_eq!(another_alias.count, 2, "another-alias should have count 2 in cache");
 
     println!("Cache debug complete: test-alias={}, another-alias={}", test_alias.count, another_alias.count);
