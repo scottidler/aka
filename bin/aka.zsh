@@ -1,65 +1,24 @@
 #!/bin/zsh
 
-log() {
-  if [[ -n $AKA_LOG ]]; then
-    echo "$@" >> ~/aka.txt
-  fi
-}
-
-# Health check function with caching
-aka_health_check() {
+# Check if aka is disabled via killswitch
+aka_killswitch() {
     # Check for killswitch first
     if [ -f ~/aka-killswitch ]; then
         return 1
     fi
-
-    # Perform health check
-    aka __health_check 2>/dev/null
-    local health_result=$?
-
-    # Handle different health check results
-    case $health_result in
-        0)
-            # All good
-            return 0
-            ;;
-        1)
-            # Config file not found - disable aka temporarily
-            log "aka: config file not found, disabling expansions"
-            return 1
-            ;;
-        2)
-            # Config file invalid - disable aka temporarily
-            log "aka: config file invalid, disabling expansions"
-            return 2
-            ;;
-        3)
-            # No aliases defined - continue but no expansions needed
-            log "aka: no aliases defined"
-            return 3
-            ;;
-        *)
-            # Other errors - disable aka temporarily
-            log "aka: health check failed with code $health_result, disabling expansions"
-            return $health_result
-            ;;
-    esac
+    return 0
 }
 
 # Expands a keyword into a longer command using `aka query` upon pressing space
 expand-aka-space() {
-    aka_health_check
+    aka_killswitch
     if [ $? -eq 0 ]; then
-        log "expand-aka-space: BUFFER=$BUFFER"
         OUTPUT=$(aka query "$BUFFER")
         RC=$?
-        log "expand-aka-space: OUTPUT=$OUTPUT RC=$RC"
 
         if [ $RC -eq 0 ] && [ -n "$OUTPUT" ]; then
             BUFFER="$OUTPUT"
-            log "expand-aka-space: CURSOR=$CURSOR"
             CURSOR=$(expr length "$BUFFER")
-            log "expand-aka-space: CURSOR(after assignment)=$CURSOR"
         else
             zle self-insert
         fi
@@ -73,18 +32,14 @@ bindkey -M isearch " " magic-space
 
 # Expands a keyword into a longer command using `aka --eol query` before executing the command
 expand-aka-accept-line() {
-    aka_health_check
+    aka_killswitch
     if [ $? -eq 0 ]; then
-        log "expand-aka-accept-line: BUFFER=$BUFFER"
         OUTPUT=$(aka --eol query "$BUFFER")
         RC=$?
-        log "expand-aka-accept-line: OUTPUT=$OUTPUT RC=$RC"
 
         if [ $RC -eq 0 ] && [ -n "$OUTPUT" ]; then
             BUFFER="$OUTPUT"
-            log "expand-aka-accept-line: CURSOR=$CURSOR"
             CURSOR=$(expr length "$BUFFER")
-            log "expand-aka-accept-line: CURSOR(after assignment)=$CURSOR"
         fi
         zle .accept-line
     else
@@ -113,7 +68,7 @@ bindkey '^[[A' up-line-or-add-space
 
 # Define a function to search through aka aliases
 aka-search() {
-    aka_health_check
+    aka_killswitch
     if [ $? -eq 0 ]; then
         # Run 'aka ls', pipe the output to sk
         local alias=$(aka ls 2>/dev/null | sk --prompt "aka> ")
