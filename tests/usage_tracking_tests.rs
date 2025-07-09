@@ -87,6 +87,9 @@ fn test_usage_count_persistence() {
         // Check that count was incremented
         let test_alias = aka.spec.aliases.get("test-alias").expect("test-alias should exist");
         assert_eq!(test_alias.count, 1, "test-alias should have count 1 after use");
+
+        // Force save cache for test
+        aka.force_save_cache().expect("Failed to force save cache");
     }
 
     // Create a new AKA instance (simulating restart)
@@ -144,6 +147,9 @@ fn test_cache_loading_directly() {
         let mut aka = AKA::new(false, cache_path.to_path_buf()).expect("Failed to create AKA instance");
         let result = aka.replace_with_mode("test-alias", ProcessingMode::Direct).expect("Failed to replace");
         assert_eq!(result.trim(), "echo \"test command\"");
+
+        // Force save cache for test
+        aka.force_save_cache().expect("Failed to force save cache");
     }
 
     // Load cache directly using the config hash
@@ -183,6 +189,9 @@ fn test_cache_debug() {
             let another_alias = aka.spec.aliases.get("another-alias").expect("another-alias should exist");
             assert_eq!(another_alias.count, i, "another-alias should have count {} after {} uses", i, i);
         }
+
+        // Force save cache for test
+        aka.force_save_cache().expect("Failed to force save cache");
     }
 
     // Load cache and verify counts

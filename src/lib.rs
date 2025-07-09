@@ -6,6 +6,7 @@ use std::time::{Instant, Duration};
 use xxhash_rust::xxh3::xxh3_64;
 use std::collections::HashMap;
 use serde::{Serialize, Deserialize};
+use std::sync::Mutex;
 
 pub mod cfg;
 pub mod protocol;
@@ -125,6 +126,14 @@ pub fn validate_socket_path(socket_path: &PathBuf) -> Result<(), DaemonError> {
 struct AliasCache {
     aliases: HashMap<String, Alias>,
 }
+
+// Global state for batched cache saves
+lazy_static! {
+    static ref LAST_CACHE_SAVE: Mutex<Option<Instant>> = Mutex::new(None);
+}
+
+// Batched cache save interval (save at most once per second)
+const CACHE_SAVE_INTERVAL: Duration = Duration::from_secs(1);
 
 // Check if benchmark mode is enabled
 fn is_benchmark_mode() -> bool {
@@ -286,7 +295,6 @@ fn parse_csv_line(line: &str) -> Result<TimingData> {
 }
 
 // Global timing storage for analysis
-use std::sync::Mutex;
 use lazy_static::lazy_static;
 
 lazy_static! {
@@ -699,7 +707,7 @@ impl AKA {
         } else {
             debug!("📋 No cache found, initializing usage counts to 0");
             // Initialize all counts to 0 (they already are due to skip_deserializing) and save to cache
-            save_alias_cache(&config_hash, &spec.aliases, &home_dir)?;
+            force_save_alias_cache(&config_hash, &spec.aliases, &home_dir)?;
         }
         let cache_duration = start_cache.elapsed();
 
@@ -711,6 +719,11 @@ impl AKA {
         debug!("  🎯 Total AKA::new(): {:.3}ms", total_duration.as_secs_f64() * 1000.0);
 
         Ok(AKA { eol, spec, config_hash, home_dir })
+    }
+
+    /// Force save the cache - useful for tests and critical operations
+    pub fn force_save_cache(&self) -> Result<()> {
+        force_save_alias_cache(&self.config_hash, &self.spec.aliases, &self.home_dir)
     }
 
     pub fn use_alias(&self, alias: &Alias, pos: usize) -> bool {
@@ -858,7 +871,7 @@ impl AKA {
 
             // Save updated usage counts to cache if any aliases were used
             if replaced {
-                if let Err(e) = save_alias_cache(&self.config_hash, &self.spec.aliases, &self.home_dir) {
+                if let Err(e) = save_alias_cache_batched(&self.config_hash, &self.spec.aliases, &self.home_dir, false) {
                     debug!("⚠️ Failed to save alias cache: {}", e);
                 }
             }
@@ -964,30 +977,49 @@ pub fn load_alias_cache_with_base(config_hash: &str, base_dir: Option<&PathBuf>)
 }
 
 pub fn save_alias_cache(config_hash: &str, aliases: &HashMap<String, Alias>, home_dir: &PathBuf) -> Result<()> {
-    let cache_path = get_alias_cache_path(config_hash, home_dir)?;
-
-    let cache = AliasCache {
-        aliases: aliases.clone(),
-    };
-
-    let content = serde_json::to_string_pretty(&cache)?;
-
-    // Write to temporary file first, then rename (atomic operation)
-    let temp_path = cache_path.with_extension("tmp");
-    std::fs::write(&temp_path, content)?;
-    std::fs::rename(&temp_path, &cache_path)?;
-
-    debug!("Saved alias cache to: {:?}", cache_path);
-    Ok(())
+    save_alias_cache_batched(config_hash, aliases, home_dir, false)
 }
 
 pub fn save_alias_cache_with_base(config_hash: &str, aliases: &HashMap<String, Alias>, base_dir: Option<&PathBuf>) -> Result<()> {
-    let cache_path = get_alias_cache_path_with_base(config_hash, base_dir)?;
+    save_alias_cache_with_base_batched(config_hash, aliases, base_dir, false)
+}
 
+/// Force save cache - bypasses batching for critical operations
+pub fn force_save_alias_cache(config_hash: &str, aliases: &HashMap<String, Alias>, home_dir: &PathBuf) -> Result<()> {
+    save_alias_cache_batched(config_hash, aliases, home_dir, true)
+}
+
+/// Force save cache with base directory - bypasses batching for critical operations
+pub fn force_save_alias_cache_with_base(config_hash: &str, aliases: &HashMap<String, Alias>, base_dir: Option<&PathBuf>) -> Result<()> {
+    save_alias_cache_with_base_batched(config_hash, aliases, base_dir, true)
+}
+
+/// Batched cache save - only saves if enough time has passed since last save
+pub fn save_alias_cache_batched(
+    config_hash: &str,
+    aliases: &HashMap<String, Alias>,
+    home_dir: &PathBuf,
+    force: bool
+) -> Result<()> {
+    // Check if we should skip this save
+    if !force {
+        if let Ok(mut last_save) = LAST_CACHE_SAVE.lock() {
+            if let Some(last) = *last_save {
+                if last.elapsed() < CACHE_SAVE_INTERVAL {
+                    debug!("⚡ Skipping cache save - too recent ({}ms ago)", last.elapsed().as_millis());
+                    return Ok(());
+                }
+            }
+            *last_save = Some(Instant::now());
+        }
+    }
+
+    let cache_path = get_alias_cache_path(config_hash, home_dir)?;
+
+    // Maintain backward compatibility with AliasCache format but avoid cloning
     let cache = AliasCache {
         aliases: aliases.clone(),
     };
-
     let content = serde_json::to_string_pretty(&cache)?;
 
     // Write to temporary file first, then rename (atomic operation)
@@ -995,7 +1027,44 @@ pub fn save_alias_cache_with_base(config_hash: &str, aliases: &HashMap<String, A
     std::fs::write(&temp_path, content)?;
     std::fs::rename(&temp_path, &cache_path)?;
 
-    debug!("Saved alias cache to: {:?}", cache_path);
+    debug!("💾 Saved alias cache to: {:?} ({} aliases)", cache_path, aliases.len());
+    Ok(())
+}
+
+/// Batched cache save with base directory - only saves if enough time has passed since last save
+pub fn save_alias_cache_with_base_batched(
+    config_hash: &str,
+    aliases: &HashMap<String, Alias>,
+    base_dir: Option<&PathBuf>,
+    force: bool
+) -> Result<()> {
+    // Check if we should skip this save
+    if !force {
+        if let Ok(mut last_save) = LAST_CACHE_SAVE.lock() {
+            if let Some(last) = *last_save {
+                if last.elapsed() < CACHE_SAVE_INTERVAL {
+                    debug!("⚡ Skipping cache save - too recent ({}ms ago)", last.elapsed().as_millis());
+                    return Ok(());
+                }
+            }
+            *last_save = Some(Instant::now());
+        }
+    }
+
+    let cache_path = get_alias_cache_path_with_base(config_hash, base_dir)?;
+
+    // Maintain backward compatibility with AliasCache format but avoid cloning
+    let cache = AliasCache {
+        aliases: aliases.clone(),
+    };
+    let content = serde_json::to_string_pretty(&cache)?;
+
+    // Write to temporary file first, then rename (atomic operation)
+    let temp_path = cache_path.with_extension("tmp");
+    std::fs::write(&temp_path, content)?;
+    std::fs::rename(&temp_path, &cache_path)?;
+
+    debug!("💾 Saved alias cache to: {:?} ({} aliases)", cache_path, aliases.len());
     Ok(())
 }
 
@@ -1014,8 +1083,8 @@ pub fn migrate_alias_counts_with_base(old_hash: &str, new_hash: &str, new_aliase
             }
         }
 
-        // Save the new cache with migrated counts
-        save_alias_cache_with_base(new_hash, new_aliases, base_dir)?;
+        // Save the new cache with migrated counts (force save since migration is important)
+        save_alias_cache_with_base_batched(new_hash, new_aliases, base_dir, true)?;
 
         debug!("Migration complete, saved new cache with hash: {}", new_hash);
     } else {

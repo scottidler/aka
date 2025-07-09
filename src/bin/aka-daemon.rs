@@ -140,8 +140,8 @@ impl DaemonServer {
             if let Err(e) = aka_lib::migrate_alias_counts(&current_hash, &new_hash, &mut new_aka.spec.aliases) {
                 debug!("⚠️ Failed to migrate alias counts: {}", e);
             } else {
-                // Save the migrated aliases back to cache
-                if let Err(e) = aka_lib::save_alias_cache(&new_hash, &new_aka.spec.aliases, &home_dir) {
+                // Save the migrated aliases back to cache (force save for config reload)
+                if let Err(e) = aka_lib::force_save_alias_cache(&new_hash, &new_aka.spec.aliases, &home_dir) {
                     debug!("⚠️ Failed to save migrated alias cache: {}", e);
                 }
             }
@@ -204,23 +204,14 @@ impl DaemonServer {
             },
             Request::List { global, patterns } => {
                 let aka_guard = self.aka.read().map_err(|e| eyre!("Failed to acquire read lock on AKA: {}", e))?;
-                let mut aliases: Vec<_> = aka_guard.spec.aliases.values().cloned().collect();
-                aliases.sort_by_key(|a| a.name.clone());
 
-                if global {
-                    aliases = aliases.into_iter().filter(|alias| alias.global).collect();
-                }
-
-                let filtered_aliases: Vec<_> = if patterns.is_empty() {
-                    aliases
-                } else {
-                    aliases.into_iter()
-                        .filter(|alias| patterns.iter().any(|pattern| alias.name.starts_with(pattern)))
-                        .collect()
-                };
-
-                let output = filtered_aliases.iter()
-                    .map(|alias| format!("{}: {}", alias.name, alias.value))
+                // Use iterator chains instead of collecting into Vec - much more memory efficient
+                let output = aka_guard.spec.aliases
+                    .iter()
+                    .filter(|(_, alias)| !global || alias.global)
+                    .filter(|(name, _)| patterns.is_empty() ||
+                            patterns.iter().any(|pattern| name.starts_with(pattern)))
+                    .map(|(name, alias)| format!("{}: {}", name, alias.value))
                     .collect::<Vec<_>>()
                     .join("\n");
 
@@ -326,11 +317,11 @@ impl DaemonServer {
                                             if let Err(e) = aka_lib::migrate_alias_counts(&current_hash, &new_hash, &mut new_aka.spec.aliases) {
                                                 debug!("⚠️ Failed to migrate alias counts: {}", e);
                                             } else {
-                                                // Save the migrated aliases back to cache
-                                                let home_dir = dirs::home_dir().unwrap_or_else(|| std::path::PathBuf::from("/tmp"));
-                                                if let Err(e) = aka_lib::save_alias_cache(&new_hash, &new_aka.spec.aliases, &home_dir) {
-                                                    debug!("⚠️ Failed to save migrated alias cache: {}", e);
-                                                }
+                                                                                // Save the migrated aliases back to cache (force save for auto-reload)
+                                let home_dir = dirs::home_dir().unwrap_or_else(|| std::path::PathBuf::from("/tmp"));
+                                if let Err(e) = aka_lib::force_save_alias_cache(&new_hash, &new_aka.spec.aliases, &home_dir) {
+                                    debug!("⚠️ Failed to save migrated alias cache: {}", e);
+                                }
                                             }
 
                                             // Update stored config and hash atomically (hold both locks simultaneously)
