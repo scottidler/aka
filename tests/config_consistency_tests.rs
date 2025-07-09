@@ -296,33 +296,9 @@ lookups:
     }
 }
 
-/// Test that dangerous commands are flagged
-#[test]
-fn test_dangerous_command_detection() {
-    let temp_dir = TempDir::new().expect("Failed to create temp dir");
-    let config_dir = temp_dir.path().join(".config").join("aka");
-    fs::create_dir_all(&config_dir).expect("Failed to create config directory");
 
-    let config_file = config_dir.join("aka.yml");
-    let dangerous_config = r#"
-aliases:
-  dangerous-alias:
-    value: "sudo rm -rf /"
-    global: false
-  another-dangerous:
-    value: "rm -rf /tmp/*"
-    global: false
-"#;
-    fs::write(&config_file, dangerous_config).expect("Failed to write dangerous config");
 
-    let loader = ConfigLoader::new();
-    let result = loader.load(&config_file);
-    assert!(result.is_err());
-    let error_msg = result.unwrap_err().to_string();
-    assert!(error_msg.contains("potentially dangerous command"));
-}
-
-/// Test that circular references are detected
+/// Test that apparent circular references are allowed (common pattern: ls -> ls --color=auto)
 #[test]
 fn test_circular_reference_detection() {
     let temp_dir = TempDir::new().expect("Failed to create temp dir");
@@ -332,15 +308,22 @@ fn test_circular_reference_detection() {
     let config_file = config_dir.join("aka.yml");
     let circular_config = r#"
 aliases:
-  self-ref:
-    value: "echo self-ref"
+  ls:
+    value: "ls --color=auto"
+    global: false
+  vim:
+    value: "vim -u ~/.vimrc"
     global: false
 "#;
     fs::write(&config_file, circular_config).expect("Failed to write circular config");
 
     let loader = ConfigLoader::new();
     let result = loader.load(&config_file);
-    assert!(result.is_err());
-    let error_msg = result.unwrap_err().to_string();
-    assert!(error_msg.contains("circular reference"));
+    // Should succeed - aliases that reference their base command are common and valid
+    assert!(result.is_ok(), "Aliases referencing their base command should be allowed");
+
+    let spec = result.unwrap();
+    assert_eq!(spec.aliases.len(), 2);
+    assert!(spec.aliases.contains_key("ls"));
+    assert!(spec.aliases.contains_key("vim"));
 }

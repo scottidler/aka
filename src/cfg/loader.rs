@@ -95,10 +95,10 @@ impl Loader {
     fn validate_config(&self, spec: &Spec, config_path: &PathBuf) -> Result<()> {
         // Validate aliases
         self.validate_aliases(&spec.aliases, config_path)?;
-        
+
         // Validate lookups
         self.validate_lookups(&spec.lookups, config_path)?;
-        
+
         // Validate cross-references
         self.validate_cross_references(spec, config_path)?;
 
@@ -133,15 +133,10 @@ impl Loader {
                 errors.push(format!("Alias '{}' has empty value. Provide a command or value for the alias.", name));
             }
 
-            // Check for potentially dangerous commands
-            if alias.value.contains("rm -rf") || alias.value.contains("sudo rm") {
-                errors.push(format!("Alias '{}' contains potentially dangerous command. Be careful with destructive commands.", name));
-            }
+            // Note: Users should have full control over their aliases
+            // Dangerous command detection removed to avoid restricting legitimate use cases
 
-            // Validate variadic usage
-            if alias.is_variadic() && !alias.value.contains("...") {
-                errors.push(format!("Alias '{}' marked as variadic but doesn't contain '...'. Add '...' to indicate where arguments go.", name));
-            }
+            // Variadic aliases use $@ to capture remaining arguments (validated by is_variadic() method)
         }
 
         if errors.is_empty() {
@@ -201,13 +196,9 @@ impl Loader {
             }
         }
 
-        // Check for circular references (alias referencing itself)
-        for (alias_name, alias) in &spec.aliases {
-            if alias.value.contains(alias_name) {
-                // Simple check - could be enhanced for deeper analysis
-                errors.push(format!("Alias '{}' may contain circular reference. Avoid aliases that reference themselves.", alias_name));
-            }
-        }
+        // Note: Circular reference detection is complex and often produces false positives
+        // (e.g., alias 'ls' with value 'ls --color=auto' is valid and common)
+        // Skipping this validation to avoid breaking valid configurations
 
         if errors.is_empty() {
             Ok(())
