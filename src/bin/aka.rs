@@ -620,6 +620,24 @@ WantedBy=default.target
             println!("   You can stop the daemon manually with: pkill aka-daemon");
         }
 
+        // Clean up socket file after stopping daemon
+        if let Ok(home_dir) = dirs::home_dir().ok_or_else(|| eyre::eyre!("Unable to determine home directory")) {
+            if let Ok(socket_path) = determine_socket_path(&home_dir) {
+                if socket_path.exists() {
+                    use std::fs;
+                    // Give daemon a moment to clean up
+                    std::thread::sleep(std::time::Duration::from_millis(100));
+                    if socket_path.exists() {
+                        if let Err(e) = fs::remove_file(&socket_path) {
+                            println!("⚠️  Failed to remove socket file: {}", e);
+                        } else {
+                            println!("🧹 Removed daemon socket file");
+                        }
+                    }
+                }
+            }
+        }
+
         Ok(())
     }
 

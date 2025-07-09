@@ -466,7 +466,19 @@ impl DaemonServer {
             }
         });
 
-        self.handle_incoming_connections(listener)
+        let result = self.handle_incoming_connections(listener);
+
+        // Clean up socket file on shutdown
+        if socket_path.exists() {
+            debug!("🧹 Cleaning up socket file on shutdown");
+            if let Err(e) = fs::remove_file(socket_path) {
+                error!("Failed to remove socket file on shutdown: {}", e);
+            } else {
+                debug!("✅ Socket file removed successfully");
+            }
+        }
+
+        result
     }
 }
 
@@ -593,9 +605,20 @@ fn main() {
 
     // Set up signal handling
     let shutdown_clone = server.shutdown.clone();
+    let socket_path_clone = socket_path.clone();
     if let Err(e) = ctrlc::set_handler(move || {
         debug!("🛑 Shutdown signal received");
         shutdown_clone.store(true, Ordering::Relaxed);
+
+        // Clean up socket file on signal
+        if socket_path_clone.exists() {
+            debug!("🧹 Cleaning up socket file on signal");
+            if let Err(e) = std::fs::remove_file(&socket_path_clone) {
+                error!("Failed to remove socket file on signal: {}", e);
+            } else {
+                debug!("✅ Socket file removed successfully on signal");
+            }
+        }
     }) {
         error!("Error setting signal handler: {}", e);
         std::process::exit(1);

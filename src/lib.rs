@@ -532,10 +532,10 @@ fn check_daemon_health(socket_path: &PathBuf) -> Result<bool> {
                             debug!("🔍 Daemon status parsed: {}", status);
                             if status.starts_with("healthy:") && status.contains(":aliases") {
                                 debug!("✅ Daemon is healthy and has config loaded: {}", status);
-                                debug!("🎯 Health check result: DAEMON_HEALTHY (returning 0)");
-                                return Ok(true); // Daemon healthy - best case
+                                return Ok(true); // Daemon healthy
                             } else {
                                 debug!("⚠️ Daemon status indicates unhealthy: {}", status);
+                                return Ok(false); // Daemon unhealthy
                             }
                         } else {
                             debug!("⚠️ Daemon response missing status field");
@@ -554,8 +554,9 @@ fn check_daemon_health(socket_path: &PathBuf) -> Result<bool> {
     } else {
         debug!("⚠️ Failed to connect to daemon socket");
     }
-    debug!("❌ Daemon socket exists but health check failed");
-    Ok(false)
+
+    debug!("❌ Daemon socket exists but health check failed - daemon is dead");
+    Ok(false) // Daemon is dead
 }
 
 fn validate_fresh_config_and_store_hash(
@@ -606,8 +607,17 @@ pub fn execute_health_check(home_dir: &PathBuf) -> Result<i32> {
     if let Ok(socket_path) = determine_socket_path(home_dir) {
         debug!("🔌 Daemon socket path: {:?}", socket_path);
         if socket_path.exists() {
-            if check_daemon_health(&socket_path)? {
-                return Ok(0); // Daemon healthy - best case
+            match check_daemon_health(&socket_path)? {
+                true => {
+                    debug!("✅ Daemon is healthy and running");
+                    debug!("🎯 Health check result: DAEMON_HEALTHY (returning 0)");
+                    return Ok(0); // Daemon healthy - best case
+                },
+                false => {
+                    debug!("❌ Daemon socket exists but daemon is dead - stale socket detected");
+                    debug!("🎯 Health check result: STALE_SOCKET (returning 4)");
+                    return Ok(4); // Stale socket - skip daemon, go directly to direct mode
+                }
             }
         } else {
             debug!("❌ Daemon socket not found at path: {:?}", socket_path);
