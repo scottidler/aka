@@ -558,6 +558,45 @@ fn check_daemon_health(socket_path: &PathBuf) -> Result<bool> {
     Ok(false)
 }
 
+fn validate_fresh_config_and_store_hash(
+    config_path: &PathBuf,
+    current_hash: &str,
+    home_dir: &PathBuf,
+) -> Result<i32> {
+    // Use the same loader as direct mode for consistency
+    let loader = Loader::new();
+    debug!("🔄 Loading fresh config from: {:?}", config_path);
+    match loader.load(config_path) {
+        Ok(spec) => {
+            debug!("✅ Fresh config loaded successfully");
+
+            // Config is valid, store the new hash
+            if let Err(e) = store_hash(current_hash, home_dir) {
+                debug!("⚠️ Warning: could not store config hash: {}", e);
+            } else {
+                debug!("✅ New config hash stored: {}", current_hash);
+            }
+
+            // Check if we have any aliases
+            if spec.aliases.is_empty() {
+                debug!("⚠️ Fresh config valid but no aliases defined");
+                debug!("🎯 Health check result: NO_ALIASES (returning 3)");
+                return Ok(3); // No aliases defined
+            }
+
+            debug!("✅ Fresh config valid with {} aliases", spec.aliases.len());
+            debug!("🎯 Health check result: FRESH_CONFIG_VALID (returning 0)");
+            Ok(0) // All good
+        }
+        Err(e) => {
+            debug!("❌ Health check failed: config file invalid: {}", e);
+            debug!("🚨 All health check methods failed - ZLE should not use aka");
+            debug!("🎯 Health check result: CONFIG_INVALID (returning 2)");
+            Ok(2) // Config file invalid - critical failure
+        }
+    }
+}
+
 pub fn execute_health_check(home_dir: &PathBuf) -> Result<i32> {
     debug!("🏥 === HEALTH CHECK START ===");
     debug!("📋 Health check will determine the best processing path");
@@ -626,39 +665,7 @@ pub fn execute_health_check(home_dir: &PathBuf) -> Result<i32> {
 
     // Step 5: Hash doesn't match or no stored hash, validate config fresh
     debug!("📋 Step 5: Cache invalid, attempting fresh config load");
-
-    // Use the same loader as direct mode for consistency
-    let loader = Loader::new();
-    debug!("🔄 Loading fresh config from: {:?}", config_path);
-    match loader.load(&config_path) {
-        Ok(spec) => {
-            debug!("✅ Fresh config loaded successfully");
-
-            // Config is valid, store the new hash
-            if let Err(e) = store_hash(&current_hash, home_dir) {
-                debug!("⚠️ Warning: could not store config hash: {}", e);
-            } else {
-                debug!("✅ New config hash stored: {}", current_hash);
-            }
-
-            // Check if we have any aliases
-            if spec.aliases.is_empty() {
-                debug!("⚠️ Fresh config valid but no aliases defined");
-                debug!("🎯 Health check result: NO_ALIASES (returning 3)");
-                return Ok(3); // No aliases defined
-            }
-
-            debug!("✅ Fresh config valid with {} aliases", spec.aliases.len());
-            debug!("🎯 Health check result: FRESH_CONFIG_VALID (returning 0)");
-            Ok(0) // All good
-        }
-        Err(e) => {
-            debug!("❌ Health check failed: config file invalid: {}", e);
-            debug!("🚨 All health check methods failed - ZLE should not use aka");
-            debug!("🎯 Health check result: CONFIG_INVALID (returning 2)");
-            Ok(2) // Config file invalid - critical failure
-        }
-    }
+    validate_fresh_config_and_store_hash(&config_path, &current_hash, home_dir)
 }
 
 // Processing mode enum to track daemon vs direct processing

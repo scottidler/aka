@@ -173,6 +173,31 @@ impl DaemonServer {
         Ok(message)
     }
 
+    fn process_health_request(&self) -> Result<Response> {
+        let aka_guard = self.aka.read().map_err(|e| eyre!("Failed to acquire read lock on AKA: {}", e))?;
+        let hash_guard = self.config_hash.read().map_err(|e| eyre!("Failed to acquire read lock on config hash: {}", e))?;
+
+        debug!("📤 Processing health check");
+
+        // Check if config is in sync
+        let current_hash = match hash_config_file(&self.config_path) {
+            Ok(hash) => hash,
+            Err(e) => {
+                warn!("❌ Failed to calculate config hash: {}", e);
+                return Ok(Response::Error { message: format!("Failed to calculate config hash: {}", e) });
+            }
+        };
+
+        let status = if current_hash == *hash_guard {
+            format!("healthy:{}:synced", aka_guard.spec.aliases.len())
+        } else {
+            format!("healthy:{}:stale", aka_guard.spec.aliases.len())
+        };
+
+        debug!("✅ Health check complete: {}", status);
+        Ok(Response::Health { status })
+    }
+
     fn handle_client(&self, mut stream: UnixStream) -> Result<()> {
         let mut reader = BufReader::new(&stream);
         let mut line = String::new();
@@ -229,80 +254,28 @@ impl DaemonServer {
             },
             Request::Freq { count } => {
                 let aka_guard = self.aka.read().map_err(|e| eyre!("Failed to acquire read lock on AKA: {}", e))?;
+                debug!("📤 Processing frequency request (count: {})", count);
 
-                debug!("📤 Processing frequency request (count: {:?})", count);
-
-                // Collect aliases and sort by count (descending) then by name (ascending)
                 let mut aliases: Vec<_> = aka_guard.spec.aliases.values().cloned().collect();
-                aliases.sort_by(|a, b| {
-                    match b.count.cmp(&a.count) {
-                        std::cmp::Ordering::Equal => a.name.cmp(&b.name),
-                        other => other,
-                    }
-                });
+                aliases.sort_by(|a, b| b.count.cmp(&a.count).then_with(|| a.name.cmp(&b.name)));
 
-                // Apply count limit if specified
-                aliases.truncate(count);
-
-                // Format output
-                let output = if aliases.is_empty() {
-                    "No aliases found.".to_string()
+                let limited_aliases = if count > 0 {
+                    aliases.into_iter().take(count).collect()
                 } else {
-                    let max_count_len = aliases.iter().map(|a| a.count.to_string().len()).max().unwrap_or(0);
-
-                    aliases.iter()
-                        .map(|alias| {
-                            let prefix = format!("{:>count_width$} {} -> ",
-                                alias.count,
-                                alias.name,
-                                count_width = max_count_len
-                            );
-                            let indent = " ".repeat(prefix.len());
-
-                            if alias.value.contains('\n') {
-                                let lines: Vec<&str> = alias.value.split('\n').collect();
-                                let mut result = format!("{}{}", prefix, lines[0]);
-                                for line in &lines[1..] {
-                                    result.push_str(&format!("\n{}{}", indent, line));
-                                }
-                                result
-                            } else {
-                                format!("{}{}", prefix, alias.value)
-                            }
-                        })
-                        .collect::<Vec<_>>()
-                        .join("\n")
+                    aliases
                 };
 
-                debug!("✅ Frequency processed successfully for {} aliases", aliases.len());
+                let output = limited_aliases
+                    .iter()
+                    .map(|alias| format!("{:>4} {}", alias.count, alias.name))
+                    .collect::<Vec<_>>()
+                    .join("\n");
+
+                debug!("✅ Frequency processed successfully");
                 Response::Success { data: output }
             },
             Request::Health => {
-                let aka_guard = self.aka.read().map_err(|e| eyre!("Failed to acquire read lock on AKA: {}", e))?;
-                let hash_guard = self.config_hash.read().map_err(|e| eyre!("Failed to acquire read lock on config hash: {}", e))?;
-
-                debug!("📤 Processing health check");
-
-                // Check if config is in sync
-                let current_hash = match hash_config_file(&self.config_path) {
-                    Ok(hash) => hash,
-                    Err(e) => {
-                        warn!("❌ Failed to calculate config hash: {}", e);
-                        let error_response = Response::Error { message: format!("Failed to calculate config hash: {}", e) };
-                        let response_json = serde_json::to_string(&error_response)?;
-                        writeln!(stream, "{}", response_json)?;
-                        return Ok(());
-                    }
-                };
-
-                let status = if current_hash == *hash_guard {
-                    format!("healthy:{}:synced", aka_guard.spec.aliases.len())
-                } else {
-                    format!("healthy:{}:stale", aka_guard.spec.aliases.len())
-                };
-
-                debug!("✅ Health check complete: {}", status);
-                Response::Health { status }
+                self.process_health_request()?
             },
             Request::ReloadConfig => {
                 debug!("📤 Processing config reload request");
@@ -318,17 +291,15 @@ impl DaemonServer {
                 }
             },
             Request::Shutdown => {
-                debug!("Shutdown request received");
+                debug!("📤 Processing shutdown request");
                 self.shutdown.store(true, Ordering::Relaxed);
-                Response::Success { data: "Shutting down".to_string() }
+                Response::ShutdownAck
             },
         };
 
-        // Send response
         let response_json = serde_json::to_string(&response)?;
         writeln!(stream, "{}", response_json)?;
 
-        debug!("Sent response: {:?}", response);
         Ok(())
     }
 
@@ -397,6 +368,74 @@ impl DaemonServer {
         }
     }
 
+    fn handle_file_watcher_loop(
+        receiver: &Receiver<()>,
+        shutdown_for_watcher: Arc<AtomicBool>,
+        config_path_for_watcher: PathBuf,
+        aka_for_watcher: Arc<RwLock<AKA>>,
+        config_hash_for_watcher: Arc<RwLock<String>>,
+    ) -> Result<()> {
+        while !shutdown_for_watcher.load(Ordering::Relaxed) {
+            if let Ok(()) = receiver.recv_timeout(std::time::Duration::from_millis(100)) {
+                debug!("📁 File change detected, reloading config automatically");
+
+                // Calculate new hash
+                match hash_config_file(&config_path_for_watcher) {
+                    Ok(new_hash) => {
+                        let current_hash = {
+                            match config_hash_for_watcher.read() {
+                                Ok(guard) => guard.clone(),
+                                Err(e) => {
+                                    error!("Failed to acquire read lock on config hash: {}", e);
+                                    continue;
+                                }
+                            }
+                        };
+
+                        if new_hash != current_hash {
+                            let home_dir = dirs::home_dir().unwrap_or_else(|| std::path::PathBuf::from("/tmp"));
+                            if let Err(e) = Self::handle_config_file_change(new_hash, current_hash, &aka_for_watcher, &config_hash_for_watcher, home_dir) {
+                                error!("Failed to handle config file change: {}", e);
+                            }
+                        } else {
+                            debug!("⚡ Auto-reload: hash unchanged, skipping");
+                        }
+                    },
+                    Err(e) => {
+                        error!("Failed to calculate config hash for auto-reload: {}", e);
+                    }
+                }
+            }
+        }
+        debug!("🛑 File watcher thread shutting down");
+        Ok(())
+    }
+
+    fn handle_incoming_connections(
+        &self,
+        listener: UnixListener,
+    ) -> Result<()> {
+        // Main server loop
+        for stream in listener.incoming() {
+            if self.shutdown.load(Ordering::Relaxed) {
+                break;
+            }
+
+            match stream {
+                Ok(stream) => {
+                    if let Err(e) = self.handle_client(stream) {
+                        error!("Error handling client: {}", e);
+                    }
+                },
+                Err(e) => {
+                    error!("Error accepting connection: {}", e);
+                }
+            }
+        }
+
+        Ok(())
+    }
+
     fn run(&self, socket_path: &PathBuf) -> Result<()> {
         // Remove existing socket file if it exists
         if socket_path.exists() {
@@ -425,61 +464,13 @@ impl DaemonServer {
             });
 
             if let Ok(receiver) = receiver {
-                while !shutdown_for_watcher.load(Ordering::Relaxed) {
-                    if let Ok(()) = receiver.recv_timeout(std::time::Duration::from_millis(100)) {
-                        debug!("📁 File change detected, reloading config automatically");
-
-                        // Calculate new hash
-                        match hash_config_file(&config_path_for_watcher) {
-                            Ok(new_hash) => {
-                                let current_hash = {
-                                    match config_hash_for_watcher.read() {
-                                        Ok(guard) => guard.clone(),
-                                        Err(e) => {
-                                            error!("Failed to acquire read lock on config hash: {}", e);
-                                            continue;
-                                        }
-                                    }
-                                };
-
-                                if new_hash != current_hash {
-                                    let home_dir = dirs::home_dir().unwrap_or_else(|| std::path::PathBuf::from("/tmp"));
-                                    if let Err(e) = Self::handle_config_file_change(new_hash, current_hash, &aka_for_watcher, &config_hash_for_watcher, home_dir) {
-                                        error!("Failed to handle config file change: {}", e);
-                                    }
-                                } else {
-                                    debug!("⚡ Auto-reload: hash unchanged, skipping");
-                                }
-                            },
-                            Err(e) => {
-                                error!("Failed to calculate config hash for auto-reload: {}", e);
-                            }
-                        }
-                    }
+                if let Err(e) = Self::handle_file_watcher_loop(&receiver, shutdown_for_watcher, config_path_for_watcher, aka_for_watcher, config_hash_for_watcher) {
+                    error!("Failed to run file watcher loop: {}", e);
                 }
             }
-            debug!("🛑 File watcher thread shutting down");
         });
 
-        // Main server loop
-        for stream in listener.incoming() {
-            if self.shutdown.load(Ordering::Relaxed) {
-                break;
-            }
-
-            match stream {
-                Ok(stream) => {
-                    if let Err(e) = self.handle_client(stream) {
-                        error!("Error handling client: {}", e);
-                    }
-                },
-                Err(e) => {
-                    error!("Error accepting connection: {}", e);
-                }
-            }
-        }
-
-        Ok(())
+        self.handle_incoming_connections(listener)
     }
 }
 
@@ -554,24 +545,12 @@ mod tests {
     }
 }
 
-fn main() {
-    let opts = DaemonOpts::parse();
-
-    // Set up logging
-    let home_dir = dirs::home_dir()
-        .ok_or_else(|| eyre!("Unable to determine home directory"))
-        .unwrap_or_else(|e| {
-            eprintln!("Error: {}", e);
-            std::process::exit(1);
-        });
-    if let Err(e) = setup_logging(&home_dir) {
-        eprintln!("Warning: Failed to set up logging: {}", e);
-    }
-
-            info!("🚀 AKA Daemon starting...");
-
+fn initialize_daemon_server(
+    opts: &DaemonOpts,
+    home_dir: &PathBuf,
+) -> Result<(DaemonServer, PathBuf)> {
     // Determine socket path
-    let socket_path = match determine_socket_path(&home_dir) {
+    let socket_path = match determine_socket_path(home_dir) {
         Ok(path) => path,
         Err(e) => {
             error!("Failed to determine socket path: {}", e);
@@ -588,6 +567,34 @@ fn main() {
         }
     };
 
+    Ok((server, socket_path))
+}
+
+fn main() {
+    let opts = DaemonOpts::parse();
+
+    // Set up logging
+    let home_dir = dirs::home_dir()
+        .ok_or_else(|| eyre!("Unable to determine home directory"))
+        .unwrap_or_else(|e| {
+            eprintln!("Error: {}", e);
+            std::process::exit(1);
+        });
+    if let Err(e) = setup_logging(&home_dir) {
+        eprintln!("Warning: Failed to set up logging: {}", e);
+    }
+
+    info!("🚀 AKA Daemon starting...");
+
+    // Initialize daemon server
+    let (server, socket_path) = match initialize_daemon_server(&opts, &home_dir) {
+        Ok((server, socket_path)) => (server, socket_path),
+        Err(e) => {
+            error!("Failed to initialize daemon server: {}", e);
+            std::process::exit(1);
+        }
+    };
+
     // Set up signal handling
     let shutdown_clone = server.shutdown.clone();
     if let Err(e) = ctrlc::set_handler(move || {
@@ -598,7 +605,7 @@ fn main() {
         std::process::exit(1);
     }
 
-            info!("✅ Daemon running (PID: {})", std::process::id());
+    info!("✅ Daemon running (PID: {})", std::process::id());
 
     // Run the server
     if let Err(e) = server.run(&socket_path) {
@@ -606,5 +613,5 @@ fn main() {
         std::process::exit(1);
     }
 
-            info!("👋 Daemon stopped");
+    info!("👋 Daemon stopped");
 }
