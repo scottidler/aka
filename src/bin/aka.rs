@@ -907,36 +907,16 @@ fn handle_daemon_command(daemon_opts: &DaemonOpts) -> Result<()> {
     Ok(())
 }
 
-fn handle_regular_command(opts: &AkaOpts) -> Result<i32> {
-    debug!("🎯 === STARTING REGULAR COMMAND PROCESSING ===");
-    debug!("🔍 Command options: {:?}", opts);
-
-    // Handle explicit health check command
-    if let Some(ref command) = &opts.command {
-        if let Command::HealthCheck = command {
-            debug!("🏥 Explicit health check command requested");
-            let home_dir = dirs::home_dir()
-                .ok_or_else(|| eyre::eyre!("Unable to determine home directory"))?;
-            return execute_health_check(&home_dir);
-        }
-    }
-
-    // For all other commands, use health check to determine the best path
-    debug!("🔍 Using health check to determine processing path");
-    debug!("📋 About to run execute_health_check with config: {:?}", opts.config);
-
-    // Run health check to determine system state
-    let home_dir = dirs::home_dir()
-        .ok_or_else(|| eyre::eyre!("Unable to determine home directory"))?;
-    let health_status = execute_health_check(&home_dir)?;
-    debug!("📊 Health check completed with status: {}", health_status);
-
+fn route_command_by_health_status(
+    health_status: i32,
+    opts: &AkaOpts,
+) -> Result<i32> {
     match health_status {
         0 => {
             // Health check passed - it could be daemon or direct
             debug!("✅ Health check passed (status=0), proceeding with daemon-first approach");
             debug!("🔀 Routing to handle_command_via_daemon_with_fallback");
-            return handle_command_via_daemon_with_fallback(opts);
+            handle_command_via_daemon_with_fallback(opts)
         },
         1 => {
             debug!("❌ Health check failed: config file not found (status=1)");
@@ -964,6 +944,33 @@ fn handle_regular_command(opts: &AkaOpts) -> Result<i32> {
             Ok(1)
         }
     }
+}
+
+fn handle_regular_command(opts: &AkaOpts) -> Result<i32> {
+    debug!("🎯 === STARTING REGULAR COMMAND PROCESSING ===");
+    debug!("🔍 Command options: {:?}", opts);
+
+    // Handle explicit health check command
+    if let Some(ref command) = &opts.command {
+        if let Command::HealthCheck = command {
+            debug!("🏥 Explicit health check command requested");
+            let home_dir = dirs::home_dir()
+                .ok_or_else(|| eyre::eyre!("Unable to determine home directory"))?;
+            return execute_health_check(&home_dir);
+        }
+    }
+
+    // For all other commands, use health check to determine the best path
+    debug!("🔍 Using health check to determine processing path");
+    debug!("📋 About to run execute_health_check with config: {:?}", opts.config);
+
+    // Run health check to determine system state
+    let home_dir = dirs::home_dir()
+        .ok_or_else(|| eyre::eyre!("Unable to determine home directory"))?;
+    let health_status = execute_health_check(&home_dir)?;
+    debug!("📊 Health check completed with status: {}", health_status);
+
+    route_command_by_health_status(health_status, opts)
 }
 
 fn handle_command_via_daemon_with_fallback(opts: &AkaOpts) -> Result<i32> {
@@ -1033,6 +1040,61 @@ fn handle_command_via_daemon_with_fallback(opts: &AkaOpts) -> Result<i32> {
     result
 }
 
+fn handle_daemon_query_response(
+    response: DaemonResponse,
+    timing: &mut TimingCollector,
+) -> Result<i32> {
+    match response {
+        DaemonResponse::Success { data } => {
+            debug!("✅ Daemon query successful");
+            println!("{}", data);
+            timing.end_processing();
+            debug!("🎯 === DAEMON-ONLY COMPLETE (SUCCESS) ===");
+            Ok(0)
+        },
+        DaemonResponse::Error { message } => {
+            warn!("❌ Daemon returned error: {}", message);
+            eprintln!("Daemon error: {}", message);
+            timing.end_processing();
+            debug!("🎯 === DAEMON-ONLY COMPLETE (DAEMON ERROR) ===");
+            Ok(1)
+        },
+        _ => {
+            warn!("❌ Daemon returned unexpected response: {:?}", response);
+            eprintln!("Unexpected daemon response");
+            timing.end_processing();
+            debug!("🎯 === DAEMON-ONLY COMPLETE (UNEXPECTED RESPONSE) ===");
+            Ok(1)
+        }
+    }
+}
+
+fn handle_daemon_list_response(
+    response: DaemonResponse,
+    timing: &mut TimingCollector,
+) -> Result<i32> {
+    match response {
+        DaemonResponse::Success { data } => {
+            debug!("✅ Daemon list successful");
+            println!("{}", data);
+            timing.end_processing();
+            Ok(0)
+        },
+        DaemonResponse::Error { message } => {
+            warn!("❌ Daemon returned error: {}", message);
+            eprintln!("Daemon error: {}", message);
+            timing.end_processing();
+            Ok(1)
+        },
+        _ => {
+            warn!("❌ Daemon returned unexpected response");
+            eprintln!("Unexpected daemon response");
+            timing.end_processing();
+            Ok(1)
+        }
+    }
+}
+
 fn handle_command_via_daemon_only_timed(opts: &AkaOpts, timing: &mut TimingCollector) -> Result<i32> {
     debug!("🎯 Processing command via daemon only");
     debug!("🔍 Daemon-only handler - NO fallback to config loading");
@@ -1052,27 +1114,7 @@ fn handle_command_via_daemon_only_timed(opts: &AkaOpts, timing: &mut TimingColle
                 debug!("📤 Sending daemon query: {}", query_opts.cmdline);
 
                 match DaemonClient::send_request_timed(request, timing) {
-                    Ok(DaemonResponse::Success { data }) => {
-                        debug!("✅ Daemon query successful");
-                        println!("{}", data);
-                        timing.end_processing();
-                        debug!("🎯 === DAEMON-ONLY COMPLETE (SUCCESS) ===");
-                        Ok(0)
-                    },
-                    Ok(DaemonResponse::Error { message }) => {
-                        warn!("❌ Daemon returned error: {}", message);
-                        eprintln!("Daemon error: {}", message);
-                        timing.end_processing();
-                        debug!("🎯 === DAEMON-ONLY COMPLETE (DAEMON ERROR) ===");
-                        Ok(1)
-                    },
-                    Ok(response) => {
-                        warn!("❌ Daemon returned unexpected response: {:?}", response);
-                        eprintln!("Unexpected daemon response");
-                        timing.end_processing();
-                        debug!("🎯 === DAEMON-ONLY COMPLETE (UNEXPECTED RESPONSE) ===");
-                        Ok(1)
-                    },
+                    Ok(response) => handle_daemon_query_response(response, timing),
                     Err(e) => {
                         warn!("❌ Daemon request failed: {}", e);
                         debug!("🔄 Daemon communication failed, will fallback to direct mode");
@@ -1089,24 +1131,7 @@ fn handle_command_via_daemon_only_timed(opts: &AkaOpts, timing: &mut TimingColle
                 };
                 debug!("📤 Sending daemon list request");
                 match DaemonClient::send_request_timed(request, timing) {
-                    Ok(DaemonResponse::Success { data }) => {
-                        debug!("✅ Daemon list successful");
-                        println!("{}", data);
-                        timing.end_processing();
-                        Ok(0)
-                    },
-                    Ok(DaemonResponse::Error { message }) => {
-                        warn!("❌ Daemon returned error: {}", message);
-                        eprintln!("Daemon error: {}", message);
-                        timing.end_processing();
-                        Ok(1)
-                    },
-                    Ok(_) => {
-                        warn!("❌ Daemon returned unexpected response");
-                        eprintln!("Unexpected daemon response");
-                        timing.end_processing();
-                        Ok(1)
-                    },
+                    Ok(response) => handle_daemon_list_response(response, timing),
                     Err(e) => {
                         warn!("❌ Daemon request failed: {}", e);
                         debug!("🔄 Daemon communication failed, will fallback to direct mode");
@@ -1122,24 +1147,7 @@ fn handle_command_via_daemon_only_timed(opts: &AkaOpts, timing: &mut TimingColle
                 };
                 debug!("📤 Sending daemon frequency request");
                 match DaemonClient::send_request_timed(request, timing) {
-                    Ok(DaemonResponse::Success { data }) => {
-                        debug!("✅ Daemon frequency successful");
-                        println!("{}", data);
-                        timing.end_processing();
-                        Ok(0)
-                    },
-                    Ok(DaemonResponse::Error { message }) => {
-                        warn!("❌ Daemon returned error: {}", message);
-                        eprintln!("Daemon error: {}", message);
-                        timing.end_processing();
-                        Ok(1)
-                    },
-                    Ok(_) => {
-                        warn!("❌ Daemon returned unexpected response");
-                        eprintln!("Unexpected daemon response");
-                        timing.end_processing();
-                        Ok(1)
-                    },
+                    Ok(response) => handle_daemon_query_response(response, timing),
                     Err(e) => {
                         warn!("❌ Daemon request failed: {}", e);
                         debug!("🔄 Daemon communication failed, will fallback to direct mode");

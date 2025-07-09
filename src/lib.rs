@@ -507,6 +507,57 @@ pub fn store_hash(hash: &str, home_dir: &PathBuf) -> Result<()> {
     Ok(())
 }
 
+fn check_daemon_health(socket_path: &PathBuf) -> Result<bool> {
+    debug!("✅ Daemon socket exists, testing health");
+
+    // Try to connect and send health request
+    if let Ok(mut stream) = std::os::unix::net::UnixStream::connect(socket_path) {
+        use std::io::{BufRead, BufReader, Write};
+
+        let health_request = serde_json::json!({
+            "type": "Health"
+        });
+
+        debug!("📤 Sending health request to daemon");
+        if let Ok(_) = writeln!(stream, "{}", health_request) {
+            let mut reader = BufReader::new(&stream);
+            let mut response_line = String::new();
+
+            match reader.read_line(&mut response_line) {
+                Ok(_) => {
+                    debug!("📥 Received daemon response: {}", response_line.trim());
+
+                    if let Ok(response) = serde_json::from_str::<serde_json::Value>(&response_line.trim()) {
+                        if let Some(status) = response.get("status").and_then(|s| s.as_str()) {
+                            debug!("🔍 Daemon status parsed: {}", status);
+                            if status.starts_with("healthy:") && status.contains(":aliases") {
+                                debug!("✅ Daemon is healthy and has config loaded: {}", status);
+                                debug!("🎯 Health check result: DAEMON_HEALTHY (returning 0)");
+                                return Ok(true); // Daemon healthy - best case
+                            } else {
+                                debug!("⚠️ Daemon status indicates unhealthy: {}", status);
+                            }
+                        } else {
+                            debug!("⚠️ Daemon response missing status field");
+                        }
+                    } else {
+                        debug!("⚠️ Failed to parse daemon response as JSON");
+                    }
+                }
+                Err(e) => {
+                    debug!("⚠️ Failed to read daemon response: {}", e);
+                }
+            }
+        } else {
+            debug!("⚠️ Failed to send health request to daemon");
+        }
+    } else {
+        debug!("⚠️ Failed to connect to daemon socket");
+    }
+    debug!("❌ Daemon socket exists but health check failed");
+    Ok(false)
+}
+
 pub fn execute_health_check(home_dir: &PathBuf) -> Result<i32> {
     debug!("🏥 === HEALTH CHECK START ===");
     debug!("📋 Health check will determine the best processing path");
@@ -516,53 +567,9 @@ pub fn execute_health_check(home_dir: &PathBuf) -> Result<i32> {
     if let Ok(socket_path) = determine_socket_path(home_dir) {
         debug!("🔌 Daemon socket path: {:?}", socket_path);
         if socket_path.exists() {
-            debug!("✅ Daemon socket exists, testing health");
-
-            // Try to connect and send health request
-            if let Ok(mut stream) = std::os::unix::net::UnixStream::connect(&socket_path) {
-                use std::io::{BufRead, BufReader, Write};
-
-                let health_request = serde_json::json!({
-                    "type": "Health"
-                });
-
-                debug!("📤 Sending health request to daemon");
-                if let Ok(_) = writeln!(stream, "{}", health_request) {
-                    let mut reader = BufReader::new(&stream);
-                    let mut response_line = String::new();
-
-                    match reader.read_line(&mut response_line) {
-                        Ok(_) => {
-                            debug!("📥 Received daemon response: {}", response_line.trim());
-
-                            if let Ok(response) = serde_json::from_str::<serde_json::Value>(&response_line.trim()) {
-                                if let Some(status) = response.get("status").and_then(|s| s.as_str()) {
-                                    debug!("🔍 Daemon status parsed: {}", status);
-                                    if status.starts_with("healthy:") && status.contains(":aliases") {
-                                        debug!("✅ Daemon is healthy and has config loaded: {}", status);
-                                        debug!("🎯 Health check result: DAEMON_HEALTHY (returning 0)");
-                                        return Ok(0); // Daemon healthy - best case
-                                    } else {
-                                        debug!("⚠️ Daemon status indicates unhealthy: {}", status);
-                                    }
-                                } else {
-                                    debug!("⚠️ Daemon response missing status field");
-                                }
-                            } else {
-                                debug!("⚠️ Failed to parse daemon response as JSON");
-                            }
-                        }
-                        Err(e) => {
-                            debug!("⚠️ Failed to read daemon response: {}", e);
-                        }
-                    }
-                } else {
-                    debug!("⚠️ Failed to send health request to daemon");
-                }
-            } else {
-                debug!("⚠️ Failed to connect to daemon socket");
+            if check_daemon_health(&socket_path)? {
+                return Ok(0); // Daemon healthy - best case
             }
-            debug!("❌ Daemon socket exists but health check failed");
         } else {
             debug!("❌ Daemon socket not found at path: {:?}", socket_path);
         }
@@ -802,30 +809,21 @@ impl AKA {
                 None => false,
             };
 
-            let (value, count) = if should_use_alias {
+            let (value, count, replaced_alias, space_str) = if should_use_alias {
                 // Now we can safely get mutable reference
                 if let Some(alias) = self.spec.aliases.get_mut(&current_arg) {
-                    if (alias.global && cmdline.contains(&alias.value))
-                        || (!alias.global && pos == 0 && cmdline.starts_with(&alias.value))
-                    {
-                        (current_arg.clone(), 0)
-                    } else {
-                        space = if alias.space { " " } else { "" };
-                        let (v, c) = alias.replace(&mut remainders)?;
-                        if v != alias.name {
-                            replaced = true;
-                            // Increment usage count when alias is actually used
-                            alias.count += 1;
-                            debug!("📊 Alias '{}' used, count now: {}", alias.name, alias.count);
-                        }
-                        (v, c)
-                    }
+                    Self::process_alias_replacement(alias, &current_arg, cmdline, &mut remainders, pos)?
                 } else {
-                    (current_arg.clone(), 0)
+                    (current_arg.clone(), 0, false, " ")
                 }
             } else {
-                (current_arg.clone(), 0)
+                (current_arg.clone(), 0, false, " ")
             };
+
+            if replaced_alias {
+                replaced = true;
+            }
+            space = space_str;
 
             let beg = pos + 1;
             let end = beg + count;
@@ -866,6 +864,30 @@ impl AKA {
         }
 
         Ok(result)
+    }
+
+    fn process_alias_replacement(
+        alias: &mut Alias,
+        current_arg: &str,
+        cmdline: &str,
+        remainders: &mut Vec<String>,
+        pos: usize,
+    ) -> Result<(String, usize, bool, &'static str)> {
+        if (alias.global && cmdline.contains(&alias.value))
+            || (!alias.global && pos == 0 && cmdline.starts_with(&alias.value))
+        {
+            Ok((current_arg.to_string(), 0, false, " "))
+        } else {
+            let space = if alias.space { " " } else { "" };
+            let (v, c) = alias.replace(remainders)?;
+            let replaced = v != alias.name;
+            if replaced {
+                // Increment usage count when alias is actually used
+                alias.count += 1;
+                debug!("📊 Alias '{}' used, count now: {}", alias.name, alias.count);
+            }
+            Ok((v, c, replaced, space))
+        }
     }
 }
 

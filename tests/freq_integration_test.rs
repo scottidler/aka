@@ -55,10 +55,11 @@ fn test_freq_command_basic() {
         panic!("Failed to build aka binary: {}", String::from_utf8_lossy(&build_output.stderr));
     }
 
-    // Set HOME to our temp directory so aka uses our test config
+    // Set HOME to our temp directory and ensure no daemon socket exists
     let output = Command::new(&aka_binary)
         .args(&["freq"])
         .env("HOME", temp_dir.path())
+        .env("XDG_RUNTIME_DIR", temp_dir.path().join("run"))
         .output()
         .expect("Failed to run aka freq");
 
@@ -109,6 +110,7 @@ fn test_freq_command_with_count_limit() {
     let output = Command::new(&aka_binary)
         .args(&["freq", "--count", "2"])
         .env("HOME", temp_dir.path())
+        .env("XDG_RUNTIME_DIR", temp_dir.path().join("run"))
         .output()
         .expect("Failed to run aka freq --count 2");
 
@@ -126,6 +128,7 @@ fn test_freq_command_with_count_limit() {
     let output = Command::new(&aka_binary)
         .args(&["freq", "--count", "1"])
         .env("HOME", temp_dir.path())
+        .env("XDG_RUNTIME_DIR", temp_dir.path().join("run"))
         .output()
         .expect("Failed to run aka freq --count 1");
 
@@ -172,6 +175,7 @@ aliases:
     let output = Command::new(&aka_binary)
         .args(&["freq"])
         .env("HOME", temp_dir.path())
+        .env("XDG_RUNTIME_DIR", temp_dir.path().join("run"))
         .output()
         .expect("Failed to run aka freq");
 
@@ -283,6 +287,7 @@ aliases:
         let output = Command::new(&aka_binary)
             .args(&["query", "test-alias"])
             .env("HOME", temp_dir.path())
+            .env("XDG_RUNTIME_DIR", temp_dir.path().join("run"))
             .output()
             .expect("Failed to run aka query");
 
@@ -295,6 +300,7 @@ aliases:
     let output = Command::new(&aka_binary)
         .args(&["freq"])
         .env("HOME", temp_dir.path())
+        .env("XDG_RUNTIME_DIR", temp_dir.path().join("run"))
         .output()
         .expect("Failed to run aka freq");
 
