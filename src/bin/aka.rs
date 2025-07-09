@@ -359,8 +359,11 @@ struct DaemonOpts {
 
 #[derive(Parser, Debug)]
 struct FreqOpts {
-    #[clap(short, long, default_value = "10", help = "show only top N aliases by frequency")]
+    #[clap(short, long, default_value = "20", help = "show only top N aliases by frequency")]
     count: usize,
+
+    #[clap(short, long, help = "only show the used aliases, count > 0")]
+    used: bool,
 }
 
 // Basic service manager for proof of concept
@@ -1157,6 +1160,7 @@ fn handle_command_via_daemon_only_timed(opts: &AkaOpts, timing: &mut TimingColle
                 debug!("📤 Preparing daemon frequency request");
                 let request = DaemonRequest::Freq {
                     count: freq_opts.count,
+                    used: freq_opts.used,
                 };
                 debug!("📤 Sending daemon frequency request");
                 match DaemonClient::send_request_timed(request, timing) {
@@ -1260,6 +1264,11 @@ fn handle_command_direct_timed(opts: &AkaOpts, timing: &mut TimingCollector) -> 
             Command::Freq(freq_opts) => {
                 debug!("📤 Processing frequency request");
                 let mut aliases: Vec<_> = aka.spec.aliases.values().cloned().collect();
+
+                // Filter to only used aliases if requested
+                if freq_opts.used {
+                    aliases = aliases.into_iter().filter(|alias| alias.count > 0).collect();
+                }
 
                 // Sort by count (descending) then by name (ascending)
                 aliases.sort_by(|a, b| b.count.cmp(&a.count).then_with(|| a.name.cmp(&b.name)));

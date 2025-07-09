@@ -252,11 +252,17 @@ impl DaemonServer {
                 debug!("✅ List processed successfully");
                 Response::Success { data: output }
             },
-            Request::Freq { count } => {
+            Request::Freq { count, used } => {
                 let aka_guard = self.aka.read().map_err(|e| eyre!("Failed to acquire read lock on AKA: {}", e))?;
-                debug!("📤 Processing frequency request (count: {})", count);
+                debug!("📤 Processing frequency request (count: {}, used: {})", count, used);
 
                 let mut aliases: Vec<_> = aka_guard.spec.aliases.values().cloned().collect();
+
+                // Filter to only used aliases if requested
+                if used {
+                    aliases = aliases.into_iter().filter(|alias| alias.count > 0).collect();
+                }
+
                 aliases.sort_by(|a, b| b.count.cmp(&a.count).then_with(|| a.name.cmp(&b.name)));
 
                 let limited_aliases: Vec<_> = if count > 0 {
