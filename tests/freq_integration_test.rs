@@ -69,30 +69,13 @@ fn test_freq_command_basic() {
 
     let stdout = String::from_utf8_lossy(&output.stdout);
 
-    // Should contain all aliases with count 0 (sorted alphabetically)
-    assert!(stdout.contains("test-high"));
-    assert!(stdout.contains("test-medium"));
-    assert!(stdout.contains("test-low"));
-    assert!(stdout.contains("test-unused"));
-
-    // All should have count 0
-    assert!(stdout.contains("0"));
-
-    // Should be formatted with proper spacing
-    let lines: Vec<&str> = stdout.trim().split('\n').collect();
-    assert_eq!(lines.len(), 4, "Should have 4 aliases");
-
-    // Check that lines are properly formatted (count alias -> value)
-    for line in lines {
-        let parts: Vec<&str> = line.split_whitespace().collect();
-        assert!(parts.len() >= 4, "Each line should have at least 4 parts: count, alias, ->, value");
-        assert_eq!(parts[0], "0", "Count should be 0 for unused aliases");
-        assert_eq!(parts[2], "->", "Should have -> separator");
-    }
+    // By default, should only show used aliases (count > 0)
+    // Since all aliases have count 0, should show "No aliases found."
+    assert!(stdout.contains("No aliases found."), "Should show 'No aliases found.' when no aliases are used");
 }
 
 #[test]
-fn test_freq_command_with_count_limit() {
+fn test_freq_command_with_all_option() {
     let (temp_dir, _config_file) = setup_test_environment_with_usage();
     let aka_binary = get_aka_binary_path();
 
@@ -106,41 +89,40 @@ fn test_freq_command_with_count_limit() {
         panic!("Failed to build aka binary: {}", String::from_utf8_lossy(&build_output.stderr));
     }
 
-    // Test with --count 2
+    // Test with --all to show all aliases including unused ones
     let output = Command::new(&aka_binary)
-        .args(&["freq", "--count", "2"])
+        .args(&["freq", "--all"])
         .env("HOME", temp_dir.path())
         .env("XDG_RUNTIME_DIR", temp_dir.path().join("run"))
         .output()
-        .expect("Failed to run aka freq --count 2");
+        .expect("Failed to run aka freq --all");
 
     if !output.status.success() {
-        panic!("aka freq --count 2 failed: {}", String::from_utf8_lossy(&output.stderr));
+        panic!("aka freq --all failed: {}", String::from_utf8_lossy(&output.stderr));
     }
 
     let stdout = String::from_utf8_lossy(&output.stdout);
+
+    // Should contain all aliases with count 0 (sorted alphabetically)
+    assert!(stdout.contains("test-high"));
+    assert!(stdout.contains("test-medium"));
+    assert!(stdout.contains("test-low"));
+    assert!(stdout.contains("test-unused"));
+
+    // All should have count 0
+    assert!(stdout.contains("0"));
+
+    // Should be formatted with proper spacing
     let lines: Vec<&str> = stdout.trim().split('\n').collect();
+    assert_eq!(lines.len(), 4, "Should have 4 aliases with --all");
 
-    // Should only have 2 lines due to --count 2
-    assert_eq!(lines.len(), 2, "Should have only 2 aliases with --count 2");
-
-    // Test with --count 1
-    let output = Command::new(&aka_binary)
-        .args(&["freq", "--count", "1"])
-        .env("HOME", temp_dir.path())
-        .env("XDG_RUNTIME_DIR", temp_dir.path().join("run"))
-        .output()
-        .expect("Failed to run aka freq --count 1");
-
-    if !output.status.success() {
-        panic!("aka freq --count 1 failed: {}", String::from_utf8_lossy(&output.stderr));
+    // Check that lines are properly formatted (count alias -> value)
+    for line in lines {
+        let parts: Vec<&str> = line.split_whitespace().collect();
+        assert!(parts.len() >= 4, "Each line should have at least 4 parts: count, alias, ->, value");
+        assert_eq!(parts[0], "0", "Count should be 0 for unused aliases");
+        assert_eq!(parts[2], "->", "Should have -> separator");
     }
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let lines: Vec<&str> = stdout.trim().split('\n').collect();
-
-    // Should only have 1 line due to --count 1
-    assert_eq!(lines.len(), 1, "Should have only 1 alias with --count 1");
 }
 
 #[test]
@@ -185,10 +167,9 @@ aliases:
 
     let stdout = String::from_utf8_lossy(&output.stdout);
 
-    // Should show the dummy alias with count 0
-    assert!(stdout.contains("dummy"), "Should show dummy alias");
-    assert!(stdout.contains("0"), "Should show count 0");
-    assert!(stdout.contains("echo dummy"), "Should show alias value");
+    // By default, should only show used aliases (count > 0)
+    // Since dummy alias has count 0, should show "No aliases found."
+    assert!(stdout.contains("No aliases found."), "Should show 'No aliases found.' when no aliases are used");
 }
 
 #[test]
@@ -218,8 +199,8 @@ fn test_freq_command_help() {
 
     // Should contain help information
     assert!(stdout.contains("show alias usage frequency statistics"), "Should contain description");
-    assert!(stdout.contains("--count"), "Should contain --count option");
-    assert!(stdout.contains("show only top N aliases"), "Should contain --count description");
+    assert!(stdout.contains("--all"), "Should contain --all option");
+    assert!(stdout.contains("show all aliases including unused ones"), "Should contain --all description");
 }
 
 #[test]

@@ -441,11 +441,8 @@ struct DaemonOpts {
 
 #[derive(Parser, Debug)]
 struct FreqOpts {
-    #[clap(short, long, default_value = "20", help = "show only top N aliases by frequency")]
-    count: usize,
-
-    #[clap(short, long, help = "only show the used aliases, count > 0")]
-    used: bool,
+    #[clap(short, long, help = "show all aliases including unused ones")]
+    all: bool,
 }
 
 // Basic service manager for proof of concept
@@ -1241,8 +1238,7 @@ fn handle_command_via_daemon_only_timed(opts: &AkaOpts, timing: &mut TimingColle
             Command::Freq(freq_opts) => {
                 debug!("📤 Preparing daemon frequency request");
                 let request = DaemonRequest::Freq {
-                    count: freq_opts.count,
-                    used: freq_opts.used,
+                    all: freq_opts.all,
                 };
                 debug!("📤 Sending daemon frequency request");
                 match DaemonClient::send_request_timed(request, timing) {
@@ -1347,26 +1343,19 @@ fn handle_command_direct_timed(opts: &AkaOpts, timing: &mut TimingCollector) -> 
                 debug!("📤 Processing frequency request");
                 let mut aliases: Vec<_> = aka.spec.aliases.values().cloned().collect();
 
-                // Filter to only used aliases if requested
-                if freq_opts.used {
+                // Filter to only used aliases unless --all is specified
+                if !freq_opts.all {
                     aliases = aliases.into_iter().filter(|alias| alias.count > 0).collect();
                 }
 
                 // Sort by count (descending) then by name (ascending)
                 aliases.sort_by(|a, b| b.count.cmp(&a.count).then_with(|| a.name.cmp(&b.name)));
 
-                // Apply count limit
-                let limited_aliases: Vec<_> = if freq_opts.count > 0 {
-                    aliases.into_iter().take(freq_opts.count).collect()
-                } else {
-                    aliases
-                };
-
                 // Display frequency statistics using shared formatting
-                let output = aka_lib::format_freq_output(&limited_aliases);
+                let output = aka_lib::format_freq_output(&aliases);
                 println!("{}", output);
 
-                debug!("✅ Showed frequency for {} aliases", limited_aliases.len());
+                debug!("✅ Showed frequency for {} aliases", aliases.len());
                 timing.end_processing();
                 Ok(0)
             }
