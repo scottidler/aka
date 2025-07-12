@@ -824,14 +824,13 @@ impl AKA {
         }
 
         if sudo {
-            // Check if we need to wrap the command
-            // For complex commands (multiple args), we check the full command
-            let full_command = args.join(" ");
-            if needs_sudo_wrapping(&full_command) {
+            // Check if we need to wrap just the first command
+            // We only check the command itself, not its arguments
+            if needs_sudo_wrapping(&args[0]) {
                 args[0] = format!("$(which {})", args[0]);
                 debug!("Wrapped sudo command: {}", args[0]);
             } else {
-                debug!("Sudo command does not need wrapping: {}", full_command);
+                debug!("Sudo command does not need wrapping: {}", args[0]);
             }
             args.insert(0, "sudo".to_string());
         }
