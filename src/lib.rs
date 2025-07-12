@@ -596,6 +596,68 @@ pub enum ProcessingMode {
     Direct,  // Processing directly (inbox emoji 📥)
 }
 
+// Sudo wrapping utility functions
+/// Detect if a command is already wrapped with $(which ...)
+fn is_already_wrapped(command: &str) -> bool {
+    let trimmed = command.trim();
+    trimmed.starts_with("$(which ") && trimmed.ends_with(")")
+}
+
+
+
+/// Check if a command is available to the root user
+fn is_command_available_to_root(command: &str) -> bool {
+    // Use sudo -n (non-interactive) to check root's PATH
+    // This is the only reliable way to determine root availability
+    std::process::Command::new("sudo")
+        .args(&["-n", "which", command])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .map(|status| status.success())
+        .unwrap_or(false)
+}
+
+/// Check if a command exists in user PATH but not root PATH
+fn is_user_only_command(command: &str) -> bool {
+    // First check if user has the command
+    let user_has_command = std::process::Command::new("which")
+        .arg(command)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .map(|status| status.success())
+        .unwrap_or(false);
+
+    if !user_has_command {
+        return false; // User doesn't have it, no point wrapping
+    }
+
+    // Check if root also has it
+    !is_command_available_to_root(command)
+}
+
+/// Determine if a command needs sudo wrapping
+fn needs_sudo_wrapping(command: &str) -> bool {
+    // Skip if already wrapped (idempotent)
+    if is_already_wrapped(command) {
+        debug!("Command already wrapped: {}", command);
+        return false;
+    }
+
+    // Skip complex commands (contain spaces, pipes, redirects, etc.)
+    if command.contains(' ') || command.contains('|') || command.contains('&')
+       || command.contains('>') || command.contains('<') || command.contains(';') {
+        debug!("Skipping complex command: {}", command);
+        return false;
+    }
+
+    // Only wrap if it's available to user but not root
+    let needs_wrapping = is_user_only_command(command);
+    debug!("Command '{}' needs wrapping: {}", command, needs_wrapping);
+    needs_wrapping
+}
+
 // Main AKA struct and implementation
 pub struct AKA {
     pub eol: bool,
@@ -705,7 +767,7 @@ impl AKA {
             sudo = true;
             args.remove(0);
             if args.is_empty() {
-                return Ok(String::new());
+                return Ok("sudo ".to_string());
             }
         }
 
@@ -762,7 +824,15 @@ impl AKA {
         }
 
         if sudo {
-            args[0] = format!("$(which {})", args[0]);
+            // Check if we need to wrap the command
+            // For complex commands (multiple args), we check the full command
+            let full_command = args.join(" ");
+            if needs_sudo_wrapping(&full_command) {
+                args[0] = format!("$(which {})", args[0]);
+                debug!("Wrapped sudo command: {}", args[0]);
+            } else {
+                debug!("Sudo command does not need wrapping: {}", full_command);
+            }
             args.insert(0, "sudo".to_string());
         }
 
@@ -1251,6 +1321,192 @@ mod tests {
 
         // Should have trailing space
         assert_eq!(result, "echo Hello World ");
+    }
+
+    // Sudo wrapping tests
+    #[test]
+    fn test_is_already_wrapped() {
+        assert!(is_already_wrapped("$(which ls)"));
+        assert!(is_already_wrapped("  $(which ls)  "));
+        assert!(is_already_wrapped("$(which eza)"));
+        assert!(!is_already_wrapped("ls"));
+        assert!(!is_already_wrapped("which ls"));
+        assert!(!is_already_wrapped("$(ls)"));
+        assert!(!is_already_wrapped("$(which)"));
+        assert!(!is_already_wrapped("$(which "));
+        assert!(!is_already_wrapped(" which ls)"));
+    }
+
+
+
+    #[test]
+    fn test_needs_sudo_wrapping_already_wrapped() {
+        // Should not wrap already wrapped commands
+        assert!(!needs_sudo_wrapping("$(which ls)"));
+        assert!(!needs_sudo_wrapping("  $(which eza)  "));
+        assert!(!needs_sudo_wrapping("$(which systemctl)"));
+    }
+
+    #[test]
+    fn test_needs_sudo_wrapping_complex_commands() {
+        // Should not wrap complex commands
+        assert!(!needs_sudo_wrapping("ls -la"));
+        assert!(!needs_sudo_wrapping("cat file.txt"));
+        assert!(!needs_sudo_wrapping("grep pattern | less"));
+        assert!(!needs_sudo_wrapping("echo hello > file.txt"));
+        assert!(!needs_sudo_wrapping("command < input.txt"));
+        assert!(!needs_sudo_wrapping("cmd1 && cmd2"));
+        assert!(!needs_sudo_wrapping("cmd1; cmd2"));
+    }
+
+    #[test]
+    fn test_sudo_wrapping_idempotent() {
+        let mut aliases = HashMap::new();
+        aliases.insert("ls".to_string(), Alias {
+            name: "ls".to_string(),
+            value: "eza".to_string(),
+            space: true,
+            global: false,
+            count: 0,
+        });
+
+        let mut aka = create_test_aka_with_aliases(aliases);
+
+        // First application
+        let result1 = aka.replace("sudo ls").unwrap();
+
+        // Second application should be idempotent
+        let result2 = aka.replace(&result1.trim()).unwrap();
+
+        // Should not double-wrap
+        assert!(!result2.contains("$(which $(which"));
+        assert!(!result2.contains("sudo sudo"));
+    }
+
+    #[test]
+    fn test_sudo_wrapping_system_commands() {
+        let aliases = HashMap::new();
+        let mut aka = create_test_aka_with_aliases(aliases);
+
+        // Test with commands that should exist on most systems
+        // These should not be wrapped since they're available to root
+        let system_commands = vec![
+            "sudo echo",
+            "sudo cat",
+            "sudo ls", // Note: this is the base ls, not aliased
+        ];
+
+        for cmd in system_commands {
+            let result = aka.replace(cmd).unwrap();
+            // Should not contain $(which) wrapping for system commands
+            // Note: The actual behavior depends on system state, but should not double-wrap
+            assert!(!result.contains("$(which $(which"),
+                   "Should not double-wrap system command: {}", result);
+        }
+    }
+
+    #[test]
+    fn test_sudo_wrapping_nonexistent_commands() {
+        let aliases = HashMap::new();
+        let mut aka = create_test_aka_with_aliases(aliases);
+
+        // Test with commands that definitely don't exist
+        let nonexistent_commands = vec![
+            "sudo nonexistent_command_12345",
+            "sudo fake_binary_xyz",
+        ];
+
+        for cmd in nonexistent_commands {
+            let result = aka.replace(cmd).unwrap();
+            // Should not wrap commands that don't exist for the user
+            assert!(!result.contains("$(which nonexistent"),
+                   "Should not wrap nonexistent command: {}", result);
+            assert!(!result.contains("$(which fake_binary"),
+                   "Should not wrap nonexistent command: {}", result);
+        }
+    }
+
+    #[test]
+    fn test_sudo_wrapping_with_aliases() {
+        let mut aliases = HashMap::new();
+        aliases.insert("ls".to_string(), Alias {
+            name: "ls".to_string(),
+            value: "eza -la".to_string(),
+            space: true,
+            global: false,
+            count: 0,
+        });
+        aliases.insert("cat".to_string(), Alias {
+            name: "cat".to_string(),
+            value: "bat -p".to_string(),
+            space: true,
+            global: false,
+            count: 0,
+        });
+
+        let mut aka = create_test_aka_with_aliases(aliases);
+
+        // Test sudo with aliased commands
+        let result1 = aka.replace("sudo ls").unwrap();
+        let result2 = aka.replace("sudo cat").unwrap();
+
+        // Should contain sudo and the expanded alias
+        assert!(result1.contains("sudo"));
+        assert!(result1.contains("eza -la"));
+        assert!(result2.contains("sudo"));
+        assert!(result2.contains("bat -p"));
+
+        // Should NOT wrap complex commands (those with spaces/arguments)
+        // This is correct behavior - $(which) doesn't work with complex commands
+        assert!(!result1.contains("$(which"), "Complex commands should not be wrapped");
+        assert!(!result2.contains("$(which"), "Complex commands should not be wrapped");
+
+        // Should not double-wrap
+        assert!(!result1.contains("$(which $(which"));
+        assert!(!result2.contains("$(which $(which"));
+    }
+
+    #[test]
+    fn test_sudo_wrapping_edge_cases() {
+        let aliases = HashMap::new();
+        let mut aka = create_test_aka_with_aliases(aliases);
+
+        // Edge cases
+        let edge_cases = vec![
+            ("sudo", "sudo "),  // Just sudo
+            ("sudo ", "sudo "),  // Sudo with space
+        ];
+
+        for (input, expected) in edge_cases {
+            let result = aka.replace(input).unwrap();
+            assert_eq!(result, expected, "Edge case '{}' failed", input);
+        }
+    }
+
+    #[test]
+    fn test_sudo_wrapping_preserves_arguments() {
+        let mut aliases = HashMap::new();
+        aliases.insert("ls".to_string(), Alias {
+            name: "ls".to_string(),
+            value: "eza".to_string(),
+            space: true,
+            global: false,
+            count: 0,
+        });
+
+        let mut aka = create_test_aka_with_aliases(aliases);
+
+        // Test that arguments are preserved
+        let result = aka.replace("sudo ls -la --color").unwrap();
+
+        // Should contain sudo, the expanded alias, and the arguments
+        assert!(result.contains("sudo"));
+        assert!(result.contains("eza"));
+        assert!(result.contains("-la"));
+        assert!(result.contains("--color"));
+
+        // Should not double-wrap
+        assert!(!result.contains("$(which $(which"));
     }
 
 
