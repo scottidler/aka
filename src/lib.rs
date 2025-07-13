@@ -441,7 +441,8 @@ fn check_daemon_health(socket_path: &PathBuf) -> Result<bool> {
                     if let Ok(response) = serde_json::from_str::<serde_json::Value>(&response_line.trim()) {
                         if let Some(status) = response.get("status").and_then(|s| s.as_str()) {
                             debug!("🔍 Daemon status parsed: {}", status);
-                            if status.starts_with("healthy:") && status.contains(":aliases") {
+                            // Parse format: "healthy:COUNT:synced" or "healthy:COUNT:stale"
+                            if status.starts_with("healthy:") && (status.ends_with(":synced") || status.ends_with(":stale")) {
                                 debug!("✅ Daemon is healthy and has config loaded: {}", status);
                                 return Ok(true); // Daemon healthy
                             } else {
@@ -1040,6 +1041,14 @@ pub fn format_freq_output(aliases: &[Alias]) -> String {
         .join("\n")
 }
 
+/// Get alias names for shell completion
+/// Returns a sorted list of alias names
+pub fn get_alias_names_for_completion(aka: &AKA) -> Vec<String> {
+    let mut names: Vec<String> = aka.spec.aliases.keys().cloned().collect();
+    names.sort();
+    names
+}
+
 // Utility function to determine socket path for daemon
 pub fn determine_socket_path(home_dir: &PathBuf) -> Result<PathBuf> {
     // Try XDG_RUNTIME_DIR first
@@ -1614,6 +1623,80 @@ mod tests {
 
         // Should not double-wrap
         assert!(!result.contains("$(which $(which"));
+    }
+
+    #[test]
+    fn test_get_alias_names_for_completion() {
+        let mut aliases = HashMap::new();
+        aliases.insert("zz".to_string(), Alias {
+            name: "zz".to_string(),
+            value: "eza -la".to_string(),
+            space: true,
+            global: false,
+            count: 0,
+        });
+        aliases.insert("cat".to_string(), Alias {
+            name: "cat".to_string(),
+            value: "bat -p".to_string(),
+            space: true,
+            global: false,
+            count: 0,
+        });
+        aliases.insert("ls".to_string(), Alias {
+            name: "ls".to_string(),
+            value: "eza".to_string(),
+            space: true,
+            global: false,
+            count: 0,
+        });
+
+        let aka = create_test_aka_with_aliases(aliases);
+        let names = get_alias_names_for_completion(&aka);
+
+        // Should be sorted alphabetically
+        assert_eq!(names, vec!["cat", "ls", "zz"]);
+    }
+
+    #[test]
+    fn test_get_alias_names_for_completion_empty() {
+        let aliases = HashMap::new();
+        let aka = create_test_aka_with_aliases(aliases);
+        let names = get_alias_names_for_completion(&aka);
+
+        // Should be empty
+        assert_eq!(names, Vec::<String>::new());
+    }
+
+    #[test]
+    fn test_get_alias_names_for_completion_special_chars() {
+        let mut aliases = HashMap::new();
+        aliases.insert("!!".to_string(), Alias {
+            name: "!!".to_string(),
+            value: "sudo !!".to_string(),
+            space: true,
+            global: false,
+            count: 0,
+        });
+        aliases.insert("|c".to_string(), Alias {
+            name: "|c".to_string(),
+            value: "| xclip -sel clip".to_string(),
+            space: true,
+            global: true,
+            count: 0,
+        });
+        aliases.insert("...".to_string(), Alias {
+            name: "...".to_string(),
+            value: "cd ../..".to_string(),
+            space: true,
+            global: false,
+            count: 0,
+        });
+
+        let aka = create_test_aka_with_aliases(aliases);
+        let names = get_alias_names_for_completion(&aka);
+
+        // Should be sorted alphabetically, including special characters
+        assert_eq!(names, vec!["!!", "...", "|c"]);
     }
 
 

@@ -221,6 +221,7 @@ fn test_request_type_differentiation() {
             DaemonRequest::Freq { all: _ } => {},
             DaemonRequest::ReloadConfig => {},
             DaemonRequest::Shutdown => {},
+            DaemonRequest::CompleteAliases => {},
         }
     }
 }

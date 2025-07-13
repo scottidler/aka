@@ -32,6 +32,8 @@ pub enum DaemonRequest {
     ReloadConfig,
     /// Request daemon shutdown
     Shutdown,
+    /// Request alias names for shell completion
+    CompleteAliases,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -115,6 +117,7 @@ mod tests {
             DaemonRequest::Health,
             DaemonRequest::ReloadConfig,
             DaemonRequest::Shutdown,
+            DaemonRequest::CompleteAliases,
         ];
 
         for request in requests {

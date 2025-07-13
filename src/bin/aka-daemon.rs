@@ -279,6 +279,16 @@ impl DaemonServer {
                 self.shutdown.store(true, Ordering::Relaxed);
                 Response::ShutdownAck
             },
+            Request::CompleteAliases => {
+                let aka_guard = self.aka.read().map_err(|e| eyre!("Failed to acquire read lock on AKA: {}", e))?;
+                debug!("📤 Processing complete aliases request");
+
+                let alias_names = aka_lib::get_alias_names_for_completion(&aka_guard);
+                let output = alias_names.join("\n");
+
+                debug!("✅ Complete aliases processed successfully");
+                Response::Success { data: output }
+            },
         };
 
         let response_json = serde_json::to_string(&response)?;

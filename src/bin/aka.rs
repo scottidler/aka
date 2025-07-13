@@ -1251,6 +1251,22 @@ fn handle_command_via_daemon_only_timed(opts: &AkaOpts, timing: &mut TimingColle
                     }
                 }
             }
+            Command::CompleteAliases => {
+                debug!("📤 Preparing daemon complete aliases request");
+                let request = DaemonRequest::CompleteAliases;
+                debug!("📤 Sending daemon complete aliases request");
+
+                match DaemonClient::send_request_timed(request, timing) {
+                    Ok(response) => handle_daemon_query_response(response, timing),
+                    Err(e) => {
+                        warn!("❌ Daemon request failed: {}", e);
+                        debug!("🔄 Daemon communication failed, will fallback to direct mode");
+                        timing.end_processing();
+                        debug!("🎯 === DAEMON-ONLY COMPLETE (COMMUNICATION ERROR) ===");
+                        Err(eyre::eyre!("Daemon communication failed: {}", e))
+                    }
+                }
+            }
             _ => {
                 warn!("❌ Command not supported in daemon-only mode");
                 eprintln!("Command not supported in daemon mode");
@@ -1356,6 +1372,16 @@ fn handle_command_direct_timed(opts: &AkaOpts, timing: &mut TimingCollector) -> 
                 println!("{}", output);
 
                 debug!("✅ Showed frequency for {} aliases", aliases.len());
+                timing.end_processing();
+                Ok(0)
+            }
+            Command::CompleteAliases => {
+                debug!("📤 Processing complete aliases request");
+                let alias_names = aka_lib::get_alias_names_for_completion(&aka);
+                for name in alias_names {
+                    println!("{}", name);
+                }
+                debug!("✅ Complete aliases processed successfully");
                 timing.end_processing();
                 Ok(0)
             }
