@@ -226,17 +226,13 @@ impl DaemonServer {
                 let aka_guard = self.aka.read().map_err(|e| eyre!("Failed to acquire read lock on AKA: {}", e))?;
                 debug!("📤 Processing list request (global: {}, patterns: {:?})", global, patterns);
 
-                let aliases: Vec<_> = aka_guard.spec.aliases.values().cloned().collect();
-
-                let processed_aliases = aka_lib::prepare_aliases_for_display(
-                    aliases,
+                let output = aka_lib::format_aliases_efficiently(
+                    aka_guard.spec.aliases.values(),
                     false, // show_counts
                     true,  // show_all
                     global,
                     &patterns,
                 );
-
-                let output = aka_lib::format_alias_output(&processed_aliases, false);
 
                 debug!("✅ List processed successfully");
                 Response::Success { data: output }
@@ -245,17 +241,13 @@ impl DaemonServer {
                 let aka_guard = self.aka.read().map_err(|e| eyre!("Failed to acquire read lock on AKA: {}", e))?;
                 debug!("📤 Processing frequency request (all: {})", all);
 
-                let aliases: Vec<_> = aka_guard.spec.aliases.values().cloned().collect();
-
-                let processed_aliases = aka_lib::prepare_aliases_for_display(
-                    aliases,
+                let output = aka_lib::format_aliases_efficiently(
+                    aka_guard.spec.aliases.values(),
                     true, // show_counts
                     all,
                     false, // global_only
                     &[], // patterns
                 );
-
-                let output = aka_lib::format_alias_output(&processed_aliases, true);
 
                 debug!("✅ Frequency processed successfully");
                 Response::Success { data: output }

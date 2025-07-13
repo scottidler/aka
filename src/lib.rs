@@ -1000,7 +1000,15 @@ impl AKA {
     }
 }
 
-pub fn format_alias_output(aliases: &[Alias], show_counts: bool) -> String {
+/// Format alias output with proper alignment and optional counts
+/// This function works with iterators to avoid unnecessary allocations
+pub fn format_alias_output_from_iter<I>(aliases: I, show_counts: bool) -> String
+where
+    I: Iterator<Item = Alias>,
+{
+    // Collect into Vec to calculate max width (unavoidable for alignment)
+    let aliases: Vec<_> = aliases.collect();
+
     if aliases.is_empty() {
         return "No aliases found.".to_string();
     }
@@ -1038,26 +1046,22 @@ pub fn format_alias_output(aliases: &[Alias], show_counts: bool) -> String {
         .join("\n")
 }
 
-pub fn prepare_aliases_for_display(
-    aliases: Vec<Alias>,
+/// Create an iterator that filters and sorts aliases based on display criteria
+/// This avoids intermediate Vec allocations until sorting is required
+pub fn prepare_aliases_for_display_iter<'a>(
+    aliases: impl Iterator<Item = &'a Alias> + 'a,
     show_counts: bool,
     show_all: bool,
     global_only: bool,
-    patterns: &[String],
-) -> Vec<Alias> {
+    patterns: &'a [String],
+) -> impl Iterator<Item = Alias> + 'a {
     let mut filtered_aliases: Vec<_> = aliases
-        .into_iter()
-        .filter(|alias| !global_only || alias.global)
-        .filter(|alias| patterns.is_empty() ||
+        .filter(move |alias| !global_only || alias.global)
+        .filter(move |alias| patterns.is_empty() ||
                 patterns.iter().any(|pattern| alias.name.starts_with(pattern)))
+        .filter(move |alias| !show_counts || show_all || alias.count > 0)
+        .cloned()
         .collect();
-
-    // Filter by usage count if showing counts and not showing all
-    if show_counts && !show_all {
-        filtered_aliases = filtered_aliases.into_iter()
-            .filter(|alias| alias.count > 0)
-            .collect();
-    }
 
     // Sort based on whether we're showing counts
     if show_counts {
@@ -1068,7 +1072,20 @@ pub fn prepare_aliases_for_display(
         filtered_aliases.sort_by(|a, b| a.name.cmp(&b.name));
     }
 
-    filtered_aliases
+    filtered_aliases.into_iter()
+}
+
+/// Efficient function that combines filtering, sorting, and formatting in one pass
+/// This is the most memory-efficient way to format alias output
+pub fn format_aliases_efficiently<'a>(
+    aliases: impl Iterator<Item = &'a Alias> + 'a,
+    show_counts: bool,
+    show_all: bool,
+    global_only: bool,
+    patterns: &'a [String],
+) -> String {
+    let prepared = prepare_aliases_for_display_iter(aliases, show_counts, show_all, global_only, patterns);
+    format_alias_output_from_iter(prepared, show_counts)
 }
 
 /// Get alias names for shell completion

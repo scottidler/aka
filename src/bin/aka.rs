@@ -1331,39 +1331,35 @@ fn handle_command_direct_timed(opts: &AkaOpts, timing: &mut TimingCollector) -> 
             }
             Command::List(list_opts) => {
                 debug!("📤 Processing list request");
-                let aliases: Vec<_> = aka.spec.aliases.values().cloned().collect();
 
-                let processed_aliases = aka_lib::prepare_aliases_for_display(
-                    aliases,
+                let output = aka_lib::format_aliases_efficiently(
+                    aka.spec.aliases.values(),
                     false, // show_counts
                     true,  // show_all (ls always shows all)
                     list_opts.global,
                     &list_opts.patterns,
                 );
 
-                let output = aka_lib::format_alias_output(&processed_aliases, false);
                 println!("{}", output);
 
-                debug!("✅ Listed {} aliases", processed_aliases.len());
+                debug!("✅ Listed aliases");
                 timing.end_processing();
                 Ok(0)
             }
             Command::Freq(freq_opts) => {
                 debug!("📤 Processing frequency request");
-                let aliases: Vec<_> = aka.spec.aliases.values().cloned().collect();
 
-                let processed_aliases = aka_lib::prepare_aliases_for_display(
-                    aliases,
+                let output = aka_lib::format_aliases_efficiently(
+                    aka.spec.aliases.values(),
                     true, // show_counts
                     freq_opts.all,
                     false, // global_only (freq doesn't filter by global)
                     &[], // patterns (freq doesn't support patterns)
                 );
 
-                let output = aka_lib::format_alias_output(&processed_aliases, true);
                 println!("{}", output);
 
-                debug!("✅ Showed frequency for {} aliases", processed_aliases.len());
+                debug!("✅ Showed frequency for aliases");
                 timing.end_processing();
                 Ok(0)
             }
