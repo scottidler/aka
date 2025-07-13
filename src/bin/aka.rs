@@ -13,7 +13,6 @@ use aka_lib::{
     setup_logging,
     execute_health_check,
     determine_socket_path,
-    print_alias,
     AKA,
     ProcessingMode,
     TimingCollector,
@@ -1332,46 +1331,39 @@ fn handle_command_direct_timed(opts: &AkaOpts, timing: &mut TimingCollector) -> 
             }
             Command::List(list_opts) => {
                 debug!("📤 Processing list request");
-                let mut aliases: Vec<_> = aka.spec.aliases.values().cloned().collect();
-                aliases.sort_by_key(|a| a.name.clone());
+                let aliases: Vec<_> = aka.spec.aliases.values().cloned().collect();
 
-                if list_opts.global {
-                    aliases = aliases.into_iter().filter(|alias| alias.global).collect();
-                }
+                let processed_aliases = aka_lib::prepare_aliases_for_display(
+                    aliases,
+                    false, // show_counts
+                    true,  // show_all (ls always shows all)
+                    list_opts.global,
+                    &list_opts.patterns,
+                );
 
-                let filtered_aliases: Vec<_> = if list_opts.patterns.is_empty() {
-                    aliases
-                } else {
-                    aliases.into_iter()
-                        .filter(|alias| list_opts.patterns.iter().any(|pattern| alias.name.starts_with(pattern)))
-                        .collect()
-                };
+                let output = aka_lib::format_alias_output(&processed_aliases, false);
+                println!("{}", output);
 
-                for alias in &filtered_aliases {
-                    print_alias(alias);
-                }
-
-                debug!("✅ Listed {} aliases", filtered_aliases.len());
+                debug!("✅ Listed {} aliases", processed_aliases.len());
                 timing.end_processing();
                 Ok(0)
             }
             Command::Freq(freq_opts) => {
                 debug!("📤 Processing frequency request");
-                let mut aliases: Vec<_> = aka.spec.aliases.values().cloned().collect();
+                let aliases: Vec<_> = aka.spec.aliases.values().cloned().collect();
 
-                // Filter to only used aliases unless --all is specified
-                if !freq_opts.all {
-                    aliases = aliases.into_iter().filter(|alias| alias.count > 0).collect();
-                }
+                let processed_aliases = aka_lib::prepare_aliases_for_display(
+                    aliases,
+                    true, // show_counts
+                    freq_opts.all,
+                    false, // global_only (freq doesn't filter by global)
+                    &[], // patterns (freq doesn't support patterns)
+                );
 
-                // Sort by count (descending) then by name (ascending)
-                aliases.sort_by(|a, b| b.count.cmp(&a.count).then_with(|| a.name.cmp(&b.name)));
-
-                // Display frequency statistics using shared formatting
-                let output = aka_lib::format_freq_output(&aliases);
+                let output = aka_lib::format_alias_output(&processed_aliases, true);
                 println!("{}", output);
 
-                debug!("✅ Showed frequency for {} aliases", aliases.len());
+                debug!("✅ Showed frequency for {} aliases", processed_aliases.len());
                 timing.end_processing();
                 Ok(0)
             }

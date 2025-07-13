@@ -1,41 +1,71 @@
 use aka_lib::*;
 use std::fs;
+use std::sync::Mutex;
 use tempfile::TempDir;
+
+// Global mutex to prevent tests from interfering with each other's environment variables
+static ENV_MUTEX: Mutex<()> = Mutex::new(());
+
+/// Helper function to run a test with isolated XDG_RUNTIME_DIR environment
+fn with_isolated_env<F, R>(test_fn: F) -> R
+where
+    F: FnOnce() -> R,
+{
+    let _guard = ENV_MUTEX.lock().unwrap();
+
+    // Save original environment
+    let original_xdg = std::env::var("XDG_RUNTIME_DIR").ok();
+
+    // Remove XDG_RUNTIME_DIR to force using home_dir for daemon socket
+    std::env::remove_var("XDG_RUNTIME_DIR");
+
+    // Run the test
+    let result = test_fn();
+
+    // Restore original environment
+    if let Some(xdg) = original_xdg {
+        std::env::set_var("XDG_RUNTIME_DIR", xdg);
+    }
+
+    result
+}
 
 /// Test that health check correctly parses daemon status formats
 #[test]
 fn test_daemon_status_parsing() {
-    // This test verifies that the health check logic correctly parses
-    // the actual daemon status format: "healthy:COUNT:synced" or "healthy:COUNT:stale"
+    with_isolated_env(|| {
+        // This test verifies that the health check logic correctly parses
+        // the actual daemon status format: "healthy:COUNT:synced" or "healthy:COUNT:stale"
 
-    // We can't directly test the internal check_daemon_health function since it's private,
-    // but we can test the overall health check behavior by mocking daemon responses
+        // We can't directly test the internal check_daemon_health function since it's private,
+        // but we can test the overall health check behavior by mocking daemon responses
 
-    // Create a test config
-    let temp_dir = TempDir::new().expect("Failed to create temp dir");
-    let home_dir = temp_dir.path().to_path_buf();
+        // Create a test config
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+        let home_dir = temp_dir.path().to_path_buf();
 
-    // Create config directory
-    let config_dir = home_dir.join(".config").join("aka");
-    fs::create_dir_all(&config_dir).expect("Failed to create config dir");
+        // Create config directory
+        let config_dir = home_dir.join(".config").join("aka");
+        fs::create_dir_all(&config_dir).expect("Failed to create config dir");
 
-    // Create valid config
-    let config_file = config_dir.join("aka.yml");
-    let test_config = r#"
+        // Create valid config
+        let config_file = config_dir.join("aka.yml");
+        let test_config = r#"
 defaults:
   version: 1
 aliases:
   cat: "bat -p"
   ls: "eza"
 "#;
-    fs::write(&config_file, test_config).expect("Failed to write config");
+        fs::write(&config_file, test_config).expect("Failed to write config");
 
-    // Test that health check works with valid config (should return 0 when daemon not running)
-    let result = execute_health_check(&home_dir).expect("Health check should work");
+        // Test that health check works with valid config (should return 0 when daemon not running)
+        let result = execute_health_check(&home_dir).expect("Health check should work");
 
-    // When daemon is not running, it should fall back to direct mode validation
-    // With valid config, this should return 0
-    assert_eq!(result, 0, "Health check should return 0 for valid config when daemon not running");
+        // When daemon is not running, it should fall back to direct mode validation
+        // With valid config, this should return 0
+        assert_eq!(result, 0, "Health check should return 0 for valid config when daemon not running");
+    });
 }
 
 /// Test health check with no config file
@@ -135,103 +165,109 @@ aliases: {}
 /// Test health check exit code meanings
 #[test]
 fn test_health_check_exit_codes() {
-    // This test documents the expected exit codes from health check
+    with_isolated_env(|| {
+        // This test documents the expected exit codes from health check
 
-    // Exit code 0: Daemon healthy OR config cache valid
-    // Exit code 1: Config file not found OR config file unreadable
-    // Exit code 2: Config file invalid (YAML parsing failed)
-    // Exit code 3: Config valid but no aliases defined
-    // Exit code 4: Stale socket detected (daemon socket exists but daemon appears dead)
+        // Exit code 0: Daemon healthy OR config cache valid
+        // Exit code 1: Config file not found OR config file unreadable
+        // Exit code 2: Config file invalid (YAML parsing failed)
+        // Exit code 3: Config valid but no aliases defined
+        // Exit code 4: Stale socket detected (daemon socket exists but daemon appears dead)
 
-    // Test with valid config (should return 0)
-    let temp_dir = TempDir::new().expect("Failed to create temp dir");
-    let home_dir = temp_dir.path().to_path_buf();
+        // Test with valid config (should return 0)
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+        let home_dir = temp_dir.path().to_path_buf();
 
-    let config_dir = home_dir.join(".config").join("aka");
-    fs::create_dir_all(&config_dir).expect("Failed to create config dir");
+        let config_dir = home_dir.join(".config").join("aka");
+        fs::create_dir_all(&config_dir).expect("Failed to create config dir");
 
-    let config_file = config_dir.join("aka.yml");
-    let test_config = r#"
+        let config_file = config_dir.join("aka.yml");
+        let test_config = r#"
 defaults:
   version: 1
 aliases:
   test: "echo test"
 "#;
-    fs::write(&config_file, test_config).expect("Failed to write config");
+        fs::write(&config_file, test_config).expect("Failed to write config");
 
-    let result = execute_health_check(&home_dir).expect("Health check should work");
-    assert_eq!(result, 0, "Valid config should return exit code 0");
+        let result = execute_health_check(&home_dir).expect("Health check should work");
+        assert_eq!(result, 0, "Valid config should return exit code 0");
+    });
 }
 
 /// Test that health check handles config hash changes correctly
 #[test]
 fn test_health_check_config_hash_changes() {
-    let temp_dir = TempDir::new().expect("Failed to create temp dir");
-    let home_dir = temp_dir.path().to_path_buf();
+    with_isolated_env(|| {
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+        let home_dir = temp_dir.path().to_path_buf();
 
-    // Create config directory
-    let config_dir = home_dir.join(".config").join("aka");
-    fs::create_dir_all(&config_dir).expect("Failed to create config dir");
+        // Create config directory
+        let config_dir = home_dir.join(".config").join("aka");
+        fs::create_dir_all(&config_dir).expect("Failed to create config dir");
 
-    // Create initial config
-    let config_file = config_dir.join("aka.yml");
-    let test_config1 = r#"
+        // Create initial config
+        let config_file = config_dir.join("aka.yml");
+        let test_config1 = r#"
 defaults:
   version: 1
 aliases:
   cat: "bat -p"
 "#;
-    fs::write(&config_file, test_config1).expect("Failed to write config");
+        fs::write(&config_file, test_config1).expect("Failed to write config");
 
-    // First health check should return 0 (valid config)
-    let result1 = execute_health_check(&home_dir).expect("Health check should work");
-    assert_eq!(result1, 0, "First health check should return 0");
+        // First health check should return 0 (valid config)
+        let result1 = execute_health_check(&home_dir).expect("Health check should work");
+        assert_eq!(result1, 0, "First health check should return 0");
 
-    // Modify config
-    let test_config2 = r#"
+        // Modify config
+        let test_config2 = r#"
 defaults:
   version: 1
 aliases:
   cat: "bat -p"
   ls: "eza"
 "#;
-    fs::write(&config_file, test_config2).expect("Failed to write config");
+        fs::write(&config_file, test_config2).expect("Failed to write config");
 
-    // Second health check should still return 0 (valid config, hash updated)
-    let result2 = execute_health_check(&home_dir).expect("Health check should work");
-    assert_eq!(result2, 0, "Second health check should return 0");
+        // Second health check should still return 0 (valid config, hash updated)
+        let result2 = execute_health_check(&home_dir).expect("Health check should work");
+        assert_eq!(result2, 0, "Second health check should return 0");
+    });
 }
 
 /// Test that health check works with different config locations
 #[test]
 fn test_health_check_config_locations() {
-    let temp_dir = TempDir::new().expect("Failed to create temp dir");
-    let home_dir = temp_dir.path().to_path_buf();
+    with_isolated_env(|| {
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+        let home_dir = temp_dir.path().to_path_buf();
 
-    // Test with config in ~/.config/aka/aka.yml
-    let config_dir = home_dir.join(".config").join("aka");
-    fs::create_dir_all(&config_dir).expect("Failed to create config dir");
+        // Test with config in ~/.config/aka/aka.yml
+        let config_dir = home_dir.join(".config").join("aka");
+        fs::create_dir_all(&config_dir).expect("Failed to create config dir");
 
-    let config_file = config_dir.join("aka.yml");
-    let test_config = r#"
+        let config_file = config_dir.join("aka.yml");
+        let test_config = r#"
 defaults:
   version: 1
 aliases:
   test: "echo test"
 "#;
-    fs::write(&config_file, test_config).expect("Failed to write config");
+        fs::write(&config_file, test_config).expect("Failed to write config");
 
-    let result = execute_health_check(&home_dir).expect("Health check should work");
-    assert_eq!(result, 0, "Config in .config/aka/aka.yml should work");
+        let result = execute_health_check(&home_dir).expect("Health check should work");
+        assert_eq!(result, 0, "Config in .config/aka/aka.yml should work");
 
-    // Remove the config file and test with ~/.aka.yml
-    fs::remove_file(&config_file).expect("Should remove config file");
+        // Remove the config file and test with ~/.aka.yml
+        fs::remove_file(&config_file).expect("Should remove config file");
 
-    let home_config = home_dir.join(".aka.yml");
-    fs::write(&home_config, test_config).expect("Failed to write home config");
+        let home_config = home_dir.join(".aka.yml");
+        fs::write(&home_config, test_config).expect("Failed to write home config");
 
-    let result2 = execute_health_check(&home_dir).expect("Health check should work");
-    assert_eq!(result2, 0, "Config in ~/.aka.yml should work");
+        let result2 = execute_health_check(&home_dir).expect("Health check should work");
+        assert_eq!(result2, 0, "Config in ~/.aka.yml should work");
+    });
 }
 
 #[cfg(test)]

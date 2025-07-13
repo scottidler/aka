@@ -1000,15 +1000,7 @@ impl AKA {
     }
 }
 
-pub fn print_alias(alias: &Alias) {
-    if alias.value.contains('\n') {
-        println!("{}: |\n  {}", alias.name, alias.value.replace("\n", "\n  "));
-    } else {
-        println!("{}: {}", alias.name, alias.value);
-    }
-}
-
-pub fn format_freq_output(aliases: &[Alias]) -> String {
+pub fn format_alias_output(aliases: &[Alias], show_counts: bool) -> String {
     if aliases.is_empty() {
         return "No aliases found.".to_string();
     }
@@ -1023,7 +1015,12 @@ pub fn format_freq_output(aliases: &[Alias]) -> String {
     aliases
         .iter()
         .map(|alias| {
-            let prefix = format!("{:>4} {:>width$} -> ", alias.count, alias.name, width = max_name_width);
+            let prefix = if show_counts {
+                format!("{:>4} {:>width$} -> ", alias.count, alias.name, width = max_name_width)
+            } else {
+                format!("{:>width$} -> ", alias.name, width = max_name_width)
+            };
+
             let indent = " ".repeat(prefix.len());
 
             if alias.value.contains('\n') {
@@ -1039,6 +1036,39 @@ pub fn format_freq_output(aliases: &[Alias]) -> String {
         })
         .collect::<Vec<_>>()
         .join("\n")
+}
+
+pub fn prepare_aliases_for_display(
+    aliases: Vec<Alias>,
+    show_counts: bool,
+    show_all: bool,
+    global_only: bool,
+    patterns: &[String],
+) -> Vec<Alias> {
+    let mut filtered_aliases: Vec<_> = aliases
+        .into_iter()
+        .filter(|alias| !global_only || alias.global)
+        .filter(|alias| patterns.is_empty() ||
+                patterns.iter().any(|pattern| alias.name.starts_with(pattern)))
+        .collect();
+
+    // Filter by usage count if showing counts and not showing all
+    if show_counts && !show_all {
+        filtered_aliases = filtered_aliases.into_iter()
+            .filter(|alias| alias.count > 0)
+            .collect();
+    }
+
+    // Sort based on whether we're showing counts
+    if show_counts {
+        // Sort by count (descending) then by name (ascending)
+        filtered_aliases.sort_by(|a, b| b.count.cmp(&a.count).then_with(|| a.name.cmp(&b.name)));
+    } else {
+        // Sort alphabetically by name
+        filtered_aliases.sort_by(|a, b| a.name.cmp(&b.name));
+    }
+
+    filtered_aliases
 }
 
 /// Get alias names for shell completion

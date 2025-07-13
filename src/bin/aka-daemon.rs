@@ -224,18 +224,19 @@ impl DaemonServer {
             },
             Request::List { global, patterns } => {
                 let aka_guard = self.aka.read().map_err(|e| eyre!("Failed to acquire read lock on AKA: {}", e))?;
-
                 debug!("📤 Processing list request (global: {}, patterns: {:?})", global, patterns);
 
-                // Use iterator chains instead of collecting into Vec - much more memory efficient
-                let output = aka_guard.spec.aliases
-                    .iter()
-                    .filter(|(_, alias)| !global || alias.global)
-                    .filter(|(name, _)| patterns.is_empty() ||
-                            patterns.iter().any(|pattern| name.starts_with(pattern)))
-                    .map(|(name, alias)| format!("{}: {}", name, alias.value))
-                    .collect::<Vec<_>>()
-                    .join("\n");
+                let aliases: Vec<_> = aka_guard.spec.aliases.values().cloned().collect();
+
+                let processed_aliases = aka_lib::prepare_aliases_for_display(
+                    aliases,
+                    false, // show_counts
+                    true,  // show_all
+                    global,
+                    &patterns,
+                );
+
+                let output = aka_lib::format_alias_output(&processed_aliases, false);
 
                 debug!("✅ List processed successfully");
                 Response::Success { data: output }
@@ -244,16 +245,17 @@ impl DaemonServer {
                 let aka_guard = self.aka.read().map_err(|e| eyre!("Failed to acquire read lock on AKA: {}", e))?;
                 debug!("📤 Processing frequency request (all: {})", all);
 
-                let mut aliases: Vec<_> = aka_guard.spec.aliases.values().cloned().collect();
+                let aliases: Vec<_> = aka_guard.spec.aliases.values().cloned().collect();
 
-                // Filter to only used aliases unless --all is specified
-                if !all {
-                    aliases = aliases.into_iter().filter(|alias| alias.count > 0).collect();
-                }
+                let processed_aliases = aka_lib::prepare_aliases_for_display(
+                    aliases,
+                    true, // show_counts
+                    all,
+                    false, // global_only
+                    &[], // patterns
+                );
 
-                aliases.sort_by(|a, b| b.count.cmp(&a.count).then_with(|| a.name.cmp(&b.name)));
-
-                let output = aka_lib::format_freq_output(&aliases);
+                let output = aka_lib::format_alias_output(&processed_aliases, true);
 
                 debug!("✅ Frequency processed successfully");
                 Response::Success { data: output }
