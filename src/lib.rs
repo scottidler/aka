@@ -8,6 +8,14 @@ use std::collections::HashMap;
 use serde::{Serialize, Deserialize};
 use serde_json;
 
+// Global timing storage for analysis
+use std::sync::Mutex;
+use lazy_static::lazy_static;
+
+lazy_static! {
+    static ref TIMING_LOG: Mutex<Vec<TimingData>> = Mutex::new(Vec::new());
+}
+
 pub mod cfg;
 pub mod protocol;
 pub mod error;
@@ -200,14 +208,6 @@ fn parse_csv_line(line: &str) -> Result<TimingData> {
         mode,
         timestamp: std::time::UNIX_EPOCH + Duration::from_millis(timestamp_ms),
     })
-}
-
-// Global timing storage for analysis
-use std::sync::Mutex;
-use lazy_static::lazy_static;
-
-lazy_static! {
-    static ref TIMING_LOG: Mutex<Vec<TimingData>> = Mutex::new(Vec::new());
 }
 
 pub fn log_timing(timing: TimingData) {
@@ -605,8 +605,6 @@ fn is_already_wrapped(command: &str) -> bool {
     let trimmed = command.trim();
     trimmed.starts_with("$(which ") && trimmed.ends_with(")")
 }
-
-
 
 /// Check if a command is available to the root user
 fn is_command_available_to_root(command: &str) -> bool {
@@ -1088,8 +1086,6 @@ pub fn get_alias_cache_path_with_base(base_dir: Option<&PathBuf>) -> Result<Path
     Ok(data_dir.join("aka.json"))
 }
 
-
-
 pub fn calculate_config_hash(home_dir: &PathBuf) -> Result<String> {
     let config_path = get_config_path(home_dir)?;
     hash_config_file(&config_path)
@@ -1187,8 +1183,6 @@ pub fn sync_cache_with_config(home_dir: &PathBuf) -> Result<AliasCache> {
 
     Ok(cache)
 }
-
-
 
 pub fn merge_cache_with_config(
     old_cache: AliasCache,
