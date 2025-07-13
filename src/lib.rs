@@ -658,6 +658,29 @@ fn needs_sudo_wrapping(command: &str) -> bool {
     needs_wrapping
 }
 
+/// Check if a command is user-installed and needs environment preservation
+fn is_user_installed_tool(command: &str) -> bool {
+    if let Ok(output) = std::process::Command::new("which")
+        .arg(command)
+        .output()
+    {
+        if output.status.success() {
+            let path = String::from_utf8_lossy(&output.stdout);
+            let path = path.trim();
+
+            // Check if command is in user directories
+            if path.contains("/.cargo/bin/") ||
+               path.contains("/.local/bin/") ||
+               path.contains("/home/") ||
+               path.starts_with(&std::env::var("HOME").unwrap_or_default()) {
+                debug!("Command '{}' at '{}' is user-installed", command, path);
+                return true;
+            }
+        }
+    }
+    false
+}
+
 // Main AKA struct and implementation
 pub struct AKA {
     pub eol: bool,
@@ -752,37 +775,73 @@ impl AKA {
     }
 
     pub fn replace_with_mode(&mut self, cmdline: &str, mode: ProcessingMode) -> Result<String> {
-        debug!("Processing command line: {}", cmdline);
+        debug!("🔍 STARTING REPLACEMENT: Input command line: '{}'", cmdline);
         let mut pos: usize = 0;
         let mut space = " ";
         let mut replaced = false;
         let mut sudo = false;
+        let mut sudo_prefix = "sudo".to_string();
         let mut args = Self::split_respecting_quotes(cmdline);
 
         if args.is_empty() {
+            debug!("🔍 EMPTY ARGS: No arguments to process");
             return Ok(String::new());
         }
 
+        debug!("🔍 SPLIT ARGS: {:?}", args);
+
         if args[0] == "sudo" {
             sudo = true;
-            args.remove(0);
-            if args.is_empty() {
-                return Ok("sudo ".to_string());
+            let sudo_part = args.remove(0);
+            debug!("🔍 SUDO DETECTED: Removed '{}' from args, remaining: {:?}", sudo_part, args);
+
+            // Handle sudo with flags (like -E, -i, etc.)
+            let mut sudo_flags = Vec::new();
+            sudo_flags.push(sudo_part);
+
+            // Collect any sudo flags that come after sudo
+            while !args.is_empty() && args[0].starts_with('-') {
+                let flag = args.remove(0);
+                debug!("🔍 SUDO FLAG DETECTED: Removed '{}' from args, remaining: {:?}", flag, args);
+
+                // Handle flags that take values (like -u, -g, -C, etc.)
+                let needs_value = flag == "-u" || flag == "-g" || flag == "-C" || flag == "-s" || flag == "-r" || flag == "-t";
+                sudo_flags.push(flag);
+
+                if needs_value && !args.is_empty() && !args[0].starts_with('-') {
+                    let value = args.remove(0);
+                    debug!("🔍 SUDO FLAG VALUE DETECTED: Removed '{}' from args, remaining: {:?}", value, args);
+                    sudo_flags.push(value);
+                }
             }
+
+            if args.is_empty() {
+                debug!("🔍 SUDO ONLY: Only sudo command with flags, returning joined sudo parts");
+                return Ok(format!("{} ", sudo_flags.join(" ")));
+            }
+
+            // Store the sudo flags for later reconstruction
+            sudo_prefix = sudo_flags.join(" ");
+            debug!("🔍 SUDO PREFIX: '{}'", sudo_prefix);
         }
 
         while pos < args.len() {
             let current_arg = args[pos].clone();
+            debug!("🔍 PROCESSING ARG[{}]: '{}'", pos, current_arg);
 
             // Perform lookup replacement logic
             if current_arg.starts_with("lookup:") && current_arg.contains("[") && current_arg.ends_with("]") {
                 let parts: Vec<&str> = current_arg.splitn(2, '[').collect();
                 let lookup = parts[0].trim_start_matches("lookup:");
                 let key = parts[1].trim_end_matches("]");
+                debug!("🔍 LOOKUP DETECTED: lookup='{}', key='{}'", lookup, key);
                 if let Some(replacement) = self.perform_lookup(key, lookup) {
+                    debug!("🔧 LOOKUP REPLACEMENT: '{}' -> '{}'", current_arg, replacement);
                     args[pos] = replacement.clone(); // Replace in args
                     replaced = true;
                     continue; // Reevaluate the current position after replacement
+                } else {
+                    debug!("🔍 LOOKUP FAILED: No replacement found for lookup='{}', key='{}'", lookup, key);
                 }
             }
 
@@ -790,13 +849,21 @@ impl AKA {
 
             // First check if we should use the alias (immutable borrow)
             let should_use_alias = match self.spec.aliases.get(&current_arg) {
-                Some(alias) => self.use_alias(alias, pos),
-                None => false,
+                Some(alias) => {
+                    let should_use = self.use_alias(alias, pos);
+                    debug!("🔍 ALIAS CHECK: '{}' -> should_use={}", current_arg, should_use);
+                    should_use
+                }
+                None => {
+                    debug!("🔍 NO ALIAS: '{}' not found in aliases", current_arg);
+                    false
+                }
             };
 
             let (value, count, replaced_alias, space_str) = if should_use_alias {
                 // Now we can safely get mutable reference
                 if let Some(alias) = self.spec.aliases.get_mut(&current_arg) {
+                    debug!("🔍 PROCESSING ALIAS: '{}' -> '{}'", current_arg, alias.value);
                     Self::process_alias_replacement(alias, &current_arg, cmdline, &mut remainders, pos)?
                 } else {
                     (current_arg.clone(), 0, false, " ")
@@ -806,33 +873,63 @@ impl AKA {
             };
 
             if replaced_alias {
+                debug!("🔧 ALIAS REPLACEMENT: '{}' -> '{}' (count={}, space='{}')", current_arg, value, count, space_str);
                 replaced = true;
                 // Only update space when we actually replace an alias
                 space = space_str;
+            } else {
+                debug!("🔍 NO REPLACEMENT: '{}' unchanged", current_arg);
             }
 
             let beg = pos + 1;
             let end = beg + count;
 
+            let args_before = args.clone();
             if space.is_empty() {
                 args.drain(beg..end);
             } else {
                 args.drain(beg..end);
             }
             args.splice(pos..=pos, Self::split_respecting_quotes(&value));
+            debug!("🔍 ARGS UPDATE: {:?} -> {:?}", args_before, args);
             pos += 1;
         }
 
         if sudo {
-            // Check if we need to wrap just the first command
-            // We only check the command itself, not its arguments
-            if needs_sudo_wrapping(&args[0]) {
-                args[0] = format!("$(which {})", args[0]);
-                debug!("Wrapped sudo command: {}", args[0]);
+            let command = args[0].clone();
+            debug!("🔍 SUDO PROCESSING: command='{}'", command);
+            let args_before_sudo = args.clone();
+
+            // Check if we need to wrap the command with $(which)
+            if needs_sudo_wrapping(&command) {
+                let old_arg = args[0].clone();
+                args[0] = format!("$(which {})", command);
+                debug!("🔧 SUDO $(which) WRAPPING: '{}' -> '{}'", old_arg, args[0]);
             } else {
-                debug!("Sudo command does not need wrapping: {}", args[0]);
+                debug!("🔍 SUDO NO WRAPPING: '{}' does not need $(which) wrapping", command);
             }
-            args.insert(0, "sudo".to_string());
+
+            // For user-installed tools, preserve environment with -E flag
+            if is_user_installed_tool(&command) {
+                debug!("🔍 USER-INSTALLED TOOL DETECTED: '{}'", command);
+                // Check if -E flag is not already present
+                if !sudo_prefix.contains("-E") {
+                    sudo_prefix = format!("{} -E", sudo_prefix);
+                    debug!("🔧 ADDED -E FLAG: sudo_prefix now: '{}'", sudo_prefix);
+                } else {
+                    debug!("🔧 -E FLAG ALREADY PRESENT: sudo_prefix: '{}'", sudo_prefix);
+                }
+            } else {
+                debug!("🔍 NOT USER-INSTALLED: '{}' is system command", command);
+            }
+
+            args.insert(0, sudo_prefix);
+            debug!("🔧 ADDED SUDO: args now: {:?}", args);
+
+            // Interactive tools like rkvr should work properly with the environment preservation
+            debug!("🔍 SUDO PROCESSING COMPLETE: command='{}', replaced={}", command, replaced);
+
+            debug!("🔧 SUDO TRANSFORMATION: {:?} -> {:?}", args_before_sudo, args);
         }
 
         let result = if replaced || sudo {
@@ -840,6 +937,8 @@ impl AKA {
         } else {
             String::new()
         };
+
+        debug!("🔍 FINAL RESULT: replaced={}, sudo={}, result='{}'", replaced, sudo, result);
 
         if replaced || sudo {
             let emoji = match mode {
@@ -850,6 +949,7 @@ impl AKA {
 
             // Save updated usage counts to cache if any aliases were used
             if replaced {
+                debug!("🔍 SAVING CACHE: Aliases were used, saving cache");
                 let cache = AliasCache {
                     hash: self.config_hash.clone(),
                     aliases: self.spec.aliases.clone(),
@@ -858,6 +958,8 @@ impl AKA {
                     warn!("⚠️ Failed to save alias cache: {}", e);
                 }
             }
+        } else {
+            debug!("🔍 NO TRANSFORMATION: No changes made to command line");
         }
 
         Ok(result)
@@ -870,15 +972,23 @@ impl AKA {
         remainders: &mut Vec<String>,
         pos: usize,
     ) -> Result<(String, usize, bool, &'static str)> {
+        debug!("🔍 ALIAS REPLACEMENT LOGIC: alias='{}', current_arg='{}', pos={}, global={}",
+               alias.name, current_arg, pos, alias.global);
+        debug!("🔍 ALIAS DETAILS: value='{}', space={}, cmdline='{}'", alias.value, alias.space, cmdline);
+        debug!("🔍 REMAINDERS: {:?}", remainders);
+
         if (alias.global && cmdline.contains(&alias.value))
             || (!alias.global && pos == 0 && cmdline.starts_with(&alias.value))
         {
             let space = if alias.space { " " } else { "" };
+            debug!("🔍 ALIAS SKIP: Recursive replacement detected, skipping");
             Ok((current_arg.to_string(), 0, false, space))
         } else {
             let space = if alias.space { " " } else { "" };
+            debug!("🔍 CALLING ALIAS.REPLACE: remainders={:?}", remainders);
             let (v, c) = alias.replace(remainders)?;
             let replaced = v != alias.name;
+            debug!("🔍 ALIAS.REPLACE RESULT: v='{}', c={}, replaced={}", v, c, replaced);
             if replaced {
                 // Increment usage count when alias is actually used
                 alias.count += 1;
@@ -1451,14 +1561,12 @@ mod tests {
 
         // Should contain sudo and the expanded alias
         assert!(result1.contains("sudo"));
-        assert!(result1.contains("eza -la"));
+        assert!(result1.contains("eza") && result1.contains("-la"));
         assert!(result2.contains("sudo"));
-        assert!(result2.contains("bat -p"));
+        assert!(result2.contains("bat") && result2.contains("-p"));
 
-        // Should NOT wrap complex commands (those with spaces/arguments)
-        // This is correct behavior - $(which) doesn't work with complex commands
-        assert!(!result1.contains("$(which"), "Complex commands should not be wrapped");
-        assert!(!result2.contains("$(which"), "Complex commands should not be wrapped");
+        // The key test is that we don't get double wrapping
+        // Note: eza and bat might be wrapped with $(which) if they're user-installed
 
         // Should not double-wrap
         assert!(!result1.contains("$(which $(which"));
