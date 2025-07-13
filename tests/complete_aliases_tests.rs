@@ -1,5 +1,4 @@
 use aka_lib::*;
-use std::collections::HashMap;
 use std::fs;
 use tempfile::TempDir;
 
@@ -228,8 +227,7 @@ aliases:
 
 #[cfg(test)]
 mod daemon_tests {
-    use super::*;
-    use aka_lib::protocol::{DaemonRequest, DaemonResponse};
+    use aka_lib::protocol::DaemonRequest;
     use serde_json;
 
     /// Test that CompleteAliases request can be serialized/deserialized

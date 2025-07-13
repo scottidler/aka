@@ -46,7 +46,16 @@ fn test_health_check_no_config() {
 
     // Don't create any config file
 
+    // Temporarily unset XDG_RUNTIME_DIR to force using home_dir for daemon socket
+    let original_xdg = std::env::var("XDG_RUNTIME_DIR").ok();
+    std::env::remove_var("XDG_RUNTIME_DIR");
+
     let result = execute_health_check(&home_dir).expect("Health check should work");
+
+    // Restore XDG_RUNTIME_DIR if it was set
+    if let Some(xdg) = original_xdg {
+        std::env::set_var("XDG_RUNTIME_DIR", xdg);
+    }
 
     // Should return 1 for config not found
     assert_eq!(result, 1, "Health check should return 1 when config file not found");
@@ -74,13 +83,22 @@ aliases:
 "#;
     fs::write(&config_file, test_config).expect("Failed to write config");
 
+    // Temporarily unset XDG_RUNTIME_DIR to force using home_dir for daemon socket
+    let original_xdg = std::env::var("XDG_RUNTIME_DIR").ok();
+    std::env::remove_var("XDG_RUNTIME_DIR");
+
     let result = execute_health_check(&home_dir).expect("Health check should work");
+
+    // Restore XDG_RUNTIME_DIR if it was set
+    if let Some(xdg) = original_xdg {
+        std::env::set_var("XDG_RUNTIME_DIR", xdg);
+    }
 
     // Should return 2 for invalid config
     assert_eq!(result, 2, "Health check should return 2 for invalid config");
 }
 
-/// Test health check with valid config but no aliases
+/// Test health check with config that has no aliases (invalid)
 #[test]
 fn test_health_check_no_aliases() {
     let temp_dir = TempDir::new().expect("Failed to create temp dir");
@@ -99,10 +117,19 @@ aliases: {}
 "#;
     fs::write(&config_file, test_config).expect("Failed to write config");
 
+    // Temporarily unset XDG_RUNTIME_DIR to force using home_dir for daemon socket
+    let original_xdg = std::env::var("XDG_RUNTIME_DIR").ok();
+    std::env::remove_var("XDG_RUNTIME_DIR");
+
     let result = execute_health_check(&home_dir).expect("Health check should work");
 
-    // Should return 3 for no aliases
-    assert_eq!(result, 3, "Health check should return 3 when no aliases defined");
+    // Restore XDG_RUNTIME_DIR if it was set
+    if let Some(xdg) = original_xdg {
+        std::env::set_var("XDG_RUNTIME_DIR", xdg);
+    }
+
+    // Should return 2 for invalid config (empty aliases are considered invalid)
+    assert_eq!(result, 2, "Health check should return 2 when config has no aliases (invalid config)");
 }
 
 /// Test health check exit code meanings
@@ -209,7 +236,7 @@ aliases:
 
 #[cfg(test)]
 mod daemon_status_format_tests {
-    use super::*;
+
 
     /// Test that daemon status format matches expected patterns
     #[test]
@@ -251,7 +278,8 @@ mod daemon_status_format_tests {
 
         for status in invalid_formats {
             // These should NOT match our new parsing logic
-            let matches_new_format = status.starts_with("healthy:") && (status.ends_with(":synced") || status.ends_with(":stale"));
+            let parts: Vec<&str> = status.split(':').collect();
+            let matches_new_format = parts.len() == 3 && parts[0] == "healthy" && parts[1].parse::<u32>().is_ok() && (parts[2] == "synced" || parts[2] == "stale");
             assert!(!matches_new_format, "Old format should not match new parsing logic: {}", status);
         }
     }

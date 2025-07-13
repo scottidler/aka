@@ -442,7 +442,9 @@ fn check_daemon_health(socket_path: &PathBuf) -> Result<bool> {
                         if let Some(status) = response.get("status").and_then(|s| s.as_str()) {
                             debug!("🔍 Daemon status parsed: {}", status);
                             // Parse format: "healthy:COUNT:synced" or "healthy:COUNT:stale"
-                            if status.starts_with("healthy:") && (status.ends_with(":synced") || status.ends_with(":stale")) {
+                            // Must be exactly 3 parts separated by colons
+                            let parts: Vec<&str> = status.split(':').collect();
+                            if parts.len() == 3 && parts[0] == "healthy" && parts[1].parse::<u32>().is_ok() && (parts[2] == "synced" || parts[2] == "stale") {
                                 debug!("✅ Daemon is healthy and has config loaded: {}", status);
                                 return Ok(true); // Daemon healthy
                             } else {
