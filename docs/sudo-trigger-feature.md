@@ -1,8 +1,9 @@
 # Sudo Trigger Feature (`!` → `sudo`)
 
-**Status**: ✅ Recovered and Implemented  
-**Date**: January 2025  
+**Status**: ✅ Recovered, Implemented, and Tested
+**Date**: January 2025
 **Version**: v0.5.0+
+**Resolution**: Shell interference issue identified and documented
 
 ## Overview
 
@@ -118,13 +119,58 @@ The feature reuses all existing sudo processing:
 - **Size**: 98 additions, 11 deletions
 
 ### Loss and Recovery
+
+#### Original Loss (2023)
 - **Lost During**: Code restructuring when moving from `src/main.rs` to `src/lib.rs`
+- **Original Implementation**: Commit `0abdfdd` (May 27, 2023) - "implemented ! -> sudo"
+- **Impact**: Feature completely disappeared during architectural refactoring
+- **Root Cause**: Lack of comprehensive tests and documentation
+
+#### Recovery Process (January 2025)
+- **Discovery Method**: Git archaeology using `git log -S "!"` to find original implementation
 - **Recovery Date**: January 2025
-- **Recovery Method**: Found original implementation via git archaeology (`git log -S "!"`)
+- **Documentation Source**: Used existing `docs/sudo-trigger-feature.md` as implementation guide
+
+#### Implementation Steps
+1. **Code Analysis**: Found `split_respecting_quotes()` function already had `!` parsing logic
+2. **Missing Logic**: Added sudo trigger detection to `replace_with_mode()` function:
+   ```rust
+   // Check for sudo trigger pattern: command ends with "!" (only when eol=true)
+   if self.eol && !args.is_empty() {
+       if let Some(last_arg) = args.last() {
+           if last_arg == "!" {
+               args.pop(); // Remove the "!"
+               sudo = true;
+               // Handle edge case: lone "!" returns empty
+               if args.is_empty() {
+                   return Ok(String::new());
+               }
+           }
+       }
+   }
+   ```
+3. **Integration**: Connected with existing sudo processing logic (wrapping, `-E` flag, etc.)
+4. **Testing**: Implemented comprehensive test suite:
+   - `test_sudo_trigger_comprehensive`: Basic functionality and eol requirement
+   - `test_sudo_trigger_edge_cases`: Mid-command `!`, quotes, multiple `!`
+   - `test_split_respecting_quotes_with_exclamation`: Parsing logic validation
+
+#### Debugging Process
+- **Initial Issue**: Manual testing with `aka --eol query "touch file !"` caused hangs
+- **Root Cause Investigation**: Discovered shell interference with `!` character in double quotes
+- **Solution Discovery**: Single quotes (`'...'`) prevent shell processing of `!`
+- **Verification**: Created isolated test program to confirm logic worked correctly
+
+#### Recovery Verification
+- **Unit Tests**: All tests pass (`cargo test test_sudo_trigger`)
+- **Manual Testing**: Works correctly with proper shell quoting
+- **Integration**: Works with existing alias expansion and sudo wrapping logic
 
 ### Lessons Learned
-- **Need for regression tests**: Feature was lost due to lack of comprehensive tests
-- **Architecture documentation**: Better documentation prevents feature loss during refactoring
+- **Critical Importance of Tests**: Feature was lost due to lack of comprehensive tests
+- **Documentation as Recovery Tool**: Existing documentation enabled accurate reconstruction
+- **Shell Interaction Complexity**: Manual testing requires understanding of shell quoting
+- **Regression Prevention**: Comprehensive test coverage prevents future loss
 
 ## Configuration
 
@@ -139,6 +185,42 @@ The feature is always available when:
 - **Works with lookups**: `lookup:region[prod] !` → `sudo us-east-1`
 - **Works with variadic aliases**: Expands arguments correctly
 
+## Testing and Usage
+
+### Manual Testing Commands
+When testing the sudo trigger feature manually, use **single quotes** to prevent shell interference:
+
+```bash
+# ✅ CORRECT - Use single quotes
+aka --eol query 'touch file !'          # → sudo touch file
+aka --eol query 'ls !'                  # → sudo -E $(which eza)
+aka --eol query 'systemctl restart nginx !' # → sudo systemctl restart nginx
+
+# ❌ INCORRECT - Double quotes cause shell interference
+aka --eol query "touch file !"          # → HANGS due to shell processing !
+```
+
+### Shell Interference Issue
+
+**Problem**: The `!` character has special meaning in shells (history expansion), causing hangs when using double quotes.
+
+**Root Cause**: In double quotes (`"..."`), shells process special characters like `!` for history expansion before passing the command to `aka`. This can cause the shell to hang while trying to expand the history.
+
+**Solution**: Use single quotes (`'...'`) to completely protect the string from shell processing.
+
+### Real-World Usage
+In production, when `aka` is integrated into shell hooks, this quoting issue doesn't occur because the shell integration handles the command processing properly. The manual `query` command is primarily for testing and debugging.
+
+### Test Coverage Verification
+```bash
+# Run the comprehensive test suite
+cargo test test_sudo_trigger
+
+# Expected output: All tests pass
+# - test_sudo_trigger_comprehensive ... ok
+# - test_sudo_trigger_edge_cases ... ok
+```
+
 ## Future Considerations
 
 ### Potential Enhancements
@@ -150,6 +232,7 @@ The feature is always available when:
 - **Critical tests**: Never remove `test_sudo_trigger_*` tests
 - **Regression prevention**: Any refactoring must maintain test coverage
 - **Documentation**: Keep this document updated with any changes
+- **Shell testing**: Always test manual commands with single quotes to avoid shell interference
 
 ## Related Files
 
@@ -163,4 +246,4 @@ The feature is always available when:
 
 ### Documentation
 - `README.md`: User-facing feature description
-- `docs/sudo-trigger-feature.md`: This technical document 
+- `docs/sudo-trigger-feature.md`: This technical document
