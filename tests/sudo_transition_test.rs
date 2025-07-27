@@ -27,7 +27,8 @@ aliases:
 "#;
     fs::write(&config_file, test_config).expect("Failed to write config");
 
-    let mut aka = AKA::new(false, home_dir).expect("Failed to create AKA");
+    let config_path = get_config_path(&home_dir).expect("Failed to get config path");
+    let mut aka = AKA::new(false, home_dir, config_path).expect("Failed to create AKA");
 
     println!("=== Testing sudo transition sequence ===");
 
@@ -103,7 +104,8 @@ aliases:
 "#;
     fs::write(&config_file, test_config).expect("Failed to write config");
 
-    let mut aka = AKA::new(false, home_dir).expect("Failed to create AKA");
+    let config_path = get_config_path(&home_dir).expect("Failed to get config path");
+    let mut aka = AKA::new(false, home_dir, config_path).expect("Failed to create AKA");
 
     // Test that already wrapped commands don't get double-wrapped
     let already_wrapped = "sudo $(which rkvr) rmrf target";
@@ -141,7 +143,8 @@ aliases:
 "#;
     fs::write(&config_file, test_config).expect("Failed to write config");
 
-    let mut aka = AKA::new(false, home_dir).expect("Failed to create AKA");
+    let config_path = get_config_path(&home_dir).expect("Failed to get config path");
+    let mut aka = AKA::new(false, home_dir, config_path).expect("Failed to create AKA");
 
     // Test that complex commands (with arguments) don't get $(which) wrapping
     let result = aka.replace("sudo ls target").expect("Should process sudo ls target");
@@ -177,7 +180,8 @@ aliases:
 "#;
     fs::write(&config_file, test_config).expect("Failed to write config");
 
-    let mut aka = AKA::new(false, home_dir).expect("Failed to create AKA");
+    let config_path = get_config_path(&home_dir).expect("Failed to get config path");
+    let mut aka = AKA::new(false, home_dir, config_path).expect("Failed to create AKA");
 
     let result = aka.replace("sudo rmrf target").expect("Should process sudo rmrf target");
 

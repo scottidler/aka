@@ -31,7 +31,7 @@ lookups:
     fs::write(&config_file, test_config).expect("Failed to write config");
 
     // Create AKA instance
-    let aka = AKA::new(false, home_dir).expect("Failed to create AKA instance");
+    let aka = AKA::new(false, home_dir, config_file).expect("Failed to create AKA instance");
 
     // Test the function
     let alias_names = get_alias_names_for_completion(&aka);
@@ -62,7 +62,7 @@ aliases:
     fs::write(&config_file, test_config).expect("Failed to write config");
 
     // Create AKA instance and clear aliases manually to test empty case
-    let mut aka = AKA::new(false, home_dir).expect("Failed to create AKA instance");
+    let mut aka = AKA::new(false, home_dir, config_file).expect("Failed to create AKA instance");
     aka.spec.aliases.clear();
 
     // Test the function
@@ -97,7 +97,7 @@ aliases:
     fs::write(&config_file, test_config).expect("Failed to write config");
 
     // Create AKA instance
-    let aka = AKA::new(false, home_dir).expect("Failed to create AKA instance");
+    let aka = AKA::new(false, home_dir, config_file).expect("Failed to create AKA instance");
 
     // Test the function
     let alias_names = get_alias_names_for_completion(&aka);
@@ -135,6 +135,7 @@ aliases:
     let output = Command::new("cargo")
         .args(&["run", "-q", "--", "-c", config_file.to_str().unwrap(), "__complete_aliases"])
         .env("HOME", home_dir.to_str().unwrap())
+        .env_remove("XDG_RUNTIME_DIR")  // Force direct mode by preventing daemon socket discovery
         .output()
         .expect("Failed to execute command");
 
@@ -176,6 +177,7 @@ aliases:
     let output = Command::new("cargo")
         .args(&["run", "-q", "--", "-c", config_file.to_str().unwrap(), "__complete_aliases"])
         .env("HOME", home_dir.to_str().unwrap())
+        .env_remove("XDG_RUNTIME_DIR")  // Force direct mode by preventing daemon socket discovery
         .output()
         .expect("Failed to execute command");
 
@@ -215,6 +217,7 @@ aliases:
     let output = Command::new("cargo")
         .args(&["run", "-q", "--", "-c", config_file.to_str().unwrap(), "__complete_aliases"])
         .env("HOME", home_dir.to_str().unwrap())
+        .env_remove("XDG_RUNTIME_DIR")  // Force direct mode by preventing daemon socket discovery
         .output()
         .expect("Failed to execute command");
 

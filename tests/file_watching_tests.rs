@@ -63,7 +63,7 @@ aliases:
         fs::write(&config_file, TEST_CONFIG_INITIAL).expect("Failed to write initial config");
 
         // Load initial config
-        let mut aka = AKA::new(false, cache_path.to_path_buf()).expect("Failed to load initial config");
+        let mut aka = AKA::new(false, cache_path.to_path_buf(), get_config_path(&cache_path.to_path_buf()).expect("Failed to get config path")).expect("Failed to load initial config");
         assert_eq!(aka.spec.aliases.len(), 2);
         assert!(aka.spec.aliases.contains_key("test-initial"));
         assert!(aka.spec.aliases.contains_key("test-local"));
@@ -72,7 +72,7 @@ aliases:
         fs::write(&config_file, TEST_CONFIG_UPDATED).expect("Failed to write updated config");
 
         // Manually reload config
-        aka = AKA::new(false, cache_path.to_path_buf()).expect("Failed to reload config");
+        aka = AKA::new(false, cache_path.to_path_buf(), get_config_path(&cache_path.to_path_buf()).expect("Failed to get config path")).expect("Failed to reload config");
         assert_eq!(aka.spec.aliases.len(), 4);
         assert!(aka.spec.aliases.contains_key("test-initial"));
         assert!(aka.spec.aliases.contains_key("test-local"));
@@ -124,7 +124,7 @@ aliases:
 
         // Test valid config
         fs::write(&config_file, TEST_CONFIG_INITIAL).expect("Failed to write valid config");
-        let result = AKA::new(false, cache_path.to_path_buf());
+        let result = AKA::new(false, cache_path.to_path_buf(), get_config_path(&cache_path.to_path_buf()).expect("Failed to get config path"));
         assert!(result.is_ok(), "Loading valid config should succeed");
 
         // Test invalid config (missing required fields)
@@ -132,12 +132,12 @@ aliases:
 invalid_yaml: [
         "#;
         fs::write(&config_file, invalid_config).expect("Failed to write invalid config");
-        let result = AKA::new(false, cache_path.to_path_buf());
+        let result = AKA::new(false, cache_path.to_path_buf(), get_config_path(&cache_path.to_path_buf()).expect("Failed to get config path"));
         assert!(result.is_err(), "Loading invalid config should fail");
 
         // Test config that becomes valid again
         fs::write(&config_file, TEST_CONFIG_UPDATED).expect("Failed to write valid config again");
-        let result = AKA::new(false, cache_path.to_path_buf());
+        let result = AKA::new(false, cache_path.to_path_buf(), get_config_path(&cache_path.to_path_buf()).expect("Failed to get config path"));
         assert!(result.is_ok(), "Loading valid config again should succeed");
 
         // Clean up
@@ -154,7 +154,7 @@ invalid_yaml: [
         fs::write(&config_file, TEST_CONFIG_INITIAL).expect("Failed to write initial config");
 
         // Load initial config and test alias
-        let mut aka = AKA::new(false, cache_path.to_path_buf()).expect("Failed to load initial config");
+        let mut aka = AKA::new(false, cache_path.to_path_buf(), get_config_path(&cache_path.to_path_buf()).expect("Failed to get config path")).expect("Failed to load initial config");
         let result = aka.replace_with_mode("test-initial", aka_lib::ProcessingMode::Direct).expect("Failed to process alias");
         assert_eq!(result.trim(), "echo \"initial test\"");
 
@@ -162,7 +162,7 @@ invalid_yaml: [
         fs::write(&config_file, TEST_CONFIG_UPDATED).expect("Failed to write updated config");
 
         // Reload config
-        let mut aka = AKA::new(false, cache_path.to_path_buf()).expect("Failed to reload config");
+        let mut aka = AKA::new(false, cache_path.to_path_buf(), get_config_path(&cache_path.to_path_buf()).expect("Failed to get config path")).expect("Failed to reload config");
 
         // Test that old alias still works
         let result = aka.replace_with_mode("test-initial", aka_lib::ProcessingMode::Direct).expect("Failed to process old alias");
@@ -207,12 +207,12 @@ invalid_yaml: [
 
         // Initial config with 2 aliases
         fs::write(&config_file, TEST_CONFIG_INITIAL).expect("Failed to write initial config");
-        let aka = AKA::new(false, cache_path.to_path_buf()).expect("Failed to load initial config");
+        let aka = AKA::new(false, cache_path.to_path_buf(), get_config_path(&cache_path.to_path_buf()).expect("Failed to get config path")).expect("Failed to load initial config");
         assert_eq!(aka.spec.aliases.len(), 2);
 
         // Updated config with 4 aliases
         fs::write(&config_file, TEST_CONFIG_UPDATED).expect("Failed to write updated config");
-        let aka = AKA::new(false, cache_path.to_path_buf()).expect("Failed to reload config");
+        let aka = AKA::new(false, cache_path.to_path_buf(), get_config_path(&cache_path.to_path_buf()).expect("Failed to get config path")).expect("Failed to reload config");
         assert_eq!(aka.spec.aliases.len(), 4);
 
         // Verify specific aliases exist
@@ -234,7 +234,7 @@ invalid_yaml: [
         let config_file = config_dir.join("aka.yml");
         fs::write(&config_file, TEST_CONFIG_UPDATED).expect("Failed to write config");
 
-        let aka = AKA::new(false, cache_path.to_path_buf()).expect("Failed to load config");
+        let aka = AKA::new(false, cache_path.to_path_buf(), get_config_path(&cache_path.to_path_buf()).expect("Failed to get config path")).expect("Failed to load config");
 
         // Check global aliases
         let global_aliases: Vec<_> = aka.spec.aliases.values()

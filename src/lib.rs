@@ -691,13 +691,10 @@ pub struct AKA {
 }
 
 impl AKA {
-    pub fn new(eol: bool, home_dir: PathBuf) -> Result<Self> {
+    pub fn new(eol: bool, home_dir: PathBuf, config_path: PathBuf) -> Result<Self> {
         use std::time::Instant;
 
         let start_total = Instant::now();
-
-        // Config path is always derived from home_dir using the same function
-        let config_path = get_config_path(&home_dir)?;
 
         // Calculate config hash
         let config_hash = hash_config_file(&config_path)?;
@@ -709,15 +706,28 @@ impl AKA {
         let mut spec = loader.load(&config_path)?;
         let load_duration = start_load.elapsed();
 
-        // Sync cache with config
+        // Sync cache with config - but only if using default config path
         let start_cache = Instant::now();
-        let cache = sync_cache_with_config(&home_dir)?;
-        debug!("📋 Using cached aliases with usage counts ({} aliases)", cache.aliases.len());
-        // Log a sample alias count for debugging
-        if let Some((name, alias)) = cache.aliases.iter().next() {
-            debug!("📋 Sample alias '{}' has count: {}", name, alias.count);
+        let default_config_path = get_config_path(&home_dir).unwrap_or_else(|_| PathBuf::new());
+        
+        debug!("🔍 Config path comparison:");
+        debug!("  📄 Provided config: {:?}", config_path);
+        debug!("  📄 Default config: {:?}", default_config_path);
+        debug!("  ✅ Paths equal: {}", config_path == default_config_path);
+        
+        if config_path == default_config_path {
+            // Using default config, so use cache
+            let cache = sync_cache_with_config_path(&home_dir, &config_path)?;
+            debug!("📋 Using cached aliases with usage counts ({} aliases)", cache.aliases.len());
+            // Log a sample alias count for debugging
+            if let Some((name, alias)) = cache.aliases.iter().next() {
+                debug!("📋 Sample alias '{}' has count: {}", name, alias.count);
+            }
+            spec.aliases = cache.aliases;
+        } else {
+            // Using custom config, skip cache and use config as-is
+            debug!("📋 Using custom config, skipping cache ({} aliases)", spec.aliases.len());
         }
-        spec.aliases = cache.aliases;
         let cache_duration = start_cache.elapsed();
 
         let total_duration = start_total.elapsed();
@@ -1231,6 +1241,25 @@ pub fn sync_cache_with_config(home_dir: &PathBuf) -> Result<AliasCache> {
     Ok(cache)
 }
 
+pub fn sync_cache_with_config_path(home_dir: &PathBuf, config_path: &PathBuf) -> Result<AliasCache> {
+    // 1. Calculate current YAML hash from the specific config file
+    let current_hash = hash_config_file(config_path)?;
+
+    // 2. Load existing cache (or default)
+    let mut cache = load_alias_cache(home_dir)?;
+
+    // 3. Check if hash changed
+    if cache.hash != current_hash {
+        // 4. Merge existing counts with new config from the specific config file
+        cache = merge_cache_with_config_path(cache, current_hash, config_path)?;
+
+        // 5. Save updated cache (hash is embedded)
+        save_alias_cache(&cache, home_dir)?;
+    }
+
+    Ok(cache)
+}
+
 pub fn merge_cache_with_config(
     old_cache: AliasCache,
     new_hash: String,
@@ -1240,6 +1269,33 @@ pub fn merge_cache_with_config(
     let config_path = get_config_path(home_dir)?;
     let loader = Loader::new();
     let new_spec = loader.load(&config_path)?;
+
+    // 2. Create new cache with new hash
+    let mut new_cache = AliasCache {
+        hash: new_hash,
+        aliases: HashMap::new(),
+    };
+
+    // 3. For each alias in new config:
+    for (name, mut alias) in new_spec.aliases {
+        // Preserve count if alias existed before
+        if let Some(old_alias) = old_cache.aliases.get(&name) {
+            alias.count = old_alias.count;
+        }
+        new_cache.aliases.insert(name, alias);
+    }
+
+    Ok(new_cache)
+}
+
+pub fn merge_cache_with_config_path(
+    old_cache: AliasCache,
+    new_hash: String,
+    config_path: &PathBuf
+) -> Result<AliasCache> {
+    // 1. Load new config from the specific YAML file
+    let loader = Loader::new();
+    let new_spec = loader.load(config_path)?;
 
     // 2. Create new cache with new hash
     let mut new_cache = AliasCache {

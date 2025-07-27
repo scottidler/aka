@@ -1,6 +1,6 @@
 use std::fs;
 use tempfile::TempDir;
-use aka_lib::{DaemonRequest, DaemonResponse, AKA, ProcessingMode};
+use aka_lib::{DaemonRequest, DaemonResponse, AKA, ProcessingMode, get_config_path};
 
 /// Test that protocol definitions are consistent across the codebase
 #[test]
@@ -127,12 +127,13 @@ aliases:
     for (cmdline, eol) in test_cases {
         // Test direct mode
         let home_dir = temp_dir.path().to_path_buf();
-        let mut aka_direct = AKA::new(eol, home_dir.clone()).expect("Failed to create AKA for direct mode");
+        let config_path = get_config_path(&home_dir).expect("Failed to get config path");
+        let mut aka_direct = AKA::new(eol, home_dir.clone(), config_path.clone()).expect("Failed to create AKA for direct mode");
         let direct_result = aka_direct.replace_with_mode(cmdline, ProcessingMode::Direct)
             .expect("Direct mode should work");
 
         // Test daemon mode (simulated - we can't easily test the actual daemon here)
-        let mut aka_daemon = AKA::new(eol, home_dir).expect("Failed to create AKA for daemon mode");
+        let mut aka_daemon = AKA::new(eol, home_dir, config_path).expect("Failed to create AKA for daemon mode");
         let daemon_result = aka_daemon.replace_with_mode(cmdline, ProcessingMode::Daemon)
             .expect("Daemon mode should work");
 

@@ -29,7 +29,7 @@ aliases:
 "#;
     fs::write(&config_file, test_config).expect("Failed to write config");
 
-    let mut aka = AKA::new(false, home_dir).expect("Failed to create AKA");
+    let mut aka = AKA::new(false, home_dir.clone(), get_config_path(&home_dir).expect("Failed to get config path")).expect("Failed to create AKA");
 
     // Test cases
     let test_cases = vec![
@@ -77,7 +77,7 @@ aliases:
 "#;
     fs::write(&config_file, test_config).expect("Failed to write config");
 
-    let mut aka = AKA::new(false, home_dir).expect("Failed to create AKA");
+    let mut aka = AKA::new(false, home_dir.clone(), get_config_path(&home_dir).expect("Failed to get config path")).expect("Failed to create AKA");
 
     // First application
     let result1 = aka.replace("sudo ls").expect("First application should work");
@@ -122,7 +122,7 @@ aliases:
 "#;
     fs::write(&config_file, test_config).expect("Failed to write config");
 
-    let mut aka = AKA::new(false, home_dir).expect("Failed to create AKA");
+    let mut aka = AKA::new(false, home_dir.clone(), get_config_path(&home_dir).expect("Failed to get config path")).expect("Failed to create AKA");
 
     // Complex commands that should not be wrapped
     let complex_commands = vec![
@@ -173,7 +173,7 @@ aliases:
 "#;
     fs::write(&config_file, test_config).expect("Failed to write config");
 
-    let mut aka = AKA::new(false, home_dir).expect("Failed to create AKA");
+    let mut aka = AKA::new(false, home_dir.clone(), get_config_path(&home_dir).expect("Failed to get config path")).expect("Failed to create AKA");
 
     // Test with commands that definitely don't exist
     let nonexistent_commands = vec![
@@ -220,7 +220,7 @@ aliases:
 "#;
     fs::write(&config_file, test_config).expect("Failed to write config");
 
-    let mut aka = AKA::new(false, home_dir).expect("Failed to create AKA");
+    let mut aka = AKA::new(false, home_dir.clone(), get_config_path(&home_dir).expect("Failed to get config path")).expect("Failed to create AKA");
 
     // Edge cases
     let edge_cases = vec![
@@ -267,7 +267,7 @@ aliases:
 "#;
     fs::write(&config_file, test_config).expect("Failed to write config");
 
-    let mut aka = AKA::new(false, home_dir).expect("Failed to create AKA");
+    let mut aka = AKA::new(false, home_dir.clone(), get_config_path(&home_dir).expect("Failed to get config path")).expect("Failed to create AKA");
 
     // Test that alias expansion still works with sudo
     let test_cases = vec![
@@ -316,7 +316,7 @@ aliases:
 "#;
     fs::write(&config_file, test_config).expect("Failed to write config");
 
-    let mut aka = AKA::new(false, home_dir).expect("Failed to create AKA");
+    let mut aka = AKA::new(false, home_dir.clone(), get_config_path(&home_dir).expect("Failed to get config path")).expect("Failed to create AKA");
 
     // Test that arguments are preserved
     let result = aka.replace("sudo ls -la --color").expect("Should preserve arguments");
@@ -357,7 +357,7 @@ aliases:
 "#;
     fs::write(&config_file, test_config).expect("Failed to write config");
 
-    let mut aka = AKA::new(false, home_dir).expect("Failed to create AKA");
+    let mut aka = AKA::new(false, home_dir.clone(), get_config_path(&home_dir).expect("Failed to get config path")).expect("Failed to create AKA");
 
     // Test that repeated applications are consistent
     let input = "sudo ls";

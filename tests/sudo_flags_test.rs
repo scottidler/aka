@@ -27,7 +27,7 @@ aliases:
 "#;
     fs::write(&config_file, test_config).expect("Failed to write config");
 
-    let mut aka = AKA::new(false, home_dir.clone()).expect("Failed to create AKA instance");
+    let mut aka = AKA::new(false, home_dir.clone(), config_file).expect("Failed to create AKA instance");
 
     // Test various sudo flag combinations
     let test_cases = vec![
@@ -68,7 +68,7 @@ aliases:
 "#;
     fs::write(&config_file, test_config).expect("Failed to write config");
 
-    let mut aka = AKA::new(false, home_dir.clone()).expect("Failed to create AKA instance");
+    let mut aka = AKA::new(false, home_dir.clone(), config_file).expect("Failed to create AKA instance");
 
     // Test sudo flags with direct commands (no aliases)
     let test_cases = vec![
@@ -106,7 +106,7 @@ aliases:
 "#;
     fs::write(&config_file, test_config).expect("Failed to write config");
 
-    let mut aka = AKA::new(false, home_dir.clone()).expect("Failed to create AKA instance");
+    let mut aka = AKA::new(false, home_dir.clone(), config_file).expect("Failed to create AKA instance");
 
     // Test edge cases
     let test_cases = vec![

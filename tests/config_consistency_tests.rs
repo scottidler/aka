@@ -225,12 +225,12 @@ aliases:
     fs::write(&config_file, test_config).expect("Failed to write config file");
 
     // Test direct mode initialization
-    let aka_direct = AKA::new(false, home_dir.clone()).expect("Failed to create AKA for direct mode");
+    let aka_direct = AKA::new(false, home_dir.clone(), config_file.clone()).expect("Failed to create AKA for direct mode");
     assert_eq!(aka_direct.spec.aliases.len(), 2);
     assert!(!aka_direct.eol);
 
     // Test daemon mode initialization (simulated)
-    let aka_daemon = AKA::new(false, home_dir.clone()).expect("Failed to create AKA for daemon mode");
+    let aka_daemon = AKA::new(false, home_dir.clone(), config_file.clone()).expect("Failed to create AKA for daemon mode");
     assert_eq!(aka_daemon.spec.aliases.len(), 2);
     assert!(!aka_daemon.eol);
 
@@ -273,8 +273,8 @@ lookups:
 
     // Test both EOL modes
     for eol in [true, false] {
-        let mut aka_direct = AKA::new(eol, home_dir.clone()).expect("Failed to create AKA for direct mode");
-        let mut aka_daemon = AKA::new(eol, home_dir.clone()).expect("Failed to create AKA for daemon mode");
+        let mut aka_direct = AKA::new(eol, home_dir.clone(), config_file.clone()).expect("Failed to create AKA for direct mode");
+        let mut aka_daemon = AKA::new(eol, home_dir.clone(), config_file.clone()).expect("Failed to create AKA for daemon mode");
 
         // Test alias processing
         let test_cases = vec![

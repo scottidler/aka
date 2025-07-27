@@ -7,7 +7,7 @@ use tempfile::TempDir;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 // Import the actual daemon types
-use aka_lib::{AKA, hash_config_file};
+use aka_lib::{AKA, hash_config_file, get_config_path};
 
 #[cfg(test)]
 mod actual_daemon_race_conditions {
@@ -57,7 +57,7 @@ aliases:
         let (_temp_dir, config_path, home_dir) = setup_test_environment("actual_race_condition");
 
         // Load initial config exactly like the real daemon
-        let initial_aka = AKA::new(false, home_dir.clone()).expect("Failed to load initial config");
+        let initial_aka = AKA::new(false, home_dir.clone(), get_config_path(&home_dir).expect("Failed to get config path")).expect("Failed to load initial config");
         let initial_hash = hash_config_file(&config_path).expect("Failed to hash config");
 
         // Use the ACTUAL daemon structure - separate Arc<RwLock<T>> instances
@@ -88,7 +88,7 @@ aliases:
 
             // ACTUAL daemon reload logic - this is the problematic code!
             let new_hash = hash_config_file(&config_path_reload).expect("Failed to hash updated config");
-            let new_aka = AKA::new(false, home_dir_reload).expect("Failed to load updated config");
+            let new_aka = AKA::new(false, home_dir_reload.clone(), get_config_path(&home_dir_reload).expect("Failed to get config path")).expect("Failed to load updated config");
 
             // NEW: Test the FIXED daemon reload logic - atomic updates
             // Update stored config and hash atomically (hold both locks simultaneously)
@@ -248,7 +248,7 @@ aliases:
         let (_temp_dir, config_path, home_dir) = setup_test_environment("concurrent_reload_race");
 
         // Setup like real daemon
-        let initial_aka = AKA::new(false, home_dir.clone()).expect("Failed to load initial config");
+        let initial_aka = AKA::new(false, home_dir.clone(), get_config_path(&home_dir).expect("Failed to get config path")).expect("Failed to load initial config");
         let initial_hash = hash_config_file(&config_path).expect("Failed to hash config");
 
         let aka = Arc::new(std::sync::RwLock::new(initial_aka));
@@ -308,7 +308,7 @@ aliases:
                                 // Simulate config loading time
                                 thread::sleep(Duration::from_millis(5));
 
-                                match AKA::new(false, home_dir_clone.clone()) {
+                                match AKA::new(false, home_dir_clone.clone(), get_config_path(&home_dir_clone).expect("Failed to get config path")) {
                                     Ok(new_aka) => {
                                         *aka_guard = new_aka;
 
@@ -392,7 +392,7 @@ aliases:
         let (_temp_dir, config_path, home_dir) = setup_test_environment("no_debouncing_test");
 
         // Setup like real daemon
-        let initial_aka = AKA::new(false, home_dir.clone()).expect("Failed to load initial config");
+        let initial_aka = AKA::new(false, home_dir.clone(), get_config_path(&home_dir).expect("Failed to get config path")).expect("Failed to load initial config");
         let initial_hash = hash_config_file(&config_path).expect("Failed to hash config");
 
         let aka = Arc::new(std::sync::RwLock::new(initial_aka));
@@ -445,7 +445,7 @@ aliases:
                                 // Simulate reload work
                                 thread::sleep(Duration::from_millis(10));
 
-                                if let Ok(new_aka) = AKA::new(false, home_dir_clone.clone()) {
+                                if let Ok(new_aka) = AKA::new(false, home_dir_clone.clone(), get_config_path(&home_dir_clone).expect("Failed to get config path")) {
                                     *aka_guard = new_aka;
                                     *hash_guard = new_hash;
                                     println!("Rapid reload {} completed", i);

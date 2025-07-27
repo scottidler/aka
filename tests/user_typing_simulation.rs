@@ -51,9 +51,12 @@ aliases:
 "#;
     fs::write(&config_file, test_config).expect("Failed to write config");
 
+    // Get config path once for all tests
+    let config_path = get_config_path(&home_dir).expect("Failed to get config path");
+
     // Test 1: User typing "ls" and pressing space (mid-typing)
     println!("=== TEST 1: User types 'ls' and presses SPACE ===");
-    let mut aka_space = AKA::new(false, home_dir.clone()).expect("Failed to create AKA instance");
+    let mut aka_space = AKA::new(false, home_dir.clone(), config_path.clone()).expect("Failed to create AKA instance");
     let result = aka_space.replace("ls").expect("Should process ls");
     println!("Input: 'ls' (space pressed, eol=false)");
     println!("Output: '{}'", result);
@@ -61,7 +64,7 @@ aliases:
 
     // Test 2: User typing "ls" and pressing enter (command execution)
     println!("\n=== TEST 2: User types 'ls' and presses ENTER ===");
-    let mut aka_enter = AKA::new(true, home_dir.clone()).expect("Failed to create AKA instance");
+    let mut aka_enter = AKA::new(true, home_dir.clone(), config_path.clone()).expect("Failed to create AKA instance");
     let result = aka_enter.replace("ls").expect("Should process ls");
     println!("Input: 'ls' (enter pressed, eol=true)");
     println!("Output: '{}'", result);
@@ -69,7 +72,7 @@ aliases:
 
     // Test 3: User typing "echo_all hello" and pressing space (mid-typing)
     println!("\n=== TEST 3: User types 'echo_all hello' and presses SPACE ===");
-    let mut aka_space = AKA::new(false, home_dir.clone()).expect("Failed to create AKA instance");
+    let mut aka_space = AKA::new(false, home_dir.clone(), config_path.clone()).expect("Failed to create AKA instance");
     let result = aka_space.replace("echo_all hello").expect("Should process echo_all hello");
     println!("Input: 'echo_all hello' (space pressed, eol=false)");
     println!("Output: '{}'", result);
@@ -78,7 +81,7 @@ aliases:
 
     // Test 4: User typing "echo_all hello" and pressing enter (command execution)
     println!("\n=== TEST 4: User types 'echo_all hello' and presses ENTER ===");
-    let mut aka_enter = AKA::new(true, home_dir.clone()).expect("Failed to create AKA instance");
+    let mut aka_enter = AKA::new(true, home_dir.clone(), config_path.clone()).expect("Failed to create AKA instance");
     let result = aka_enter.replace("echo_all hello").expect("Should process echo_all hello");
     println!("Input: 'echo_all hello' (enter pressed, eol=true)");
     println!("Output: '{}'", result);
@@ -86,7 +89,7 @@ aliases:
 
     // Test 5: User typing "echo_all hello world" and pressing space (mid-typing)
     println!("\n=== TEST 5: User types 'echo_all hello world' and presses SPACE ===");
-    let mut aka_space = AKA::new(false, home_dir.clone()).expect("Failed to create AKA instance");
+    let mut aka_space = AKA::new(false, home_dir.clone(), config_path.clone()).expect("Failed to create AKA instance");
     let result = aka_space.replace("echo_all hello world").expect("Should process echo_all hello world");
     println!("Input: 'echo_all hello world' (space pressed, eol=false)");
     println!("Output: '{}'", result);
@@ -94,7 +97,7 @@ aliases:
 
     // Test 6: User typing "echo_all hello world" and pressing enter (command execution)
     println!("\n=== TEST 6: User types 'echo_all hello world' and presses ENTER ===");
-    let mut aka_enter = AKA::new(true, home_dir.clone()).expect("Failed to create AKA instance");
+    let mut aka_enter = AKA::new(true, home_dir.clone(), config_path.clone()).expect("Failed to create AKA instance");
     let result = aka_enter.replace("echo_all hello world").expect("Should process echo_all hello world");
     println!("Input: 'echo_all hello world' (enter pressed, eol=true)");
     println!("Output: '{}'", result);
@@ -102,7 +105,7 @@ aliases:
 
     // Test 7: User typing "greet World" and pressing space (mid-typing)
     println!("\n=== TEST 7: User types 'greet World' and presses SPACE ===");
-    let mut aka_space = AKA::new(false, home_dir.clone()).expect("Failed to create AKA instance");
+    let mut aka_space = AKA::new(false, home_dir.clone(), config_path.clone()).expect("Failed to create AKA instance");
     let result = aka_space.replace("greet World").expect("Should process greet World");
     println!("Input: 'greet World' (space pressed, eol=false)");
     println!("Output: '{}'", result);
@@ -110,7 +113,7 @@ aliases:
 
     // Test 8: User typing "greet World" and pressing enter (command execution)
     println!("\n=== TEST 8: User types 'greet World' and presses ENTER ===");
-    let mut aka_enter = AKA::new(true, home_dir.clone()).expect("Failed to create AKA instance");
+    let mut aka_enter = AKA::new(true, home_dir.clone(), config_path.clone()).expect("Failed to create AKA instance");
     let result = aka_enter.replace("greet World").expect("Should process greet World");
     println!("Input: 'greet World' (enter pressed, eol=true)");
     println!("Output: '{}'", result);
@@ -118,7 +121,7 @@ aliases:
 
     // Test 9: User typing "gc" and pressing space (mid-typing) - no space alias
     println!("\n=== TEST 9: User types 'gc' and presses SPACE (no space alias) ===");
-    let mut aka_space = AKA::new(false, home_dir.clone()).expect("Failed to create AKA instance");
+    let mut aka_space = AKA::new(false, home_dir.clone(), config_path.clone()).expect("Failed to create AKA instance");
     let result = aka_space.replace("gc").expect("Should process gc");
     println!("Input: 'gc' (space pressed, eol=false)");
     println!("Output: '{}'", result);
@@ -126,7 +129,7 @@ aliases:
 
     // Test 10: User typing "gc" and pressing enter (command execution) - no space alias
     println!("\n=== TEST 10: User types 'gc' and presses ENTER (no space alias) ===");
-    let mut aka_enter = AKA::new(true, home_dir.clone()).expect("Failed to create AKA instance");
+    let mut aka_enter = AKA::new(true, home_dir.clone(), config_path.clone()).expect("Failed to create AKA instance");
     let result = aka_enter.replace("gc").expect("Should process gc");
     println!("Input: 'gc' (enter pressed, eol=true)");
     println!("Output: '{}'", result);
@@ -156,6 +159,9 @@ aliases:
     global: false
 "#;
     fs::write(&config_file, test_config).expect("Failed to write config");
+
+    // Get config path for all tests
+    let config_path = get_config_path(&home_dir).expect("Failed to get config path");
 
     println!("\n=== PROGRESSIVE TYPING SIMULATION ===");
 
@@ -187,12 +193,12 @@ aliases:
         println!("\nStep {}: User typed '{}'", i + 1, input);
 
         // Test with space press (eol=false)
-        let mut aka_space = AKA::new(false, home_dir.clone()).expect("Failed to create AKA instance");
+        let mut aka_space = AKA::new(false, home_dir.clone(), config_path.clone()).expect("Failed to create AKA instance");
         let result_space = aka_space.replace(input).expect("Should process input");
         println!("  Space press (eol=false): '{}'", result_space);
 
         // Test with enter press (eol=true)
-        let mut aka_enter = AKA::new(true, home_dir.clone()).expect("Failed to create AKA instance");
+        let mut aka_enter = AKA::new(true, home_dir.clone(), config_path.clone()).expect("Failed to create AKA instance");
         let result_enter = aka_enter.replace(input).expect("Should process input");
         println!("  Enter press (eol=true): '{}'", result_enter);
 
@@ -228,6 +234,9 @@ aliases:
 "#;
     fs::write(&config_file, test_config).expect("Failed to write config");
 
+    // Get config path for all tests
+    let config_path = get_config_path(&home_dir).expect("Failed to get config path");
+
     println!("\n=== SUDO TYPING SIMULATION ===");
 
     // Simulate user typing sudo commands
@@ -245,12 +254,12 @@ aliases:
         println!("\nUser types: '{}'", input);
 
         // Test with space press (eol=false)
-        let mut aka_space = AKA::new(false, home_dir.clone()).expect("Failed to create AKA instance");
+        let mut aka_space = AKA::new(false, home_dir.clone(), config_path.clone()).expect("Failed to create AKA instance");
         let result_space = aka_space.replace(input).expect("Should process input");
         println!("  Space press result: '{}'", result_space);
 
         // Test with enter press (eol=true)
-        let mut aka_enter = AKA::new(true, home_dir.clone()).expect("Failed to create AKA instance");
+        let mut aka_enter = AKA::new(true, home_dir.clone(), config_path.clone()).expect("Failed to create AKA instance");
         let result_enter = aka_enter.replace(input).expect("Should process input");
         println!("  Enter press result: '{}'", result_enter);
 
@@ -292,6 +301,9 @@ aliases:
 "#;
     fs::write(&config_file, test_config).expect("Failed to write config");
 
+    // Get config path for all tests
+    let config_path = get_config_path(&home_dir).expect("Failed to get config path");
+
     println!("\n=== MIXED ALIAS TYPES SIMULATION ===");
 
     let test_cases = vec![
@@ -308,13 +320,13 @@ aliases:
         println!("Input: '{}'", input);
 
         // Test with space press (eol=false)
-        let mut aka_space = AKA::new(false, home_dir.clone()).expect("Failed to create AKA instance");
+        let mut aka_space = AKA::new(false, home_dir.clone(), config_path.clone()).expect("Failed to create AKA instance");
         let result_space = aka_space.replace(input).expect("Should process input");
         println!("  Space press: '{}'", result_space);
         assert_eq!(result_space, expected_space, "Space result mismatch for '{}'", input);
 
         // Test with enter press (eol=true)
-        let mut aka_enter = AKA::new(true, home_dir.clone()).expect("Failed to create AKA instance");
+        let mut aka_enter = AKA::new(true, home_dir.clone(), config_path.clone()).expect("Failed to create AKA instance");
         let result_enter = aka_enter.replace(input).expect("Should process input");
         println!("  Enter press: '{}'", result_enter);
         assert_eq!(result_enter, expected_enter, "Enter result mismatch for '{}'", input);
@@ -340,6 +352,9 @@ aliases:
 "#;
     fs::write(&config_file, test_config).expect("Failed to write config");
 
+    // Get config path for all tests
+    let config_path = get_config_path(&home_dir).expect("Failed to get config path");
+
     println!("\n=== ORIGINAL USER SEQUENCE SIMULATION ===");
 
     // The exact sequence the user described
@@ -357,12 +372,12 @@ aliases:
         println!("\nUser types: '{}'", input);
 
         // Test with space press (eol=false) - what happens when user presses space
-        let mut aka_space = AKA::new(false, home_dir.clone()).expect("Failed to create AKA instance");
+        let mut aka_space = AKA::new(false, home_dir.clone(), config_path.clone()).expect("Failed to create AKA instance");
         let result_space = aka_space.replace(input).expect("Should process input");
         println!("  Space press (mid-typing): '{}'", result_space);
 
         // Test with enter press (eol=true) - what happens when user presses enter
-        let mut aka_enter = AKA::new(true, home_dir.clone()).expect("Failed to create AKA instance");
+        let mut aka_enter = AKA::new(true, home_dir.clone(), config_path.clone()).expect("Failed to create AKA instance");
         let result_enter = aka_enter.replace(input).expect("Should process input");
         println!("  Enter press (execute): '{}'", result_enter);
 

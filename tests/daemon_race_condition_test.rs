@@ -6,7 +6,7 @@ use std::path::PathBuf;
 use tempfile::TempDir;
 
 // Import daemon types
-use aka_lib::{AKA, hash_config_file};
+use aka_lib::{AKA, hash_config_file, get_config_path};
 
 #[cfg(test)]
 mod daemon_race_condition_tests {
@@ -67,7 +67,7 @@ aliases:
         let (_temp_dir, config_path, home_dir) = setup_test_environment("query_reload_race_fixed");
         
         // Load initial config
-        let initial_aka = AKA::new(false, home_dir.clone()).expect("Failed to load initial config");
+        let initial_aka = AKA::new(false, home_dir.clone(), get_config_path(&home_dir).expect("Failed to get config path")).expect("Failed to load initial config");
         let initial_hash = hash_config_file(&config_path).expect("Failed to hash config");
         
         // NEW: Use atomic state management (single RwLock for both config and hash)
@@ -104,7 +104,7 @@ aliases:
             
             // NEW: Atomic reload logic
             let new_hash = hash_config_file(&config_path_reload).expect("Failed to hash updated config");
-            let new_aka = AKA::new(false, home_dir_reload).expect("Failed to load updated config");
+            let new_aka = AKA::new(false, home_dir_reload.clone(), get_config_path(&home_dir_reload).expect("Failed to get config path")).expect("Failed to load updated config");
             
             // ATOMIC STATE UPDATE: Update both config and hash together
             {
@@ -228,7 +228,7 @@ aliases:
         let (_temp_dir, config_path, home_dir) = setup_test_environment("multiple_reload_triggers_sync");
         
         // NEW: Use atomic state management
-        let initial_aka = AKA::new(false, home_dir.clone()).expect("Failed to load initial config");
+        let initial_aka = AKA::new(false, home_dir.clone(), get_config_path(&home_dir).expect("Failed to get config path")).expect("Failed to load initial config");
         let initial_hash = hash_config_file(&config_path).expect("Failed to hash config");
         let initial_state = TestDaemonState::new(initial_aka, initial_hash);
         let atomic_state = Arc::new(std::sync::RwLock::new(initial_state));
@@ -283,7 +283,7 @@ aliases:
                                 // Simulate config loading time
                                 thread::sleep(Duration::from_millis(5));
                                 
-                                match AKA::new(false, home_dir_clone.clone()) {
+                                match AKA::new(false, home_dir_clone.clone(), get_config_path(&home_dir_clone).expect("Failed to get config path")) {
                                     Ok(new_aka) => {
                                         // ATOMIC UPDATE
                                         state_guard.aka = new_aka;
@@ -355,7 +355,7 @@ aliases:
         let (_temp_dir, config_path, home_dir) = setup_test_environment("atomic_state_consistency");
         
         // NEW: Use atomic state management
-        let initial_aka = AKA::new(false, home_dir.clone()).expect("Failed to load initial config");
+        let initial_aka = AKA::new(false, home_dir.clone(), get_config_path(&home_dir).expect("Failed to get config path")).expect("Failed to load initial config");
         let initial_hash = hash_config_file(&config_path).expect("Failed to hash config");
         let initial_state = TestDaemonState::new(initial_aka, initial_hash);
         let atomic_state = Arc::new(std::sync::RwLock::new(initial_state));
@@ -377,7 +377,7 @@ aliases:
             
             // NEW: Atomic reload sequence
             let new_hash = hash_config_file(&config_path_reload).expect("Failed to hash config");
-            let new_aka = AKA::new(false, home_dir_reload).expect("Failed to load config");
+            let new_aka = AKA::new(false, home_dir_reload.clone(), get_config_path(&home_dir_reload).expect("Failed to get config path")).expect("Failed to load config");
             
             // ATOMIC UPDATE: Both config and hash updated together
             {
@@ -451,7 +451,7 @@ aliases:
         let (_temp_dir, config_path, home_dir) = setup_test_environment("debouncing_test");
         
         // NEW: Use atomic state management
-        let initial_aka = AKA::new(false, home_dir.clone()).expect("Failed to load initial config");
+        let initial_aka = AKA::new(false, home_dir.clone(), get_config_path(&home_dir).expect("Failed to get config path")).expect("Failed to load initial config");
         let initial_hash = hash_config_file(&config_path).expect("Failed to hash config");
         let initial_state = TestDaemonState::new(initial_aka, initial_hash);
         let atomic_state = Arc::new(std::sync::RwLock::new(initial_state));
@@ -521,7 +521,7 @@ aliases:
                             // Simulate reload work
                             thread::sleep(Duration::from_millis(1));
                             
-                            if let Ok(new_aka) = AKA::new(false, home_dir_clone.clone()) {
+                            if let Ok(new_aka) = AKA::new(false, home_dir_clone.clone(), get_config_path(&home_dir_clone).expect("Failed to get config path")) {
                                 let new_hash = hash_config_file(&config_path_clone).unwrap_or_default();
                                 
                                 // ATOMIC UPDATE

@@ -4,7 +4,7 @@ use std::time::Duration;
 use tempfile::TempDir;
 use serde_json;
 
-use aka_lib::{DaemonRequest, DaemonResponse, determine_socket_path, AKA, ProcessingMode};
+use aka_lib::{DaemonRequest, DaemonResponse, determine_socket_path, AKA, ProcessingMode, get_config_path};
 
 /// Test utilities for daemon integration testing
 struct DaemonTestHelper {
@@ -51,7 +51,7 @@ lookups:
     }
     
     fn create_aka_instance(&self, eol: bool) -> Result<AKA, Box<dyn std::error::Error>> {
-        AKA::new(eol, self.home_dir.clone()).map_err(|e| e.into())
+        AKA::new(eol, self.home_dir.clone(), self.config_path.clone()).map_err(|e| e.into())
     }
     
     fn update_config(&self, new_config: &str) -> Result<(), Box<dyn std::error::Error>> {
@@ -374,7 +374,11 @@ aliases:
     fs::write(&config_path, invalid_config).expect("Failed to write invalid config");
     
     // Try to create AKA instance with invalid config
-    let result = AKA::new(false, home_dir);
+    let config_path_result = get_config_path(&home_dir);
+    let result = match config_path_result {
+        Ok(config_path) => AKA::new(false, home_dir, config_path),
+        Err(e) => Err(e),
+    };
     
     // Should handle validation errors appropriately
     match result {

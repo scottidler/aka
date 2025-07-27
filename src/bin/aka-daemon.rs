@@ -46,12 +46,14 @@ impl DaemonServer {
         debug!("🚀 Daemon initializing, loading config...");
 
         // Determine config path using the same logic as direct mode
-        let home_dir = dirs::home_dir()
+        // Respect HOME environment variable for tests
+        let home_dir = std::env::var("HOME").ok().map(PathBuf::from)
+            .or_else(|| dirs::home_dir())
             .ok_or_else(|| eyre!("Unable to determine home directory"))?;
         let config_path = get_config_path_with_override(&home_dir, config)?;
 
         // Load initial config
-        let aka = AKA::new(false, home_dir.clone())?;
+        let aka = AKA::new(false, home_dir.clone(), config_path.clone())?;
         let aka = Arc::new(RwLock::new(aka));
 
         // Calculate initial config hash
@@ -133,7 +135,7 @@ impl DaemonServer {
         // Load new config using sync function
         let home_dir = dirs::home_dir()
             .ok_or_else(|| eyre!("Unable to determine home directory"))?;
-        let new_aka = AKA::new(false, home_dir.clone())?;
+        let new_aka = AKA::new(false, home_dir.clone(), self.config_path.clone())?;
 
         // Update stored config and hash atomically (hold both locks simultaneously)
         {
@@ -297,11 +299,12 @@ impl DaemonServer {
         aka_for_watcher: &Arc<RwLock<AKA>>,
         config_hash_for_watcher: &Arc<RwLock<String>>,
         home_dir: PathBuf,
+        config_path: PathBuf,
     ) -> Result<()> {
         debug!("🔄 Auto-reload: hash changed {} -> {}", current_hash, new_hash);
 
         // Load new config using sync function
-        match AKA::new(false, home_dir.clone()) {
+        match AKA::new(false, home_dir.clone(), config_path) {
             Ok(new_aka) => {
                 // Update stored config and hash atomically (hold both locks simultaneously)
                 {
@@ -362,7 +365,7 @@ impl DaemonServer {
 
                         if new_hash != current_hash {
                             let home_dir = dirs::home_dir().unwrap_or_else(|| std::path::PathBuf::from("/tmp"));
-                            if let Err(e) = Self::handle_config_file_change(new_hash, current_hash, &aka_for_watcher, &config_hash_for_watcher, home_dir) {
+                            if let Err(e) = Self::handle_config_file_change(new_hash, current_hash, &aka_for_watcher, &config_hash_for_watcher, home_dir, config_path_for_watcher.clone()) {
                                 error!("Failed to handle config file change: {}", e);
                             }
                         } else {

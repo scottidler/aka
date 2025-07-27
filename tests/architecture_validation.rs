@@ -1,6 +1,6 @@
 use std::fs;
 use tempfile::TempDir;
-use aka_lib::AKA;
+use aka_lib::{AKA, get_config_path};
 
 // Valid test configuration matching the actual format
 const VALID_CONFIG: &str = r#"
@@ -24,8 +24,9 @@ fn test_yaml_parsing_performance_validation() {
     fs::write(&config_file, VALID_CONFIG).expect("Failed to write config");
 
     // Measure YAML parsing time (this is what we proved in our logs)
+    let config_path = get_config_path(&cache_temp_dir.path().to_path_buf()).expect("Failed to get config path");
     let start = std::time::Instant::now();
-    let mut aka = AKA::new(false, cache_temp_dir.path().to_path_buf()).expect("Config should load");
+    let mut aka = AKA::new(false, cache_temp_dir.path().to_path_buf(), config_path).expect("Config should load");
     let duration = start.elapsed();
 
     println!("YAML parsing time: {:?}", duration);
@@ -50,12 +51,13 @@ fn test_config_loading_consistency() {
     fs::write(&config_file, VALID_CONFIG).expect("Failed to write config");
 
     // Load config multiple times to test consistency
+    let config_path = get_config_path(&cache_temp_dir.path().to_path_buf()).expect("Failed to get config path");
     let iterations = 5;
     let mut durations = Vec::new();
 
     for i in 0..iterations {
         let start = std::time::Instant::now();
-        let mut aka = AKA::new(false, cache_temp_dir.path().to_path_buf()).expect("Config should load");
+        let mut aka = AKA::new(false, cache_temp_dir.path().to_path_buf(), config_path.clone()).expect("Config should load");
         let duration = start.elapsed();
         durations.push(duration);
 
@@ -86,7 +88,8 @@ fn test_alias_transformation_correctness() {
     let config_file = config_dir.join("aka.yml");
     fs::write(&config_file, VALID_CONFIG).expect("Failed to write config");
 
-    let mut aka = AKA::new(false, cache_temp_dir.path().to_path_buf()).expect("Config should load");
+    let config_path = get_config_path(&cache_temp_dir.path().to_path_buf()).expect("Failed to get config path");
+    let mut aka = AKA::new(false, cache_temp_dir.path().to_path_buf(), config_path).expect("Config should load");
 
     // Test various transformation scenarios (validates daemon vs direct produce same results)
     let test_cases = vec![
@@ -123,8 +126,9 @@ fn test_architecture_proof_summary() {
     let config_file = config_dir.join("aka.yml");
     fs::write(&config_file, VALID_CONFIG).expect("Failed to write config");
 
+    let config_path = get_config_path(&cache_temp_dir.path().to_path_buf()).expect("Failed to get config path");
     let start = std::time::Instant::now();
-    let mut aka = AKA::new(false, cache_temp_dir.path().to_path_buf()).expect("Config should load");
+    let mut aka = AKA::new(false, cache_temp_dir.path().to_path_buf(), config_path).expect("Config should load");
     let yaml_time = start.elapsed();
 
     println!("📊 YAML parsing time: {:?}", yaml_time);

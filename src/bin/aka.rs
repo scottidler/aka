@@ -13,6 +13,7 @@ use aka_lib::{
     setup_logging,
     execute_health_check,
     determine_socket_path,
+    get_config_path_with_override,
     AKA,
     ProcessingMode,
     TimingCollector,
@@ -1285,8 +1286,8 @@ fn handle_command_direct_timed(opts: &AkaOpts, timing: &mut TimingCollector) -> 
 
     timing.start_config_load();
 
-    // Get home directory
-    let home_dir = match dirs::home_dir() {
+    // Get home directory - respect HOME environment variable for tests
+    let home_dir = match std::env::var("HOME").ok().map(PathBuf::from).or_else(|| dirs::home_dir()) {
         Some(dir) => dir,
         None => {
             warn!("❌ Cannot determine home directory");
@@ -1294,8 +1295,11 @@ fn handle_command_direct_timed(opts: &AkaOpts, timing: &mut TimingCollector) -> 
         }
     };
 
+    // Resolve config path with override support
+    let config_path = get_config_path_with_override(&home_dir, &opts.config)?;
+
     // Create AKA instance (this loads config)
-    let mut aka = match AKA::new(opts.eol, home_dir) {
+    let mut aka = match AKA::new(opts.eol, home_dir, config_path) {
         Ok(aka) => {
             debug!("✅ AKA instance created successfully");
             aka
