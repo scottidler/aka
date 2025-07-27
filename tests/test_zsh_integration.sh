@@ -60,14 +60,14 @@ run_test() {
     local test_name="$1"
     local expected_exit_code="$2"
     local config_file="$3"
-    
+
     TEST_COUNT=$((TEST_COUNT + 1))
-    
+
     echo -n "Test $TEST_COUNT: $test_name ... "
-    
+
     # Set up environment for this test
     export AKA_CONFIG="$config_file"
-    
+
     # Override the aka command to use our config
     aka() {
         if [[ "$config_file" != "" ]]; then
@@ -76,18 +76,18 @@ run_test() {
             command aka "$@"
         fi
     }
-    
+
     # Run the health check
     aka_health_check
     local actual_exit_code=$?
-    
+
     if [[ $actual_exit_code -eq $expected_exit_code ]]; then
         echo "✅ PASS (exit code: $actual_exit_code)"
         PASS_COUNT=$((PASS_COUNT + 1))
     else
         echo "❌ FAIL (expected: $expected_exit_code, got: $actual_exit_code)"
     fi
-    
+
     # Clean up
     unset AKA_CONFIG
     unfunction aka 2>/dev/null || true
@@ -99,11 +99,11 @@ test_expansion() {
     local config_file="$2"
     local input_buffer="$3"
     local should_expand="$4"  # true/false
-    
+
     TEST_COUNT=$((TEST_COUNT + 1))
-    
+
     echo -n "Test $TEST_COUNT: $test_name ... "
-    
+
     # Override the aka command to use our config
     aka() {
         if [[ "$config_file" != "" ]]; then
@@ -112,11 +112,11 @@ test_expansion() {
             command aka "$@"
         fi
     }
-    
+
     # Simulate the expansion function
     local original_buffer="$input_buffer"
     BUFFER="$input_buffer"
-    
+
     # Mock zle functions
     zle() {
         case "$1" in
@@ -129,10 +129,10 @@ test_expansion() {
                 ;;
         esac
     }
-    
+
     # Test space expansion
     expand-aka-space
-    
+
     if [[ "$should_expand" == "true" ]]; then
         if [[ "$BUFFER" != "$original_buffer" ]]; then
             echo "✅ PASS (expanded: '$original_buffer' -> '$BUFFER')"
@@ -148,7 +148,7 @@ test_expansion() {
             echo "❌ FAIL (unexpected expansion: '$BUFFER')"
         fi
     fi
-    
+
     # Clean up
     unfunction aka 2>/dev/null || true
     unfunction zle 2>/dev/null || true
@@ -161,7 +161,7 @@ echo "--------------------"
 # Test 1: Valid config file
 run_test "Valid config file" 0 "$VALID_CONFIG"
 
-# Test 2: Invalid config file  
+# Test 2: Invalid config file
 run_test "Invalid config file" 2 "$INVALID_CONFIG"
 
 # Test 3: Empty config file
@@ -174,11 +174,11 @@ run_test "Non-existent config file" 1 "$TEST_DIR/nonexistent.yml"
 run_test_flexible() {
     local test_name="$1"
     local config_file="$2"
-    
+
     TEST_COUNT=$((TEST_COUNT + 1))
-    
+
     echo -n "Test $TEST_COUNT: $test_name ... "
-    
+
     # Override the aka command to use our config
     aka() {
         if [[ "$config_file" != "" ]]; then
@@ -187,11 +187,11 @@ run_test_flexible() {
             command aka "$@"
         fi
     }
-    
+
     # Run the health check
     aka_health_check
     local actual_exit_code=$?
-    
+
     # Accept any valid exit code (0, 1, 2, or 3)
     if [[ $actual_exit_code -ge 0 && $actual_exit_code -le 3 ]]; then
         echo "✅ PASS (exit code: $actual_exit_code)"
@@ -199,7 +199,7 @@ run_test_flexible() {
     else
         echo "❌ FAIL (unexpected exit code: $actual_exit_code)"
     fi
-    
+
     # Clean up
     unfunction aka 2>/dev/null || true
 }
@@ -287,10 +287,10 @@ TEST_COUNT=$((TEST_COUNT + 1))
 if [[ -f ~/.config/aka/aka.yml ]]; then
     # Clear cache
     rm -f ~/.local/share/aka/config.hash
-    
+
     # Run health check to create cache
     aka __health_check >/dev/null 2>&1
-    
+
     if [[ -f ~/.local/share/aka/config.hash ]]; then
         echo "✅ PASS (cache mechanism functional - real invalidation test requires single config file)"
         PASS_COUNT=$((PASS_COUNT + 1))
@@ -356,4 +356,4 @@ rm -rf "$TEST_DIR"
 echo ""
 echo "🧹 Cleanup complete"
 
-exit $exit_code 
+exit $exit_code

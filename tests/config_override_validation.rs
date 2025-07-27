@@ -30,7 +30,7 @@ aliases:
     assert_eq!(aka.spec.aliases.len(), 2);
     assert!(aka.spec.aliases.contains_key("test1"));
     assert!(aka.spec.aliases.contains_key("test2"));
-    
+
     // Should not contain any of the user's real aliases
     assert!(!aka.spec.aliases.contains_key("ls"));
     assert!(!aka.spec.aliases.contains_key("cat"));
@@ -53,7 +53,7 @@ aliases:
 "#;
     fs::write(&config1, test_config1).expect("Failed to write config1");
 
-    // Create second config  
+    // Create second config
     let config2 = temp_dir.path().join("config2.yml");
     let test_config2 = r#"
 defaults:
@@ -103,7 +103,7 @@ aliases:
 
     // Test completion function
     let alias_names = aka_lib::get_alias_names_for_completion(&aka);
-    
+
     // Should be sorted alphabetically and contain only the 3 test aliases
     assert_eq!(alias_names, vec!["alpha", "beta", "gamma"]);
-} 
+}
