@@ -421,8 +421,29 @@ pub fn store_hash(hash: &str, _home_dir: &PathBuf) -> Result<()> {
 fn check_daemon_health(socket_path: &PathBuf) -> Result<bool> {
     debug!("✅ Daemon socket exists, testing health");
 
-    // Try to connect and send health request
-    if let Ok(mut stream) = std::os::unix::net::UnixStream::connect(socket_path) {
+    // Try to connect with timeout
+    let stream = match std::os::unix::net::UnixStream::connect(socket_path) {
+        Ok(stream) => {
+            // Set a short timeout for the connection
+            if let Err(e) = stream.set_read_timeout(Some(std::time::Duration::from_millis(500))) {
+                debug!("⚠️ Failed to set read timeout: {}", e);
+                return Ok(false);
+            }
+            if let Err(e) = stream.set_write_timeout(Some(std::time::Duration::from_millis(500))) {
+                debug!("⚠️ Failed to set write timeout: {}", e);
+                return Ok(false);
+            }
+            stream
+        }
+        Err(e) => {
+            debug!("⚠️ Failed to connect to daemon socket: {}", e);
+            return Ok(false);
+        }
+    };
+
+    // Try to send health request
+    {
+        let mut stream = stream;
         use std::io::{BufRead, BufReader, Write};
 
         let health_request = serde_json::json!({
@@ -465,8 +486,6 @@ fn check_daemon_health(socket_path: &PathBuf) -> Result<bool> {
         } else {
             debug!("⚠️ Failed to send health request to daemon");
         }
-    } else {
-        debug!("⚠️ Failed to connect to daemon socket");
     }
 
     debug!("❌ Daemon socket exists but health check failed - daemon is dead");
@@ -709,12 +728,12 @@ impl AKA {
         // Sync cache with config - but only if using default config path
         let start_cache = Instant::now();
         let default_config_path = get_config_path(&home_dir).unwrap_or_else(|_| PathBuf::new());
-        
+
         debug!("🔍 Config path comparison:");
         debug!("  📄 Provided config: {:?}", config_path);
         debug!("  📄 Default config: {:?}", default_config_path);
         debug!("  ✅ Paths equal: {}", config_path == default_config_path);
-        
+
         if config_path == default_config_path {
             // Using default config, so use cache
             let cache = sync_cache_with_config_path(&home_dir, &config_path)?;
@@ -801,7 +820,24 @@ impl AKA {
 
         debug!("🔍 SPLIT ARGS: {:?}", args);
 
-        if args[0] == "sudo" {
+        // Check for sudo trigger pattern: command ends with "!" (only when eol=true)
+        if self.eol && !args.is_empty() {
+            if let Some(last_arg) = args.last() {
+                if last_arg == "!" {
+                    args.pop(); // Remove the "!"
+                    sudo = true;
+                    debug!("🔍 SUDO TRIGGER DETECTED: Removed '!' from args, remaining: {:?}", args);
+
+                    // If args is now empty (lone "!"), return empty string
+                    if args.is_empty() {
+                        debug!("🔍 EMPTY ARGS AFTER SUDO TRIGGER: Lone '!' detected, returning empty");
+                        return Ok(String::new());
+                    }
+                }
+            }
+        }
+
+        if !args.is_empty() && args[0] == "sudo" {
             sudo = true;
             let sudo_part = args.remove(0);
             debug!("🔍 SUDO DETECTED: Removed '{}' from args, remaining: {:?}", sudo_part, args);
@@ -1796,6 +1832,94 @@ mod tests {
 
         // Should be sorted alphabetically, including special characters
         assert_eq!(names, vec!["!!", "...", "|c"]);
+    }
+
+    #[test]
+    fn test_sudo_trigger_comprehensive() {
+        let mut aliases = HashMap::new();
+        aliases.insert("ls".to_string(), Alias {
+            name: "ls".to_string(),
+            value: "eza".to_string(),
+            space: true,
+            global: false,
+            count: 0,
+        });
+
+        // Test with eol=true (should work)
+        let mut aka_eol = create_test_aka_with_aliases(aliases.clone());
+        aka_eol.eol = true;
+
+        let result = aka_eol.replace("touch file !").unwrap();
+        assert!(result.starts_with("sudo"), "Should start with sudo: {}", result);
+        assert!(result.contains("touch file"), "Should contain original command: {}", result);
+        assert!(!result.contains("!"), "Should not contain exclamation mark: {}", result);
+
+        // Test with alias expansion
+        let result = aka_eol.replace("ls !").unwrap();
+        assert!(result.starts_with("sudo"), "Should start with sudo: {}", result);
+        assert!(result.contains("eza"), "Should expand alias: {}", result);
+        assert!(!result.contains("!"), "Should not contain exclamation mark: {}", result);
+
+        // Test with eol=false (should NOT work)
+        let mut aka_no_eol = create_test_aka_with_aliases(aliases);
+        aka_no_eol.eol = false;
+
+        let result = aka_no_eol.replace("touch file !").unwrap();
+        assert_eq!(result, "", "Should return empty string when eol=false");
+    }
+
+    #[test]
+    fn test_sudo_trigger_edge_cases() {
+        let aliases = HashMap::new();
+        let mut aka = create_test_aka_with_aliases(aliases);
+        aka.eol = true;
+
+        // Test exclamation mark in middle of command (should NOT trigger sudo)
+        let result = aka.replace("echo hello ! world").unwrap();
+        assert_eq!(result, "", "Should not trigger sudo for mid-command exclamation");
+
+        // Test with quoted arguments
+        let result = aka.replace("echo \"test\" !").unwrap();
+        assert!(result.starts_with("sudo"), "Should work with quoted arguments: {}", result);
+        assert!(result.contains("echo \"test\""), "Should preserve quotes: {}", result);
+        assert!(!result.contains("!"), "Should not contain exclamation mark: {}", result);
+
+        // Test lone exclamation mark (should be ignored)
+        let result = aka.replace("!").unwrap();
+        assert_eq!(result, "", "Should ignore lone exclamation mark");
+
+        // Test multiple exclamation marks (only last one should matter)
+        let result = aka.replace("echo ! test !").unwrap();
+        assert!(result.starts_with("sudo"), "Should trigger sudo with trailing exclamation: {}", result);
+        assert!(result.contains("echo ! test"), "Should preserve earlier exclamation marks: {}", result);
+        assert!(!result.ends_with("!"), "Should not end with exclamation mark");
+    }
+
+    #[test]
+    fn test_split_respecting_quotes_with_exclamation() {
+        // Test basic exclamation mark splitting
+        let result = AKA::split_respecting_quotes("touch file !");
+        assert_eq!(result, vec!["touch", "file", "!"]);
+
+        // Test exclamation mark in quotes (should not be split)
+        let result = AKA::split_respecting_quotes("echo \"hello !\" world");
+        assert_eq!(result, vec!["echo", "\"hello !\"", "world"]);
+
+        // Test exclamation mark at end after quotes
+        let result = AKA::split_respecting_quotes("echo \"test\" !");
+        assert_eq!(result, vec!["echo", "\"test\"", "!"]);
+
+        // Test multiple exclamation marks
+        let result = AKA::split_respecting_quotes("echo ! test !");
+        assert_eq!(result, vec!["echo", "!", "test", "!"]);
+
+        // Test exclamation mark in middle (should not be treated specially)
+        let result = AKA::split_respecting_quotes("echo hello ! world");
+        assert_eq!(result, vec!["echo", "hello", "!", "world"]);
+
+        // Test lone exclamation mark
+        let result = AKA::split_respecting_quotes("!");
+        assert_eq!(result, vec!["!"]);
     }
 
 
