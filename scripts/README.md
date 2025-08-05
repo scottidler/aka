@@ -21,7 +21,7 @@ Automated test script that validates the timing instrumentation functionality.
 **What it tests:**
 - ✅ Timing data collection from daemon and direct modes
 - ✅ `aka daemon --timing-summary` command
-- ✅ `aka daemon --export-timing` command  
+- ✅ `aka daemon --export-timing` command
 - ✅ Performance comparison between modes
 - ✅ Data persistence across process invocations
 
@@ -101,4 +101,4 @@ Scripts may generate temporary files:
 - `build.log` - Build output (cleaned up automatically)
 - `aka_timing_data_*.csv` - Benchmark results (preserved)
 
-All temporary files are automatically cleaned up on script exit. 
+All temporary files are automatically cleaned up on script exit.

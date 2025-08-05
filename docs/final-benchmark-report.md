@@ -166,11 +166,11 @@ timestamp,mode,total_ms,config_ms,ipc_ms,processing_ms
 
 The comprehensive timing instrumentation reveals that the AKA daemon architecture provides:
 
-✅ **Substantial processing improvement** (77.2% faster)  
-✅ **Minimal IPC overhead** (0.39ms)  
-✅ **Validated performance claims** with quantitative data  
-✅ **Clear optimization roadmap** based on bottleneck analysis  
-✅ **Production-ready monitoring** for ongoing performance tracking  
+✅ **Substantial processing improvement** (77.2% faster)
+✅ **Minimal IPC overhead** (0.39ms)
+✅ **Validated performance claims** with quantitative data
+✅ **Clear optimization roadmap** based on bottleneck analysis
+✅ **Production-ready monitoring** for ongoing performance tracking
 
 ### Key Findings Summary
 1. **Config loading is the primary bottleneck** (1.77ms in direct mode)
@@ -188,7 +188,7 @@ The comprehensive timing instrumentation reveals that the AKA daemon architectur
 
 ---
 
-*Benchmark conducted on Linux 6.11.0-29-generic with Rust 1.88.0*  
-*Timing instrumentation integrated directly into AKA codebase*  
-*All measurements represent averages with sample sizes indicated*  
-*Raw data available via `aka daemon --export-timing`* 
+*Benchmark conducted on Linux 6.11.0-29-generic with Rust 1.88.0*
+*Timing instrumentation integrated directly into AKA codebase*
+*All measurements represent averages with sample sizes indicated*
+*Raw data available via `aka daemon --export-timing`*
