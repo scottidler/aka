@@ -723,6 +723,19 @@ impl AKA {
         let start_load = Instant::now();
         let loader = Loader::new();
         let mut spec = loader.load(&config_path)?;
+
+        // Expand keys in lookups - convert "prod|apps: us-east-1" to separate entries
+        for (_, map) in spec.lookups.iter_mut() {
+            let mut expanded = HashMap::new();
+            for (pattern, value) in map.iter() {
+                let keys: Vec<&str> = pattern.split('|').collect();
+                for key in keys {
+                    expanded.insert(key.to_string(), value.clone());
+                }
+            }
+            *map = expanded;
+        }
+
         let load_duration = start_load.elapsed();
 
         // Sync cache with config - but only if using default config path
