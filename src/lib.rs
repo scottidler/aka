@@ -1054,9 +1054,10 @@ where
 {
     // Collect into Vec to calculate max width (unavoidable for alignment)
     let aliases: Vec<_> = aliases.collect();
+    let alias_count = aliases.len();
 
     if aliases.is_empty() {
-        return "No aliases found.".to_string();
+        return format!("No aliases found.\n\ncount: 0");
     }
 
     // Calculate the maximum alias name width for alignment
@@ -1066,7 +1067,7 @@ where
         .max()
         .unwrap_or(0);
 
-    aliases
+    let output = aliases
         .iter()
         .map(|alias| {
             let prefix = if show_counts {
@@ -1089,7 +1090,9 @@ where
             }
         })
         .collect::<Vec<_>>()
-        .join("\n")
+        .join("\n");
+
+    format!("{}\n\ncount: {}", output, alias_count)
 }
 
 /// Create an iterator that filters and sorts aliases based on display criteria

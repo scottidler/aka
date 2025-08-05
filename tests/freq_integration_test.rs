@@ -114,15 +114,20 @@ fn test_freq_command_with_all_option() {
 
     // Should be formatted with proper spacing
     let lines: Vec<&str> = stdout.trim().split('\n').collect();
-    assert_eq!(lines.len(), 4, "Should have 4 aliases with --all");
+    assert_eq!(lines.len(), 6, "Should have 4 aliases + empty line + count line with --all");
 
     // Check that lines are properly formatted (count alias -> value)
-    for line in lines {
+    // Skip the last 2 lines (empty line and count line)
+    for line in &lines[..lines.len()-2] {
         let parts: Vec<&str> = line.split_whitespace().collect();
         assert!(parts.len() >= 4, "Each line should have at least 4 parts: count, alias, ->, value");
         assert_eq!(parts[0], "0", "Count should be 0 for unused aliases");
         assert_eq!(parts[2], "->", "Should have -> separator");
     }
+
+    // Check that the last line is the count line
+    assert!(lines[lines.len()-1].starts_with("count: "), "Last line should be count line");
+    assert!(lines[lines.len()-1].contains("4"), "Count should be 4 for 4 aliases");
 }
 
 #[test]
