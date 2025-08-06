@@ -7,22 +7,22 @@ use aka_lib::{DaemonRequest, DaemonResponse, AKA, ProcessingMode, get_config_pat
 fn test_protocol_consistency() {
     // Test that we can create all request types
     let requests = vec![
-        DaemonRequest::Query {
+        DaemonRequest::Query { config: None,
             cmdline: "test command".to_string(),
             eol: true,
         },
-        DaemonRequest::Query {
+        DaemonRequest::Query { config: None,
             cmdline: "test command".to_string(),
             eol: false,
         },
-        DaemonRequest::List {
+        DaemonRequest::List { config: None,
             global: true,
             patterns: vec!["pattern".to_string()]
         },
-        DaemonRequest::Freq {
+        DaemonRequest::Freq { config: None,
             all: false,
         },
-        DaemonRequest::Freq {
+        DaemonRequest::Freq { config: None,
             all: true,
         },
         DaemonRequest::Health,
@@ -39,15 +39,15 @@ fn test_protocol_consistency() {
 
         // Verify the round-trip worked
         match (&request, &deserialized) {
-            (DaemonRequest::Query { cmdline: c1, eol: e1 }, DaemonRequest::Query { cmdline: c2, eol: e2 }) => {
+            (DaemonRequest::Query { cmdline: c1, eol: e1, config: _ }, DaemonRequest::Query { cmdline: c2, eol: e2, config: _ }) => {
                 assert_eq!(c1, c2);
                 assert_eq!(e1, e2);
             },
-            (DaemonRequest::List { global: g1, patterns: p1 }, DaemonRequest::List { global: g2, patterns: p2 }) => {
+            (DaemonRequest::List { global: g1, patterns: p1, config: _ }, DaemonRequest::List { global: g2, patterns: p2, config: _ }) => {
                 assert_eq!(g1, g2);
                 assert_eq!(p1, p2);
             },
-            (DaemonRequest::Freq { all: a1 }, DaemonRequest::Freq { all: a2 }) => {
+            (DaemonRequest::Freq { all: a1, config: _ }, DaemonRequest::Freq { all: a2, config: _ }) => {
                 assert_eq!(a1, a2);
             },
             (DaemonRequest::Health, DaemonRequest::Health) => {},
@@ -147,7 +147,7 @@ aliases:
 #[test]
 fn test_query_request_has_eol() {
     // Create a query request
-    let query = DaemonRequest::Query {
+    let query = DaemonRequest::Query { config: None,
         cmdline: "test command".to_string(),
         eol: true,
     };
@@ -160,7 +160,7 @@ fn test_query_request_has_eol() {
     assert!(serialized.contains("true"), "Serialized query should contain eol value");
 
     // Test with eol=false
-    let query_false = DaemonRequest::Query {
+    let query_false = DaemonRequest::Query { config: None,
         cmdline: "test command".to_string(),
         eol: false,
     };
@@ -178,7 +178,7 @@ fn test_protocol_message_tags() {
     let serialized = serde_json::to_string(&health).expect("Should serialize");
     assert!(serialized.contains("\"type\":\"Health\""), "Health request should have correct type tag");
 
-    let query = DaemonRequest::Query { cmdline: "test".to_string(), eol: false };
+    let query = DaemonRequest::Query { cmdline: "test".to_string(), eol: false, config: None };
     let serialized = serde_json::to_string(&query).expect("Should serialize");
     assert!(serialized.contains("\"type\":\"Query\""), "Query request should have correct type tag");
 
@@ -211,18 +211,18 @@ fn test_request_type_differentiation() {
         // Verify we can match on the deserialized type
         match request {
             DaemonRequest::Health => {},
-            DaemonRequest::Query { cmdline, eol } => {
+            DaemonRequest::Query { cmdline, eol, config: _ } => {
                 assert_eq!(cmdline, "test");
                 assert_eq!(eol, true);
             },
-            DaemonRequest::List { global, patterns } => {
+            DaemonRequest::List { global, patterns, config: _ } => {
                 assert_eq!(global, false);
                 assert_eq!(patterns.len(), 0);
             },
-            DaemonRequest::Freq { all: _ } => {},
+            DaemonRequest::Freq { all: _, config: _ } => {},
             DaemonRequest::ReloadConfig => {},
             DaemonRequest::Shutdown => {},
-            DaemonRequest::CompleteAliases => {},
+            DaemonRequest::CompleteAliases { config: _ } => {},
         }
     }
 }

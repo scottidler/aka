@@ -1051,8 +1051,20 @@ fn handle_regular_command(opts: &AkaOpts) -> Result<i32> {
             debug!("🏥 Explicit health check command requested");
             let home_dir = dirs::home_dir()
                 .ok_or_else(|| eyre::eyre!("Unable to determine home directory"))?;
-            return execute_health_check(&home_dir);
+            return execute_health_check(&home_dir, &opts.config);
         }
+    }
+
+    // CRITICAL: If --config is specified, ALWAYS use direct mode
+    // The daemon cannot handle custom configs, so we must process directly
+    if opts.config.is_some() {
+        debug!("🔧 Custom config specified (--config), forcing direct mode");
+        debug!("🎯 Bypassing health check - daemon cannot handle custom configs");
+        let mut timing = TimingCollector::new(ProcessingMode::Direct);
+        let result = handle_command_direct_timed(opts, &mut timing);
+        let timing_data = timing.finalize();
+        log_timing(timing_data);
+        return result;
     }
 
     // For all other commands, use health check to determine the best path
@@ -1062,7 +1074,7 @@ fn handle_regular_command(opts: &AkaOpts) -> Result<i32> {
     // Run health check to determine system state
     let home_dir = dirs::home_dir()
         .ok_or_else(|| eyre::eyre!("Unable to determine home directory"))?;
-    let health_status = execute_health_check(&home_dir)?;
+    let health_status = execute_health_check(&home_dir, &opts.config)?;
     debug!("📊 Health check completed with status: {}", health_status);
 
     route_command_by_health_status(health_status, opts)
@@ -1205,6 +1217,7 @@ fn handle_command_via_daemon_only_timed(opts: &AkaOpts, timing: &mut TimingColle
                 let request = DaemonRequest::Query {
                     cmdline: query_opts.cmdline.clone(),
                     eol: opts.eol,
+                    config: opts.config.clone(),
                 };
                 debug!("📤 Sending daemon query: {}", query_opts.cmdline);
 
@@ -1222,7 +1235,8 @@ fn handle_command_via_daemon_only_timed(opts: &AkaOpts, timing: &mut TimingColle
             Command::List(list_opts) => {
                 let request = DaemonRequest::List {
                     global: list_opts.global,
-                    patterns: list_opts.patterns.clone()
+                    patterns: list_opts.patterns.clone(),
+                    config: opts.config.clone(),
                 };
                 debug!("📤 Sending daemon list request");
                 match DaemonClient::send_request_timed(request, timing) {
@@ -1239,6 +1253,7 @@ fn handle_command_via_daemon_only_timed(opts: &AkaOpts, timing: &mut TimingColle
                 debug!("📤 Preparing daemon frequency request");
                 let request = DaemonRequest::Freq {
                     all: freq_opts.all,
+                    config: opts.config.clone(),
                 };
                 debug!("📤 Sending daemon frequency request");
                 match DaemonClient::send_request_timed(request, timing) {
@@ -1253,7 +1268,9 @@ fn handle_command_via_daemon_only_timed(opts: &AkaOpts, timing: &mut TimingColle
             }
             Command::CompleteAliases => {
                 debug!("📤 Preparing daemon complete aliases request");
-                let request = DaemonRequest::CompleteAliases;
+                let request = DaemonRequest::CompleteAliases {
+                    config: opts.config.clone(),
+                };
                 debug!("📤 Sending daemon complete aliases request");
 
                 match DaemonClient::send_request_timed(request, timing) {
@@ -1431,6 +1448,7 @@ mod tests {
         let query_request = DaemonRequest::Query {
             cmdline: "test".to_string(),
             eol: false,
+            config: None,
         };
         let serialized = serde_json::to_string(&query_request);
         assert!(serialized.is_ok());

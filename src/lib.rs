@@ -531,9 +531,10 @@ fn validate_fresh_config_and_store_hash(
     }
 }
 
-pub fn execute_health_check(home_dir: &PathBuf) -> Result<i32> {
+pub fn execute_health_check(home_dir: &PathBuf, config_override: &Option<PathBuf>) -> Result<i32> {
     debug!("🏥 === HEALTH CHECK START ===");
     debug!("📋 Health check will determine the best processing path");
+    debug!("🔧 Config override: {:?}", config_override);
 
     // Step 1: Check if daemon is available and healthy
     debug!("📋 Step 1: Checking daemon health");
@@ -562,14 +563,26 @@ pub fn execute_health_check(home_dir: &PathBuf) -> Result<i32> {
     // Step 2: Daemon not available, check config file cache
     debug!("📋 Step 2: Daemon unavailable, checking config cache");
 
-    let config_path = match get_config_path(home_dir) {
-        Ok(path) => path,
-        Err(e) => {
-            debug!("❌ Health check failed: config file not found: {}", e);
-            debug!("🎯 Health check result: CONFIG_NOT_FOUND (returning 1)");
-            return Ok(1); // Config file not found
+    // Use custom config if provided, otherwise default
+    let config_path = match config_override {
+        Some(custom_path) => {
+            debug!("🔧 Using custom config path: {:?}", custom_path);
+            custom_path.clone()
+        },
+        None => {
+            debug!("🔧 Using default config path resolution");
+            match get_config_path(home_dir) {
+                Ok(path) => path,
+                Err(e) => {
+                    debug!("❌ Health check failed: config file not found: {}", e);
+                    debug!("🎯 Health check result: CONFIG_NOT_FOUND (returning 1)");
+                    return Ok(1); // Config file not found
+                }
+            }
         }
     };
+
+    debug!("📄 Final config path for health check: {:?}", config_path);
 
     // Step 3: Calculate current config hash
     debug!("📋 Step 3: Calculating current config hash");
@@ -585,25 +598,29 @@ pub fn execute_health_check(home_dir: &PathBuf) -> Result<i32> {
         }
     };
 
-    // Step 4: Compare with stored hash
-    debug!("📋 Step 4: Comparing with stored hash");
-    let stored_hash = get_stored_hash(home_dir).unwrap_or(None);
+    // Step 4: Compare with stored hash (only for default config)
+    if config_override.is_none() {
+        debug!("📋 Step 4: Comparing with stored hash (default config only)");
+        let stored_hash = get_stored_hash(home_dir).unwrap_or(None);
 
-    match stored_hash {
-        Some(stored) => {
-            debug!("🔍 Found stored hash: {}", stored);
-            if stored == current_hash {
-                debug!("✅ Hash matches! Config cache is valid, can use direct mode");
-                debug!("🎯 Health check result: CACHE_VALID (returning 0)");
-                return Ok(0);
-            } else {
-                debug!("⚠️ Hash mismatch: stored={}, current={}", stored, current_hash);
-                debug!("📋 Cache invalid, need fresh config load");
+        match stored_hash {
+            Some(stored) => {
+                debug!("🔍 Found stored hash: {}", stored);
+                if stored == current_hash {
+                    debug!("✅ Hash matches! Config cache is valid, can use direct mode");
+                    debug!("🎯 Health check result: CACHE_VALID (returning 0)");
+                    return Ok(0);
+                } else {
+                    debug!("⚠️ Hash mismatch: stored={}, current={}", stored, current_hash);
+                    debug!("📋 Cache invalid, need fresh config load");
+                }
+            }
+            None => {
+                debug!("⚠️ No stored hash found, need fresh config load");
             }
         }
-        None => {
-            debug!("⚠️ No stored hash found, need fresh config load");
-        }
+    } else {
+        debug!("📋 Step 4: Skipping hash comparison for custom config");
     }
 
     // Step 5: Hash doesn't match or no stored hash, validate config fresh

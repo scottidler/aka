@@ -208,51 +208,136 @@ impl DaemonServer {
         debug!("Received request: {:?}", request);
 
         let response = match request {
-            Request::Query { cmdline, eol } => {
-                let mut aka_guard = self.aka.write().map_err(|e| eyre!("Failed to acquire write lock on AKA: {}", e))?;
-                // Update AKA's eol setting to match the request
-                aka_guard.eol = eol;
-                debug!("📤 Processing query: {}", cmdline);
-                match aka_guard.replace_with_mode(&cmdline, ProcessingMode::Daemon) {
-                    Ok(result) => {
-                        debug!("✅ Query processed successfully");
-                        Response::Success { data: result }
+            Request::Query { cmdline, eol, config } => {
+                debug!("📤 Processing query: {} (config: {:?})", cmdline, config);
+                
+                match &config {
+                    Some(custom_config_path) => {
+                        // Custom config - create temporary AKA instance
+                        debug!("🔧 Using custom config for query: {:?}", custom_config_path);
+                        let home_dir = std::env::var("HOME").ok().map(PathBuf::from)
+                            .or_else(|| dirs::home_dir())
+                            .ok_or_else(|| eyre!("Unable to determine home directory"))?;
+                        
+                        let config_path = get_config_path_with_override(&home_dir, &config)?;
+                        let mut temp_aka = AKA::new(eol, home_dir, config_path)?;
+                        
+                        match temp_aka.replace_with_mode(&cmdline, ProcessingMode::Direct) {
+                            Ok(result) => {
+                                debug!("✅ Custom config query processed successfully");
+                                Response::Success { data: result }
+                            },
+                            Err(e) => {
+                                warn!("❌ Custom config query processing failed: {}", e);
+                                Response::Error { message: e.to_string() }
+                            },
+                        }
                     },
-                    Err(e) => {
-                        warn!("❌ Query processing failed: {}", e);
-                        Response::Error { message: e.to_string() }
-                    },
+                    None => {
+                        // Default config - use daemon's AKA instance
+                        debug!("🔧 Using daemon's default config for query");
+                        let mut aka_guard = self.aka.write().map_err(|e| eyre!("Failed to acquire write lock on AKA: {}", e))?;
+                        // Update AKA's eol setting to match the request
+                        aka_guard.eol = eol;
+                        
+                        match aka_guard.replace_with_mode(&cmdline, ProcessingMode::Daemon) {
+                            Ok(result) => {
+                                debug!("✅ Query processed successfully");
+                                Response::Success { data: result }
+                            },
+                            Err(e) => {
+                                warn!("❌ Query processing failed: {}", e);
+                                Response::Error { message: e.to_string() }
+                            },
+                        }
+                    }
                 }
             },
-            Request::List { global, patterns } => {
-                let aka_guard = self.aka.read().map_err(|e| eyre!("Failed to acquire read lock on AKA: {}", e))?;
-                debug!("📤 Processing list request (global: {}, patterns: {:?})", global, patterns);
+            Request::List { global, patterns, config } => {
+                debug!("📤 Processing list request (global: {}, patterns: {:?}, config: {:?})", global, patterns, config);
+                
+                match &config {
+                    Some(custom_config_path) => {
+                        // Custom config - create temporary AKA instance
+                        debug!("🔧 Using custom config for list: {:?}", custom_config_path);
+                        let home_dir = std::env::var("HOME").ok().map(PathBuf::from)
+                            .or_else(|| dirs::home_dir())
+                            .ok_or_else(|| eyre!("Unable to determine home directory"))?;
+                        
+                        let config_path = get_config_path_with_override(&home_dir, &config)?;
+                        let temp_aka = AKA::new(false, home_dir, config_path)?;
+                        
+                        let output = aka_lib::format_aliases_efficiently(
+                            temp_aka.spec.aliases.values(),
+                            false, // show_counts
+                            true,  // show_all
+                            global,
+                            &patterns,
+                        );
 
-                let output = aka_lib::format_aliases_efficiently(
-                    aka_guard.spec.aliases.values(),
-                    false, // show_counts
-                    true,  // show_all
-                    global,
-                    &patterns,
-                );
+                        debug!("✅ Custom config list processed successfully");
+                        Response::Success { data: output }
+                    },
+                    None => {
+                        // Default config - use daemon's AKA instance
+                        debug!("🔧 Using daemon's default config for list");
+                        let aka_guard = self.aka.read().map_err(|e| eyre!("Failed to acquire read lock on AKA: {}", e))?;
 
-                debug!("✅ List processed successfully");
-                Response::Success { data: output }
+                        let output = aka_lib::format_aliases_efficiently(
+                            aka_guard.spec.aliases.values(),
+                            false, // show_counts
+                            true,  // show_all
+                            global,
+                            &patterns,
+                        );
+
+                        debug!("✅ List processed successfully");
+                        Response::Success { data: output }
+                    }
+                }
             },
-            Request::Freq { all } => {
-                let aka_guard = self.aka.read().map_err(|e| eyre!("Failed to acquire read lock on AKA: {}", e))?;
-                debug!("📤 Processing frequency request (all: {})", all);
+            Request::Freq { all, config } => {
+                debug!("📤 Processing frequency request (all: {}, config: {:?})", all, config);
+                
+                match &config {
+                    Some(custom_config_path) => {
+                        // Custom config - create temporary AKA instance
+                        debug!("🔧 Using custom config for freq: {:?}", custom_config_path);
+                        let home_dir = std::env::var("HOME").ok().map(PathBuf::from)
+                            .or_else(|| dirs::home_dir())
+                            .ok_or_else(|| eyre!("Unable to determine home directory"))?;
+                        
+                        let config_path = get_config_path_with_override(&home_dir, &config)?;
+                        let temp_aka = AKA::new(false, home_dir, config_path)?;
+                        
+                        let output = aka_lib::format_aliases_efficiently(
+                            temp_aka.spec.aliases.values(),
+                            true, // show_counts
+                            all,
+                            false, // global_only
+                            &[], // patterns
+                        );
 
-                let output = aka_lib::format_aliases_efficiently(
-                    aka_guard.spec.aliases.values(),
-                    true, // show_counts
-                    all,
-                    false, // global_only
-                    &[], // patterns
-                );
+                        debug!("✅ Custom config frequency processed successfully");
+                        Response::Success { data: output }
+                    },
+                    None => {
+                        // Default config - use daemon's AKA instance
+                        debug!("🔧 Using daemon's default config for freq");
+                        let aka_guard = self.aka.read().map_err(|e| eyre!("Failed to acquire read lock on AKA: {}", e))?;
 
-                debug!("✅ Frequency processed successfully");
-                Response::Success { data: output }
+                        let output = aka_lib::format_aliases_efficiently(
+                            aka_guard.spec.aliases.values(),
+                            true, // show_counts
+                            all,
+                            false, // global_only
+                            &[], // patterns
+                        );
+
+                        debug!("✅ Frequency processed successfully");
+                        Response::Success { data: output }
+                    }
+                }
             },
             Request::Health => {
                 self.process_health_request()?
@@ -275,15 +360,38 @@ impl DaemonServer {
                 self.shutdown.store(true, Ordering::Relaxed);
                 Response::ShutdownAck
             },
-            Request::CompleteAliases => {
-                let aka_guard = self.aka.read().map_err(|e| eyre!("Failed to acquire read lock on AKA: {}", e))?;
-                debug!("📤 Processing complete aliases request");
+            Request::CompleteAliases { config } => {
+                debug!("📤 Processing complete aliases request (config: {:?})", config);
+                
+                match &config {
+                    Some(custom_config_path) => {
+                        // Custom config - create temporary AKA instance
+                        debug!("🔧 Using custom config for complete aliases: {:?}", custom_config_path);
+                        let home_dir = std::env::var("HOME").ok().map(PathBuf::from)
+                            .or_else(|| dirs::home_dir())
+                            .ok_or_else(|| eyre!("Unable to determine home directory"))?;
+                        
+                        let config_path = get_config_path_with_override(&home_dir, &config)?;
+                        let temp_aka = AKA::new(false, home_dir, config_path)?;
+                        
+                        let alias_names = aka_lib::get_alias_names_for_completion(&temp_aka);
+                        let output = alias_names.join("\n");
 
-                let alias_names = aka_lib::get_alias_names_for_completion(&aka_guard);
-                let output = alias_names.join("\n");
+                        debug!("✅ Custom config complete aliases processed successfully");
+                        Response::Success { data: output }
+                    },
+                    None => {
+                        // Default config - use daemon's AKA instance
+                        debug!("🔧 Using daemon's default config for complete aliases");
+                        let aka_guard = self.aka.read().map_err(|e| eyre!("Failed to acquire read lock on AKA: {}", e))?;
 
-                debug!("✅ Complete aliases processed successfully");
-                Response::Success { data: output }
+                        let alias_names = aka_lib::get_alias_names_for_completion(&aka_guard);
+                        let output = alias_names.join("\n");
+
+                        debug!("✅ Complete aliases processed successfully");
+                        Response::Success { data: output }
+                    }
+                }
             },
         };
 
@@ -483,11 +591,12 @@ mod tests {
         let query_request = Request::Query {
             cmdline: "test command".to_string(),
             eol: false,
+            config: None,
         };
         let serialized = serde_json::to_string(&query_request);
         assert!(serialized.is_ok());
 
-        let list_request = Request::List { global: true, patterns: vec!["test".to_string()] };
+        let list_request = Request::List { global: true, patterns: vec!["test".to_string()], config: None };
         let serialized = serde_json::to_string(&list_request);
         assert!(serialized.is_ok());
     }
@@ -514,12 +623,13 @@ mod tests {
         let original_request = Request::Query {
             cmdline: "test command".to_string(),
             eol: true,
+            config: None,
         };
         let serialized = serde_json::to_string(&original_request).map_err(|e| eyre!("Failed to serialize request: {}", e)).expect("Serialization should succeed");
         let deserialized: Request = serde_json::from_str(&serialized).map_err(|e| eyre!("Failed to deserialize request: {}", e)).expect("Deserialization should succeed");
 
         match (original_request, deserialized) {
-            (Request::Query { cmdline: orig, eol: orig_eol }, Request::Query { cmdline: deser, eol: deser_eol }) => {
+            (Request::Query { cmdline: orig, eol: orig_eol, config: _ }, Request::Query { cmdline: deser, eol: deser_eol, config: _ }) => {
                 assert_eq!(orig, deser);
                 assert_eq!(orig_eol, deser_eol);
             },

@@ -66,19 +66,19 @@ fn test_daemon_protocol_serialization() {
     // Test all request types serialize correctly
     let requests = vec![
         DaemonRequest::Health,
-        DaemonRequest::Query {
+        DaemonRequest::Query { config: None,
             cmdline: "test-alias".to_string(),
             eol: false,
         },
-        DaemonRequest::Query {
+        DaemonRequest::Query { config: None,
             cmdline: "test-alias".to_string(),
             eol: true,
         },
-        DaemonRequest::List {
+        DaemonRequest::List { config: None,
             global: false,
             patterns: vec!["test-*".to_string()],
         },
-        DaemonRequest::List {
+        DaemonRequest::List { config: None,
             global: true,
             patterns: vec![],
         },
@@ -95,11 +95,11 @@ fn test_daemon_protocol_serialization() {
         // Verify round-trip worked (basic type check)
         match (&request, &deserialized) {
             (DaemonRequest::Health, DaemonRequest::Health) => {},
-            (DaemonRequest::Query { cmdline: c1, eol: e1 }, DaemonRequest::Query { cmdline: c2, eol: e2 }) => {
+            (DaemonRequest::Query { cmdline: c1, eol: e1, config: _ }, DaemonRequest::Query { cmdline: c2, eol: e2, config: _ }) => {
                 assert_eq!(c1, c2);
                 assert_eq!(e1, e2);
             },
-            (DaemonRequest::List { global: g1, patterns: p1 }, DaemonRequest::List { global: g2, patterns: p2 }) => {
+            (DaemonRequest::List { global: g1, patterns: p1, config: _ }, DaemonRequest::List { global: g2, patterns: p2, config: _ }) => {
                 assert_eq!(g1, g2);
                 assert_eq!(p1, p2);
             },
@@ -397,7 +397,7 @@ aliases:
 #[test]
 fn test_daemon_protocol_structure() {
     // Test that protocol messages have expected JSON structure
-    let query = DaemonRequest::Query {
+    let query = DaemonRequest::Query { config: None,
         cmdline: "test".to_string(),
         eol: true,
     };
