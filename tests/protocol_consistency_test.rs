@@ -10,20 +10,25 @@ fn test_protocol_consistency() {
         DaemonRequest::Query {
             cmdline: "test command".to_string(),
             eol: true,
+            config_path: None,
         },
         DaemonRequest::Query {
             cmdline: "test command".to_string(),
             eol: false,
+            config_path: None,
         },
         DaemonRequest::List {
             global: true,
-            patterns: vec!["pattern".to_string()]
+            patterns: vec!["pattern".to_string()],
+            config_path: None,
         },
         DaemonRequest::Freq {
             all: false,
+            config_path: None,
         },
         DaemonRequest::Freq {
             all: true,
+            config_path: None,
         },
         DaemonRequest::Health,
         DaemonRequest::ReloadConfig,
@@ -39,16 +44,19 @@ fn test_protocol_consistency() {
 
         // Verify the round-trip worked
         match (&request, &deserialized) {
-            (DaemonRequest::Query { cmdline: c1, eol: e1 }, DaemonRequest::Query { cmdline: c2, eol: e2 }) => {
+            (DaemonRequest::Query { cmdline: c1, eol: e1, config_path: cp1 }, DaemonRequest::Query { cmdline: c2, eol: e2, config_path: cp2 }) => {
                 assert_eq!(c1, c2);
                 assert_eq!(e1, e2);
+                assert_eq!(cp1, cp2);
             },
-            (DaemonRequest::List { global: g1, patterns: p1 }, DaemonRequest::List { global: g2, patterns: p2 }) => {
+            (DaemonRequest::List { global: g1, patterns: p1, config_path: cp1 }, DaemonRequest::List { global: g2, patterns: p2, config_path: cp2 }) => {
                 assert_eq!(g1, g2);
                 assert_eq!(p1, p2);
+                assert_eq!(cp1, cp2);
             },
-            (DaemonRequest::Freq { all: a1 }, DaemonRequest::Freq { all: a2 }) => {
+            (DaemonRequest::Freq { all: a1, config_path: cp1 }, DaemonRequest::Freq { all: a2, config_path: cp2 }) => {
                 assert_eq!(a1, a2);
+                assert_eq!(cp1, cp2);
             },
             (DaemonRequest::Health, DaemonRequest::Health) => {},
             (DaemonRequest::ReloadConfig, DaemonRequest::ReloadConfig) => {},
@@ -150,6 +158,7 @@ fn test_query_request_has_eol() {
     let query = DaemonRequest::Query {
         cmdline: "test command".to_string(),
         eol: true,
+        config_path: None,
     };
 
     // Serialize it
@@ -163,6 +172,7 @@ fn test_query_request_has_eol() {
     let query_false = DaemonRequest::Query {
         cmdline: "test command".to_string(),
         eol: false,
+        config_path: None,
     };
 
     let serialized_false = serde_json::to_string(&query_false).expect("Should serialize");
@@ -178,7 +188,11 @@ fn test_protocol_message_tags() {
     let serialized = serde_json::to_string(&health).expect("Should serialize");
     assert!(serialized.contains("\"type\":\"Health\""), "Health request should have correct type tag");
 
-    let query = DaemonRequest::Query { cmdline: "test".to_string(), eol: false };
+    let query = DaemonRequest::Query { 
+        cmdline: "test".to_string(), 
+        eol: false,
+        config_path: None,
+    };
     let serialized = serde_json::to_string(&query).expect("Should serialize");
     assert!(serialized.contains("\"type\":\"Query\""), "Query request should have correct type tag");
 
@@ -197,9 +211,9 @@ fn test_protocol_message_tags() {
 fn test_request_type_differentiation() {
     let requests_json = vec![
         r#"{"type":"Health"}"#,
-        r#"{"type":"Query","cmdline":"test","eol":true}"#,
-        r#"{"type":"List","global":false,"patterns":[]}"#,
-        r#"{"type":"Freq","all":false}"#,
+        r#"{"type":"Query","cmdline":"test","eol":true,"config_path":null}"#,
+        r#"{"type":"List","global":false,"patterns":[],"config_path":null}"#,
+        r#"{"type":"Freq","all":false,"config_path":null}"#,
         r#"{"type":"ReloadConfig"}"#,
         r#"{"type":"Shutdown"}"#,
     ];
@@ -211,18 +225,18 @@ fn test_request_type_differentiation() {
         // Verify we can match on the deserialized type
         match request {
             DaemonRequest::Health => {},
-            DaemonRequest::Query { cmdline, eol } => {
+            DaemonRequest::Query { cmdline, eol, .. } => {
                 assert_eq!(cmdline, "test");
                 assert_eq!(eol, true);
             },
-            DaemonRequest::List { global, patterns } => {
+            DaemonRequest::List { global, patterns, .. } => {
                 assert_eq!(global, false);
                 assert_eq!(patterns.len(), 0);
             },
-            DaemonRequest::Freq { all: _ } => {},
+            DaemonRequest::Freq { all: _, .. } => {},
             DaemonRequest::ReloadConfig => {},
             DaemonRequest::Shutdown => {},
-            DaemonRequest::CompleteAliases => {},
+            DaemonRequest::CompleteAliases { .. } => {},
         }
     }
 }

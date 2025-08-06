@@ -16,15 +16,21 @@ pub enum DaemonRequest {
         cmdline: String,
         /// End-of-line processing flag - critical for consistent behavior
         eol: bool,
+        /// Optional custom config path
+        config_path: Option<String>,
     },
     /// List aliases with optional filtering
     List {
         global: bool,
-        patterns: Vec<String>
+        patterns: Vec<String>,
+        /// Optional custom config path
+        config_path: Option<String>,
     },
     /// Show alias usage frequency statistics
     Freq {
         all: bool,
+        /// Optional custom config path
+        config_path: Option<String>,
     },
     /// Health check request
     Health,
@@ -33,7 +39,10 @@ pub enum DaemonRequest {
     /// Request daemon shutdown
     Shutdown,
     /// Request alias names for shell completion
-    CompleteAliases,
+    CompleteAliases {
+        /// Optional custom config path
+        config_path: Option<String>,
+    },
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -77,15 +86,17 @@ mod tests {
         let query = DaemonRequest::Query {
             cmdline: "test command".to_string(),
             eol: true,
+            config_path: Some("test.conf".to_string()),
         };
 
         let serialized = serde_json::to_string(&query).expect("Failed to serialize");
         let deserialized: DaemonRequest = serde_json::from_str(&serialized).expect("Failed to deserialize");
 
         match deserialized {
-            DaemonRequest::Query { cmdline, eol } => {
+            DaemonRequest::Query { cmdline, eol, config_path } => {
                 assert_eq!(cmdline, "test command");
                 assert_eq!(eol, true);
+                assert_eq!(config_path, Some("test.conf".to_string()));
             }
             _ => panic!("Wrong variant deserialized"),
         }
@@ -111,13 +122,13 @@ mod tests {
     #[test]
     fn test_all_request_variants_serialize() {
         let requests = vec![
-            DaemonRequest::Query { cmdline: "test".to_string(), eol: false },
-            DaemonRequest::List { global: true, patterns: vec!["pattern".to_string()] },
-            DaemonRequest::Freq { all: false },
+            DaemonRequest::Query { cmdline: "test".to_string(), eol: false, config_path: None },
+            DaemonRequest::List { global: true, patterns: vec!["pattern".to_string()], config_path: None },
+            DaemonRequest::Freq { all: false, config_path: None },
             DaemonRequest::Health,
             DaemonRequest::ReloadConfig,
             DaemonRequest::Shutdown,
-            DaemonRequest::CompleteAliases,
+            DaemonRequest::CompleteAliases { config_path: None },
         ];
 
         for request in requests {

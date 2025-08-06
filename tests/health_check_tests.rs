@@ -60,7 +60,7 @@ aliases:
         fs::write(&config_file, test_config).expect("Failed to write config");
 
         // Test that health check works with valid config (should return 0 when daemon not running)
-        let result = execute_health_check(&home_dir).expect("Health check should work");
+        let result = execute_health_check(&home_dir, &None).expect("Health check should work");
 
         // When daemon is not running, it should fall back to direct mode validation
         // With valid config, this should return 0
@@ -80,7 +80,7 @@ fn test_health_check_no_config() {
     let original_xdg = std::env::var("XDG_RUNTIME_DIR").ok();
     std::env::remove_var("XDG_RUNTIME_DIR");
 
-    let result = execute_health_check(&home_dir).expect("Health check should work");
+    let result = execute_health_check(&home_dir, &None).expect("Health check should work");
 
     // Restore XDG_RUNTIME_DIR if it was set
     if let Some(xdg) = original_xdg {
@@ -117,7 +117,7 @@ aliases:
     let original_xdg = std::env::var("XDG_RUNTIME_DIR").ok();
     std::env::remove_var("XDG_RUNTIME_DIR");
 
-    let result = execute_health_check(&home_dir).expect("Health check should work");
+    let result = execute_health_check(&home_dir, &None).expect("Health check should work");
 
     // Restore XDG_RUNTIME_DIR if it was set
     if let Some(xdg) = original_xdg {
@@ -151,7 +151,7 @@ aliases: {}
     let original_xdg = std::env::var("XDG_RUNTIME_DIR").ok();
     std::env::remove_var("XDG_RUNTIME_DIR");
 
-    let result = execute_health_check(&home_dir).expect("Health check should work");
+    let result = execute_health_check(&home_dir, &None).expect("Health check should work");
 
     // Restore XDG_RUNTIME_DIR if it was set
     if let Some(xdg) = original_xdg {
@@ -190,7 +190,7 @@ aliases:
 "#;
         fs::write(&config_file, test_config).expect("Failed to write config");
 
-        let result = execute_health_check(&home_dir).expect("Health check should work");
+        let result = execute_health_check(&home_dir, &None).expect("Health check should work");
         assert_eq!(result, 0, "Valid config should return exit code 0");
     });
 }
@@ -217,7 +217,7 @@ aliases:
         fs::write(&config_file, test_config1).expect("Failed to write config");
 
         // First health check should return 0 (valid config)
-        let result1 = execute_health_check(&home_dir).expect("Health check should work");
+        let result1 = execute_health_check(&home_dir, &None).expect("Health check should work");
         assert_eq!(result1, 0, "First health check should return 0");
 
         // Modify config
@@ -231,7 +231,7 @@ aliases:
         fs::write(&config_file, test_config2).expect("Failed to write config");
 
         // Second health check should still return 0 (valid config, hash updated)
-        let result2 = execute_health_check(&home_dir).expect("Health check should work");
+        let result2 = execute_health_check(&home_dir, &None).expect("Health check should work");
         assert_eq!(result2, 0, "Second health check should return 0");
     });
 }
@@ -256,7 +256,7 @@ aliases:
 "#;
         fs::write(&config_file, test_config).expect("Failed to write config");
 
-        let result = execute_health_check(&home_dir).expect("Health check should work");
+        let result = execute_health_check(&home_dir, &None).expect("Health check should work");
         assert_eq!(result, 0, "Config in .config/aka/aka.yml should work");
 
         // Remove the config file and test with ~/.aka.yml
@@ -265,7 +265,7 @@ aliases:
         let home_config = home_dir.join(".aka.yml");
         fs::write(&home_config, test_config).expect("Failed to write home config");
 
-        let result2 = execute_health_check(&home_dir).expect("Health check should work");
+        let result2 = execute_health_check(&home_dir, &None).expect("Health check should work");
         assert_eq!(result2, 0, "Config in ~/.aka.yml should work");
     });
 }

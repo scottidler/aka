@@ -1051,7 +1051,7 @@ fn handle_regular_command(opts: &AkaOpts) -> Result<i32> {
             debug!("🏥 Explicit health check command requested");
             let home_dir = dirs::home_dir()
                 .ok_or_else(|| eyre::eyre!("Unable to determine home directory"))?;
-            return execute_health_check(&home_dir);
+            return execute_health_check(&home_dir, &opts.config);
         }
     }
 
@@ -1062,7 +1062,7 @@ fn handle_regular_command(opts: &AkaOpts) -> Result<i32> {
     // Run health check to determine system state
     let home_dir = dirs::home_dir()
         .ok_or_else(|| eyre::eyre!("Unable to determine home directory"))?;
-    let health_status = execute_health_check(&home_dir)?;
+    let health_status = execute_health_check(&home_dir, &opts.config)?;
     debug!("📊 Health check completed with status: {}", health_status);
 
     route_command_by_health_status(health_status, opts)
@@ -1190,6 +1190,64 @@ fn handle_daemon_list_response(
     }
 }
 
+fn handle_daemon_freq_response(
+    response: DaemonResponse,
+    timing: &mut TimingCollector,
+) -> Result<i32> {
+    match response {
+        DaemonResponse::Success { data } => {
+            println!("{}", data);
+            debug!("✅ Daemon freq request processed successfully");
+            timing.end_processing();
+            debug!("🎯 === DAEMON-ONLY COMPLETE (SUCCESS) ===");
+            Ok(0)
+        }
+        DaemonResponse::Error { message } => {
+            eprintln!("Error: {}", message);
+            warn!("❌ Daemon freq request failed: {}", message);
+            timing.end_processing();
+            debug!("🎯 === DAEMON-ONLY COMPLETE (ERROR) ===");
+            Ok(1)
+        }
+        _ => {
+            eprintln!("Unexpected response type for freq command");
+            warn!("❌ Unexpected response type for freq command");
+            timing.end_processing();
+            debug!("🎯 === DAEMON-ONLY COMPLETE (UNEXPECTED RESPONSE) ===");
+            Ok(1)
+        }
+    }
+}
+
+fn handle_daemon_complete_aliases_response(
+    response: DaemonResponse,
+    timing: &mut TimingCollector,
+) -> Result<i32> {
+    match response {
+        DaemonResponse::Success { data } => {
+            println!("{}", data);
+            debug!("✅ Daemon complete aliases request processed successfully");
+            timing.end_processing();
+            debug!("🎯 === DAEMON-ONLY COMPLETE (SUCCESS) ===");
+            Ok(0)
+        }
+        DaemonResponse::Error { message } => {
+            eprintln!("Error: {}", message);
+            warn!("❌ Daemon complete aliases request failed: {}", message);
+            timing.end_processing();
+            debug!("🎯 === DAEMON-ONLY COMPLETE (ERROR) ===");
+            Ok(1)
+        }
+        _ => {
+            eprintln!("Unexpected response type for complete aliases command");
+            warn!("❌ Unexpected response type for complete aliases command");
+            timing.end_processing();
+            debug!("🎯 === DAEMON-ONLY COMPLETE (UNEXPECTED RESPONSE) ===");
+            Ok(1)
+        }
+    }
+}
+
 fn handle_command_via_daemon_only_timed(opts: &AkaOpts, timing: &mut TimingCollector) -> Result<i32> {
     debug!("🎯 Processing command via daemon only");
     debug!("🔍 Daemon-only handler - NO fallback to config loading");
@@ -1205,6 +1263,7 @@ fn handle_command_via_daemon_only_timed(opts: &AkaOpts, timing: &mut TimingColle
                 let request = DaemonRequest::Query {
                     cmdline: query_opts.cmdline.clone(),
                     eol: opts.eol,
+                    config_path: opts.config.as_ref().map(|p| p.to_string_lossy().to_string()),
                 };
                 debug!("📤 Sending daemon query: {}", query_opts.cmdline);
 
@@ -1220,44 +1279,53 @@ fn handle_command_via_daemon_only_timed(opts: &AkaOpts, timing: &mut TimingColle
                 }
             }
             Command::List(list_opts) => {
+                debug!("📤 Preparing daemon list request");
                 let request = DaemonRequest::List {
                     global: list_opts.global,
-                    patterns: list_opts.patterns.clone()
+                    patterns: list_opts.patterns.clone(),
+                    config_path: opts.config.as_ref().map(|p| p.to_string_lossy().to_string()),
                 };
                 debug!("📤 Sending daemon list request");
+
                 match DaemonClient::send_request_timed(request, timing) {
                     Ok(response) => handle_daemon_list_response(response, timing),
                     Err(e) => {
                         warn!("❌ Daemon request failed: {}", e);
                         debug!("🔄 Daemon communication failed, will fallback to direct mode");
                         timing.end_processing();
-                        Ok(1)
+                        debug!("🎯 === DAEMON-ONLY COMPLETE (COMMUNICATION ERROR) ===");
+                        Err(eyre::eyre!("Daemon communication failed: {}", e))
                     }
                 }
             }
             Command::Freq(freq_opts) => {
-                debug!("📤 Preparing daemon frequency request");
+                debug!("📤 Preparing daemon freq request");
                 let request = DaemonRequest::Freq {
                     all: freq_opts.all,
+                    config_path: opts.config.as_ref().map(|p| p.to_string_lossy().to_string()),
                 };
-                debug!("📤 Sending daemon frequency request");
+                debug!("📤 Sending daemon freq request");
+
                 match DaemonClient::send_request_timed(request, timing) {
-                    Ok(response) => handle_daemon_query_response(response, timing),
+                    Ok(response) => handle_daemon_freq_response(response, timing),
                     Err(e) => {
                         warn!("❌ Daemon request failed: {}", e);
                         debug!("🔄 Daemon communication failed, will fallback to direct mode");
                         timing.end_processing();
-                        Ok(1)
+                        debug!("🎯 === DAEMON-ONLY COMPLETE (COMMUNICATION ERROR) ===");
+                        Err(eyre::eyre!("Daemon communication failed: {}", e))
                     }
                 }
             }
             Command::CompleteAliases => {
                 debug!("📤 Preparing daemon complete aliases request");
-                let request = DaemonRequest::CompleteAliases;
+                let request = DaemonRequest::CompleteAliases {
+                    config_path: opts.config.as_ref().map(|p| p.to_string_lossy().to_string()),
+                };
                 debug!("📤 Sending daemon complete aliases request");
 
                 match DaemonClient::send_request_timed(request, timing) {
-                    Ok(response) => handle_daemon_query_response(response, timing),
+                    Ok(response) => handle_daemon_complete_aliases_response(response, timing),
                     Err(e) => {
                         warn!("❌ Daemon request failed: {}", e);
                         debug!("🔄 Daemon communication failed, will fallback to direct mode");
@@ -1431,6 +1499,7 @@ mod tests {
         let query_request = DaemonRequest::Query {
             cmdline: "test".to_string(),
             eol: false,
+            config_path: None,
         };
         let serialized = serde_json::to_string(&query_request);
         assert!(serialized.is_ok());

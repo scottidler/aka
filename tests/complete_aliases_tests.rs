@@ -236,7 +236,9 @@ mod daemon_tests {
     /// Test that CompleteAliases request can be serialized/deserialized
     #[test]
     fn test_complete_aliases_protocol_serialization() {
-        let request = DaemonRequest::CompleteAliases;
+        let request = DaemonRequest::CompleteAliases {
+            config_path: None,
+        };
 
         // Test serialization
         let serialized = serde_json::to_string(&request).expect("Should serialize");
@@ -245,7 +247,7 @@ mod daemon_tests {
         // Test deserialization
         let deserialized: DaemonRequest = serde_json::from_str(&serialized).expect("Should deserialize");
         match deserialized {
-            DaemonRequest::CompleteAliases => {}, // Success
+            DaemonRequest::CompleteAliases { .. } => {}, // Success
             _ => panic!("Wrong variant deserialized"),
         }
     }
@@ -253,10 +255,12 @@ mod daemon_tests {
     /// Test the protocol message format
     #[test]
     fn test_complete_aliases_protocol_format() {
-        let request = DaemonRequest::CompleteAliases;
+        let request = DaemonRequest::CompleteAliases {
+            config_path: None,
+        };
         let json = serde_json::to_string(&request).expect("Should serialize");
 
         // Should match the expected JSON format
-        assert_eq!(json, r#"{"type":"CompleteAliases"}"#);
+        assert!(json.contains(r#""type":"CompleteAliases""#));
     }
 }

@@ -531,9 +531,10 @@ fn validate_fresh_config_and_store_hash(
     }
 }
 
-pub fn execute_health_check(home_dir: &PathBuf) -> Result<i32> {
+pub fn execute_health_check(home_dir: &PathBuf, config_override: &Option<PathBuf>) -> Result<i32> {
     debug!("🏥 === HEALTH CHECK START ===");
     debug!("📋 Health check will determine the best processing path");
+    debug!("🔧 Custom config override: {:?}", config_override);
 
     // Step 1: Check if daemon is available and healthy
     debug!("📋 Step 1: Checking daemon health");
@@ -562,7 +563,7 @@ pub fn execute_health_check(home_dir: &PathBuf) -> Result<i32> {
     // Step 2: Daemon not available, check config file cache
     debug!("📋 Step 2: Daemon unavailable, checking config cache");
 
-    let config_path = match get_config_path(home_dir) {
+    let config_path = match get_config_path_with_override(home_dir, config_override) {
         Ok(path) => path,
         Err(e) => {
             debug!("❌ Health check failed: config file not found: {}", e);
@@ -585,25 +586,30 @@ pub fn execute_health_check(home_dir: &PathBuf) -> Result<i32> {
         }
     };
 
-    // Step 4: Compare with stored hash
+    // Step 4: Compare with stored hash (only if using default config)
     debug!("📋 Step 4: Comparing with stored hash");
-    let stored_hash = get_stored_hash(home_dir).unwrap_or(None);
+    if config_override.is_none() {
+        // Only use cache for default config path
+        let stored_hash = get_stored_hash(home_dir).unwrap_or(None);
 
-    match stored_hash {
-        Some(stored) => {
-            debug!("🔍 Found stored hash: {}", stored);
-            if stored == current_hash {
-                debug!("✅ Hash matches! Config cache is valid, can use direct mode");
-                debug!("🎯 Health check result: CACHE_VALID (returning 0)");
-                return Ok(0);
-            } else {
-                debug!("⚠️ Hash mismatch: stored={}, current={}", stored, current_hash);
-                debug!("📋 Cache invalid, need fresh config load");
+        match stored_hash {
+            Some(stored) => {
+                debug!("🔍 Found stored hash: {}", stored);
+                if stored == current_hash {
+                    debug!("✅ Hash matches! Config cache is valid, can use direct mode");
+                    debug!("🎯 Health check result: CACHE_VALID (returning 0)");
+                    return Ok(0);
+                } else {
+                    debug!("⚠️ Hash mismatch: stored={}, current={}", stored, current_hash);
+                    debug!("📋 Cache invalid, need fresh config load");
+                }
+            }
+            None => {
+                debug!("⚠️ No stored hash found, need fresh config load");
             }
         }
-        None => {
-            debug!("⚠️ No stored hash found, need fresh config load");
-        }
+    } else {
+        debug!("🔧 Custom config specified, skipping cache check");
     }
 
     // Step 5: Hash doesn't match or no stored hash, validate config fresh

@@ -69,18 +69,22 @@ fn test_daemon_protocol_serialization() {
         DaemonRequest::Query {
             cmdline: "test-alias".to_string(),
             eol: false,
+            config_path: None,
         },
         DaemonRequest::Query {
             cmdline: "test-alias".to_string(),
             eol: true,
+            config_path: None,
         },
         DaemonRequest::List {
             global: false,
             patterns: vec!["test-*".to_string()],
+            config_path: None,
         },
         DaemonRequest::List {
             global: true,
             patterns: vec![],
+            config_path: None,
         },
         DaemonRequest::ReloadConfig,
         DaemonRequest::Shutdown,
@@ -95,13 +99,15 @@ fn test_daemon_protocol_serialization() {
         // Verify round-trip worked (basic type check)
         match (&request, &deserialized) {
             (DaemonRequest::Health, DaemonRequest::Health) => {},
-            (DaemonRequest::Query { cmdline: c1, eol: e1 }, DaemonRequest::Query { cmdline: c2, eol: e2 }) => {
+            (DaemonRequest::Query { cmdline: c1, eol: e1, config_path: cp1 }, DaemonRequest::Query { cmdline: c2, eol: e2, config_path: cp2 }) => {
                 assert_eq!(c1, c2);
                 assert_eq!(e1, e2);
+                assert_eq!(cp1, cp2);
             },
-            (DaemonRequest::List { global: g1, patterns: p1 }, DaemonRequest::List { global: g2, patterns: p2 }) => {
+            (DaemonRequest::List { global: g1, patterns: p1, config_path: cp1 }, DaemonRequest::List { global: g2, patterns: p2, config_path: cp2 }) => {
                 assert_eq!(g1, g2);
                 assert_eq!(p1, p2);
+                assert_eq!(cp1, cp2);
             },
             (DaemonRequest::ReloadConfig, DaemonRequest::ReloadConfig) => {},
             (DaemonRequest::Shutdown, DaemonRequest::Shutdown) => {},
@@ -400,6 +406,7 @@ fn test_daemon_protocol_structure() {
     let query = DaemonRequest::Query {
         cmdline: "test".to_string(),
         eol: true,
+        config_path: None,
     };
 
     let serialized = serde_json::to_string(&query).expect("Should serialize");
