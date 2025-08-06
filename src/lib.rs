@@ -773,9 +773,7 @@ impl AKA {
     }
 
     pub fn use_alias(&self, alias: &Alias, pos: usize) -> bool {
-        if alias.is_variadic() && !self.eol {
-            false
-        } else if pos == 0 {
+        if pos == 0 {
             true
         } else {
             alias.global
@@ -926,7 +924,7 @@ impl AKA {
                 // Now we can safely get mutable reference
                 if let Some(alias) = self.spec.aliases.get_mut(&current_arg) {
                     debug!("🔍 PROCESSING ALIAS: '{}' -> '{}'", current_arg, alias.value);
-                    Self::process_alias_replacement(alias, &current_arg, cmdline, &mut remainders, pos, &aliases_for_interpolation)?
+                    Self::process_alias_replacement(alias, &current_arg, cmdline, &mut remainders, pos, &aliases_for_interpolation, self.eol)?
                 } else {
                     (current_arg.clone(), 0, false, " ")
                 }
@@ -1034,6 +1032,7 @@ impl AKA {
         remainders: &mut Vec<String>,
         pos: usize,
         alias_map: &std::collections::HashMap<String, crate::cfg::alias::Alias>,
+        eol: bool,
     ) -> Result<(String, usize, bool, &'static str)> {
         debug!("🔍 ALIAS REPLACEMENT LOGIC: alias='{}', current_arg='{}', pos={}, global={}",
                alias.name, current_arg, pos, alias.global);
@@ -1049,7 +1048,7 @@ impl AKA {
         } else {
             let space = if alias.space { " " } else { "" };
             debug!("🔍 CALLING ALIAS.REPLACE: remainders={:?}", remainders);
-            let (v, c) = alias.replace(remainders, alias_map)?;
+            let (v, c) = alias.replace(remainders, alias_map, eol)?;
             let replaced = v != alias.name;
             debug!("🔍 ALIAS.REPLACE RESULT: v='{}', c={}, replaced={}", v, c, replaced);
             if replaced {

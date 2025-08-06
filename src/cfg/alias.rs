@@ -136,8 +136,8 @@ impl Alias {
     /// - If there was a problem retrieving positional parameters.
     /// - If the alias is not variadic and the number of positional parameters doesn't match the number of remaining arguments.
     /// - If there was a problem with variable interpolation.
-    pub fn replace(&self, remainders: &mut Vec<String>, alias_map: &HashMap<String, Alias>) -> Result<(String, usize)> {
-        // Step 1: Variable interpolation
+    pub fn replace(&self, remainders: &mut Vec<String>, alias_map: &HashMap<String, Alias>, eol: bool) -> Result<(String, usize)> {
+        // Step 1: Variable interpolation (always happens)
         let mut resolution_stack = HashSet::new();
         resolution_stack.insert(self.name.clone());
         let mut result = self.interpolate_variables(alias_map, &mut resolution_stack)?;
@@ -154,8 +154,8 @@ impl Alias {
             } else {
                 result = self.name.clone();
             }
-        } else if result.contains("$@") {
-            // Step 3: Variadic argument replacement (check interpolated result, not original value)
+        } else if result.contains("$@") && eol {
+            // Step 3: Variadic argument replacement (only when eol=true)
             result = result.replace("$@", &remainders.join(" "));
             count = remainders.len();
             remainders.drain(0..remainders.len());
@@ -236,7 +236,7 @@ mod tests {
 
         let mut remainders = vec!["Hello".to_string(), "World".to_string()];
         let aliases = HashMap::new();
-        assert_eq!(alias.replace(&mut remainders, &aliases)?, ("echo Hello World".to_string(), 2));
+        assert_eq!(alias.replace(&mut remainders, &aliases, true)?, ("echo Hello World".to_string(), 2));
         assert_eq!(remainders, Vec::<String>::new()); // Corrected this line
 
         let alias_variadic = Alias {
@@ -249,7 +249,7 @@ mod tests {
 
         let mut remainders_variadic = vec!["Hello".to_string(), "from".to_string(), "Rust".to_string()];
         assert_eq!(
-            alias_variadic.replace(&mut remainders_variadic, &aliases)?,
+            alias_variadic.replace(&mut remainders_variadic, &aliases, true)?,
             ("echo Hello from Rust".to_string(), 3)
         );
         assert_eq!(remainders_variadic, Vec::<String>::new()); // Corrected this line
@@ -297,7 +297,7 @@ mod tests {
 
         let mut remainders = vec!["Hello".to_string(), "World".to_string()];
         let aliases = HashMap::new();
-        assert_eq!(alias.replace(&mut remainders, &aliases)?, ("echo Hello World".to_string(), 2));
+        assert_eq!(alias.replace(&mut remainders, &aliases, true)?, ("echo Hello World".to_string(), 2));
         assert_eq!(remainders, Vec::<String>::new());
         assert_eq!(alias.count, 0); // Count is not modified by the replace method itself
         Ok(())
@@ -315,7 +315,7 @@ mod tests {
 
         let mut remainders = vec!["Hello".to_string(), "World".to_string()];
         let aliases = HashMap::new();
-        assert_eq!(alias.replace(&mut remainders, &aliases)?, ("alias".to_string(), 0)); // Alias name is returned when not enough arguments.
+        assert_eq!(alias.replace(&mut remainders, &aliases, true)?, ("alias".to_string(), 0)); // Alias name is returned when not enough arguments.
         assert_eq!(alias.count, 0);
         Ok(())
     }
