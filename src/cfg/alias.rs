@@ -154,11 +154,17 @@ impl Alias {
             } else {
                 result = self.name.clone();
             }
-        } else if result.contains("$@") && eol {
-            // Step 3: Variadic argument replacement (only when eol=true)
-            result = result.replace("$@", &remainders.join(" "));
-            count = remainders.len();
-            remainders.drain(0..remainders.len());
+        } else if result.contains("$@") {
+            if eol {
+                // Step 3: Variadic argument replacement (only when eol=true)
+                result = result.replace("$@", &remainders.join(" "));
+                count = remainders.len();
+                remainders.drain(0..remainders.len());
+            } else {
+                // For variadic aliases when eol=false, return the original alias name to indicate no expansion
+                result = self.name.clone();
+                count = 0;
+            }
         }
 
         Ok((result, count))
