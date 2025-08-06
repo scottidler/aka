@@ -2,6 +2,8 @@ use eyre::Result;
 use regex::Regex;
 use serde::{Deserialize, Deserializer, Serialize};
 use std::str::FromStr;
+use std::collections::{HashMap, HashSet};
+use log::debug;
 
 const fn default_true() -> bool {
     true
@@ -58,16 +60,17 @@ impl Alias {
         Ok(items)
     }
 
-    /// Return the keyword arguments
+    /// Return variable references (alias names referenced with $aliasname)
     ///
     /// # Errors
     ///
-    /// Will return `Err` if there was a problem in processing the keyword arguments.
-    pub fn keywords(&self) -> Result<Vec<String>> {
-        let re = Regex::new(r"(\$[A-z]+)")?;
+    /// Will return `Err` if there was a problem in processing the variable references.
+    pub fn variable_references(&self) -> Result<Vec<String>> {
+        // Match $word but exclude $1-9 and $@
+        let re = Regex::new(r"\$([A-Za-z][A-Za-z0-9_-]*)")?;
         let mut items: Vec<String> = re
-            .find_iter(&self.value)
-            .filter_map(|m| m.as_str().parse().ok())
+            .captures_iter(&self.value)
+            .map(|cap| cap[1].to_string()) // Get the variable name without $
             .collect();
         items.sort();
         items.dedup();
@@ -79,6 +82,52 @@ impl Alias {
         self.value.contains("$@")
     }
 
+    /// Interpolate variable references in the alias value
+    ///
+    /// # Errors
+    ///
+    /// Will return `Err` if there was a problem resolving variable references.
+    fn interpolate_variables(
+        &self,
+        alias_map: &HashMap<String, Alias>,
+        resolution_stack: &mut HashSet<String>,
+    ) -> Result<String> {
+        let mut result = self.value.clone();
+        let variable_refs = self.variable_references()?;
+
+        for var_name in variable_refs {
+            let placeholder = format!("${}", var_name);
+
+            // Check for cycle
+            if resolution_stack.contains(&var_name) {
+                debug!("🔄 CYCLE DETECTED: {} -> {} (skipping)", self.name, var_name);
+                continue; // Leave $var_name as-is
+            }
+
+            // Find the referenced alias
+            if let Some(target_alias) = alias_map.get(&var_name) {
+                // Add to resolution stack
+                resolution_stack.insert(var_name.clone());
+
+                // Recursively resolve the target alias
+                let resolved_value = target_alias.interpolate_variables(alias_map, resolution_stack)?;
+
+                // Replace the placeholder
+                result = result.replace(&placeholder, &resolved_value);
+
+                // Remove from resolution stack
+                resolution_stack.remove(&var_name);
+
+                debug!("🔧 VARIABLE INTERPOLATION: '{}' -> '{}'", placeholder, resolved_value);
+            } else {
+                debug!("🔍 VARIABLE NOT FOUND: {} (leaving as-is)", var_name);
+                // Leave $var_name as-is if alias doesn't exist
+            }
+        }
+
+        Ok(result)
+    }
+
     /// Replace the remainder of the arguments.
     ///
     /// # Errors
@@ -86,8 +135,14 @@ impl Alias {
     /// Returns `Err` under the following conditions:
     /// - If there was a problem retrieving positional parameters.
     /// - If the alias is not variadic and the number of positional parameters doesn't match the number of remaining arguments.
-    pub fn replace(&self, remainders: &mut Vec<String>) -> Result<(String, usize)> {
-        let mut result = self.value.clone();
+    /// - If there was a problem with variable interpolation.
+    pub fn replace(&self, remainders: &mut Vec<String>, alias_map: &HashMap<String, Alias>) -> Result<(String, usize)> {
+        // Step 1: Variable interpolation
+        let mut resolution_stack = HashSet::new();
+        resolution_stack.insert(self.name.clone());
+        let mut result = self.interpolate_variables(alias_map, &mut resolution_stack)?;
+
+        // Step 2: Positional argument replacement
         let mut count = 0;
         let positionals = self.positionals()?;
         if positionals.len() > 0 {
@@ -99,11 +154,13 @@ impl Alias {
             } else {
                 result = self.name.clone();
             }
-        } else if self.is_variadic() {
+        } else if result.contains("$@") {
+            // Step 3: Variadic argument replacement (check interpolated result, not original value)
             result = result.replace("$@", &remainders.join(" "));
             count = remainders.len();
             remainders.drain(0..remainders.len());
         }
+
         Ok((result, count))
     }
 }
@@ -141,7 +198,7 @@ mod tests {
     }
 
     #[test]
-    fn test_keywords() -> Result<()> {
+    fn test_variable_references() -> Result<()> {
         let alias = Alias {
             name: "alias2".to_string(),
             value: "echo $name $location".to_string(),
@@ -150,7 +207,7 @@ mod tests {
             count: 0,
         };
 
-        assert_eq!(alias.keywords()?, vec!["$location", "$name"]);
+        assert_eq!(alias.variable_references()?, vec!["location", "name"]);
         Ok(())
     }
 
@@ -178,7 +235,8 @@ mod tests {
         };
 
         let mut remainders = vec!["Hello".to_string(), "World".to_string()];
-        assert_eq!(alias.replace(&mut remainders)?, ("echo Hello World".to_string(), 2));
+        let aliases = HashMap::new();
+        assert_eq!(alias.replace(&mut remainders, &aliases)?, ("echo Hello World".to_string(), 2));
         assert_eq!(remainders, Vec::<String>::new()); // Corrected this line
 
         let alias_variadic = Alias {
@@ -191,7 +249,7 @@ mod tests {
 
         let mut remainders_variadic = vec!["Hello".to_string(), "from".to_string(), "Rust".to_string()];
         assert_eq!(
-            alias_variadic.replace(&mut remainders_variadic)?,
+            alias_variadic.replace(&mut remainders_variadic, &aliases)?,
             ("echo Hello from Rust".to_string(), 3)
         );
         assert_eq!(remainders_variadic, Vec::<String>::new()); // Corrected this line
@@ -222,7 +280,7 @@ mod tests {
         };
 
         assert_eq!(alias.positionals()?, Vec::<String>::new());
-        assert_eq!(alias.keywords()?, Vec::<String>::new());
+        assert_eq!(alias.variable_references()?, Vec::<String>::new());
         assert_eq!(alias.count, 0);
         Ok(())
     }
@@ -238,7 +296,8 @@ mod tests {
         };
 
         let mut remainders = vec!["Hello".to_string(), "World".to_string()];
-        assert_eq!(alias.replace(&mut remainders)?, ("echo Hello World".to_string(), 2));
+        let aliases = HashMap::new();
+        assert_eq!(alias.replace(&mut remainders, &aliases)?, ("echo Hello World".to_string(), 2));
         assert_eq!(remainders, Vec::<String>::new());
         assert_eq!(alias.count, 0); // Count is not modified by the replace method itself
         Ok(())
@@ -255,7 +314,8 @@ mod tests {
         };
 
         let mut remainders = vec!["Hello".to_string(), "World".to_string()];
-        assert_eq!(alias.replace(&mut remainders)?, ("alias".to_string(), 0)); // Alias name is returned when not enough arguments.
+        let aliases = HashMap::new();
+        assert_eq!(alias.replace(&mut remainders, &aliases)?, ("alias".to_string(), 0)); // Alias name is returned when not enough arguments.
         assert_eq!(alias.count, 0);
         Ok(())
     }
