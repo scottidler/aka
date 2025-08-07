@@ -1,7 +1,9 @@
 use std::fs;
-use std::process::Command;
 use tempfile::TempDir;
 use std::path::PathBuf;
+
+mod common;
+use common::*;
 
 fn setup_test_environment_with_usage() -> (TempDir, PathBuf) {
     let temp_dir = TempDir::new().expect("Failed to create temp dir");
@@ -32,90 +34,44 @@ aliases:
     (temp_dir, config_file)
 }
 
-fn get_aka_binary_path() -> PathBuf {
-    let mut path = std::env::current_dir().expect("Failed to get current dir");
-    path.push("target");
-    path.push("debug");
-    path.push("aka");
-    path
-}
-
 #[test]
 fn test_freq_command_basic() {
     let (temp_dir, _config_file) = setup_test_environment_with_usage();
-    let aka_binary = get_aka_binary_path();
-
-    // Build the binary first
-    let build_output = Command::new("cargo")
-        .args(&["build", "--bin", "aka"])
-        .output()
-        .expect("Failed to build aka binary");
-
-    if !build_output.status.success() {
-        panic!("Failed to build aka binary: {}", String::from_utf8_lossy(&build_output.stderr));
-    }
 
     // Set HOME to our temp directory and ensure no daemon socket exists
-    let output = Command::new(&aka_binary)
-        .args(&["freq"])
-        .env("HOME", temp_dir.path())
-        .env("XDG_RUNTIME_DIR", temp_dir.path().join("run"))
-        .env("AKA_LOG_FILE", "/tmp/aka-test-logs/aka.log")
-        .output()
-        .expect("Failed to run aka freq");
+    let result = run_aka_command(&["freq"], Some(&temp_dir), None);
 
-    if !output.status.success() {
-        panic!("aka freq failed: {}", String::from_utf8_lossy(&output.stderr));
+    if !result.success {
+        panic!("aka freq failed: {}", result.stderr);
     }
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
 
     // By default, should only show used aliases (count > 0)
     // Since all aliases have count 0, should show "No aliases found."
-    assert!(stdout.contains("No aliases found."), "Should show 'No aliases found.' when no aliases are used");
+    assert!(result.stdout.contains("No aliases found."), "Should show 'No aliases found.' when no aliases are used");
 }
 
 #[test]
 fn test_freq_command_with_all_option() {
     let (temp_dir, _config_file) = setup_test_environment_with_usage();
-    let aka_binary = get_aka_binary_path();
-
-    // Build the binary first
-    let build_output = Command::new("cargo")
-        .args(&["build", "--bin", "aka"])
-        .output()
-        .expect("Failed to build aka binary");
-
-    if !build_output.status.success() {
-        panic!("Failed to build aka binary: {}", String::from_utf8_lossy(&build_output.stderr));
-    }
 
     // Test with --all to show all aliases including unused ones
-    let output = Command::new(&aka_binary)
-        .args(&["freq", "--all"])
-        .env("HOME", temp_dir.path())
-        .env("XDG_RUNTIME_DIR", temp_dir.path().join("run"))
-        .env("AKA_LOG_FILE", "/tmp/aka-test-logs/aka.log")
-        .output()
-        .expect("Failed to run aka freq --all");
+    let result = run_aka_command(&["freq", "--all"], Some(&temp_dir), None);
 
-    if !output.status.success() {
-        panic!("aka freq --all failed: {}", String::from_utf8_lossy(&output.stderr));
+    if !result.success {
+        panic!("aka freq --all failed: {}", result.stderr);
     }
 
-    let stdout = String::from_utf8_lossy(&output.stdout);
-
     // Should contain all aliases with count 0 (sorted alphabetically)
-    assert!(stdout.contains("test-high"));
-    assert!(stdout.contains("test-medium"));
-    assert!(stdout.contains("test-low"));
-    assert!(stdout.contains("test-unused"));
+    assert!(result.stdout.contains("test-high"));
+    assert!(result.stdout.contains("test-medium"));
+    assert!(result.stdout.contains("test-low"));
+    assert!(result.stdout.contains("test-unused"));
 
     // All should have count 0
-    assert!(stdout.contains("0"));
+    assert!(result.stdout.contains("0"));
 
     // Should be formatted with proper spacing
-    let lines: Vec<&str> = stdout.trim().split('\n').collect();
+    let lines: Vec<&str> = result.stdout.trim().split('\n').collect();
     assert_eq!(lines.len(), 6, "Should have 4 aliases + empty line + count line with --all");
 
     // Check that lines are properly formatted (count alias -> value)
@@ -149,100 +105,42 @@ aliases:
 "#;
     fs::write(&config_file, config_content).expect("Failed to write config");
 
-    let aka_binary = get_aka_binary_path();
+    let result = run_aka_command(&["freq"], Some(&temp_dir), None);
 
-    // Build the binary first
-    let build_output = Command::new("cargo")
-        .args(&["build", "--bin", "aka"])
-        .output()
-        .expect("Failed to build aka binary");
-
-    if !build_output.status.success() {
-        panic!("Failed to build aka binary: {}", String::from_utf8_lossy(&build_output.stderr));
+    if !result.success {
+        panic!("aka freq failed: {}", result.stderr);
     }
-
-    let output = Command::new(&aka_binary)
-        .args(&["freq"])
-        .env("HOME", temp_dir.path())
-        .env("XDG_RUNTIME_DIR", temp_dir.path().join("run"))
-        .env("AKA_LOG_FILE", "/tmp/aka-test-logs/aka.log")
-        .output()
-        .expect("Failed to run aka freq");
-
-    if !output.status.success() {
-        panic!("aka freq failed: {}", String::from_utf8_lossy(&output.stderr));
-    }
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
 
     // By default, should only show used aliases (count > 0)
     // Since dummy alias has count 0, should show "No aliases found."
-    assert!(stdout.contains("No aliases found."), "Should show 'No aliases found.' when no aliases are used");
+    assert!(result.stdout.contains("No aliases found."), "Should show 'No aliases found.' when no aliases are used");
 }
 
 #[test]
 fn test_freq_command_help() {
-    let aka_binary = get_aka_binary_path();
+    let result = run_aka_command(&["freq", "--help"], None, None);
 
-    // Build the binary first
-    let build_output = Command::new("cargo")
-        .args(&["build", "--bin", "aka"])
-        .output()
-        .expect("Failed to build aka binary");
-
-    if !build_output.status.success() {
-        panic!("Failed to build aka binary: {}", String::from_utf8_lossy(&build_output.stderr));
+    if !result.success {
+        panic!("aka freq --help failed: {}", result.stderr);
     }
-
-    let output = Command::new(&aka_binary)
-        .args(&["freq", "--help"])
-        .env("AKA_LOG_FILE", "/tmp/aka-test-logs/aka.log")
-        .env("XDG_RUNTIME_DIR", "/tmp/aka-test-runtime")
-        .output()
-        .expect("Failed to run aka freq --help");
-
-    if !output.status.success() {
-        panic!("aka freq --help failed: {}", String::from_utf8_lossy(&output.stderr));
-    }
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
 
     // Should contain help information
-    assert!(stdout.contains("show alias usage frequency statistics"), "Should contain description");
-    assert!(stdout.contains("--all"), "Should contain --all option");
-    assert!(stdout.contains("show all aliases including unused ones"), "Should contain --all description");
+    assert!(result.stdout.contains("show alias usage frequency statistics"), "Should contain description");
+    assert!(result.stdout.contains("--all"), "Should contain --all option");
+    assert!(result.stdout.contains("show all aliases including unused ones"), "Should contain --all description");
 }
 
 #[test]
 fn test_freq_command_in_main_help() {
-    let aka_binary = get_aka_binary_path();
+    let result = run_aka_command(&["--help"], None, None);
 
-    // Build the binary first
-    let build_output = Command::new("cargo")
-        .args(&["build", "--bin", "aka"])
-        .output()
-        .expect("Failed to build aka binary");
-
-    if !build_output.status.success() {
-        panic!("Failed to build aka binary: {}", String::from_utf8_lossy(&build_output.stderr));
+    if !result.success {
+        panic!("aka --help failed: {}", result.stderr);
     }
-
-    let output = Command::new(&aka_binary)
-        .args(&["--help"])
-        .env("AKA_LOG_FILE", "/tmp/aka-test-logs/aka.log")
-        .env("XDG_RUNTIME_DIR", "/tmp/aka-test-runtime")
-        .output()
-        .expect("Failed to run aka --help");
-
-    if !output.status.success() {
-        panic!("aka --help failed: {}", String::from_utf8_lossy(&output.stderr));
-    }
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
 
     // Should contain the freq command in the main help
-    assert!(stdout.contains("freq"), "Should contain 'freq' command in main help");
-    assert!(stdout.contains("show alias usage frequency statistics"), "Should contain freq description");
+    assert!(result.stdout.contains("freq"), "Should contain 'freq' command in main help");
+    assert!(result.stdout.contains("show alias usage frequency statistics"), "Should contain freq description");
 }
 
 #[test]
@@ -263,50 +161,24 @@ aliases:
 "#;
     fs::write(&config_file, config_content).expect("Failed to write config");
 
-    let aka_binary = get_aka_binary_path();
-
-    // Build the binary first
-    let build_output = Command::new("cargo")
-        .args(&["build", "--bin", "aka"])
-        .output()
-        .expect("Failed to build aka binary");
-
-    if !build_output.status.success() {
-        panic!("Failed to build aka binary: {}", String::from_utf8_lossy(&build_output.stderr));
-    }
-
     // Use the alias a few times to increment its count
     for _ in 0..3 {
-        let output = Command::new(&aka_binary)
-            .args(&["query", "test-alias"])
-            .env("HOME", temp_dir.path())
-            .env("XDG_RUNTIME_DIR", temp_dir.path().join("run"))
-            .env("AKA_LOG_FILE", "/tmp/aka-test-logs/aka.log")
-            .output()
-            .expect("Failed to run aka query");
+        let result = run_aka_command(&["query", "test-alias"], Some(&temp_dir), None);
 
-        if !output.status.success() {
-            panic!("aka query failed: {}", String::from_utf8_lossy(&output.stderr));
+        if !result.success {
+            panic!("aka query failed: {}", result.stderr);
         }
     }
 
     // Now run freq to see the usage count
-    let output = Command::new(&aka_binary)
-        .args(&["freq"])
-        .env("HOME", temp_dir.path())
-        .env("XDG_RUNTIME_DIR", temp_dir.path().join("run"))
-        .env("AKA_LOG_FILE", "/tmp/aka-test-logs/aka.log")
-        .output()
-        .expect("Failed to run aka freq");
+    let result = run_aka_command(&["freq"], Some(&temp_dir), None);
 
-    if !output.status.success() {
-        panic!("aka freq failed: {}", String::from_utf8_lossy(&output.stderr));
+    if !result.success {
+        panic!("aka freq failed: {}", result.stderr);
     }
 
-    let stdout = String::from_utf8_lossy(&output.stdout);
-
     // Should show the alias with count 3
-    assert!(stdout.contains("test-alias"), "Should contain test-alias");
-    assert!(stdout.contains("3"), "Should show count of 3");
-    assert!(stdout.contains("echo \"test\""), "Should show the alias value");
+    assert!(result.stdout.contains("test-alias"), "Should contain test-alias");
+    assert!(result.stdout.contains("3"), "Should show count of 3");
+    assert!(result.stdout.contains("echo \"test\""), "Should show the alias value");
 }

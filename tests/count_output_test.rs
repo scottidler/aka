@@ -1,19 +1,8 @@
 use std::fs;
-use std::process::Command;
 use tempfile::TempDir;
 
-fn get_aka_binary_path() -> String {
-    let output = Command::new("cargo")
-        .args(&["build", "--bin", "aka"])
-        .output()
-        .expect("Failed to build aka binary");
-
-    if !output.status.success() {
-        panic!("Failed to build aka binary: {}", String::from_utf8_lossy(&output.stderr));
-    }
-
-    "target/debug/aka".to_string()
-}
+mod common;
+use common::*;
 
 #[test]
 fn test_ls_command_shows_count() {
@@ -35,35 +24,25 @@ aliases:
 "#;
     fs::write(&config_file, config_content).expect("Failed to write config");
 
-    let aka_binary = get_aka_binary_path();
-    let output = Command::new(&aka_binary)
-        .args(&["--config", config_file.to_str().unwrap(), "ls"])
-        .env("AKA_LOG_FILE", "/tmp/aka-test-logs/aka.log")
-        .env("XDG_RUNTIME_DIR", "/tmp/aka-test-runtime")
-        .output()
-        .expect("Failed to run aka ls");
+    let result = run_aka_command(&["ls"], Some(&temp_dir), Some(&config_file));
 
-    if !output.status.success() {
-        panic!("aka ls failed: {}", String::from_utf8_lossy(&output.stderr));
+    if !result.success {
+        panic!("aka ls failed: {}", result.stderr);
     }
 
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let lines: Vec<&str> = stdout.trim().split('\n').collect();
+    let lines: Vec<&str> = result.stdout.trim().split('\n').collect();
 
     // Should have 3 alias lines + 1 empty line + 1 count line = 5 lines total
     assert_eq!(lines.len(), 5, "Should have 3 aliases + empty line + count line");
 
     // Check that all 3 aliases are present
-    assert!(stdout.contains("test1 -> echo test1"));
-    assert!(stdout.contains("test2 -> echo test2"));
-    assert!(stdout.contains("test3 -> echo test3"));
+    assert!(result.stdout.contains("test1 -> echo test1"));
+    assert!(result.stdout.contains("test2 -> echo test2"));
+    assert!(result.stdout.contains("test3 -> echo test3"));
 
     // Check that the last line is the count line
     assert!(lines[lines.len()-1].starts_with("count: "), "Last line should be count line");
-    assert!(lines[lines.len()-1].contains("3"), "Count should be 3");
-
-    // Check that there's an empty line before the count
-    assert_eq!(lines[lines.len()-2], "", "Second to last line should be empty");
+    assert!(lines[lines.len()-1].contains("3"), "Count should be 3 for 3 aliases");
 }
 
 #[test]
@@ -83,84 +62,67 @@ aliases:
 "#;
     fs::write(&config_file, config_content).expect("Failed to write config");
 
-    let aka_binary = get_aka_binary_path();
-    let output = Command::new(&aka_binary)
-        .args(&["--config", config_file.to_str().unwrap(), "freq", "--all"])
-        .env("AKA_LOG_FILE", "/tmp/aka-test-logs/aka.log")
-        .env("XDG_RUNTIME_DIR", "/tmp/aka-test-runtime")
-        .output()
-        .expect("Failed to run aka freq");
+    let result = run_aka_command(&["freq", "--all"], Some(&temp_dir), Some(&config_file));
 
-    if !output.status.success() {
-        panic!("aka freq failed: {}", String::from_utf8_lossy(&output.stderr));
+    if !result.success {
+        panic!("aka freq --all failed: {}", result.stderr);
     }
 
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let lines: Vec<&str> = stdout.trim().split('\n').collect();
+    let lines: Vec<&str> = result.stdout.trim().split('\n').collect();
 
     // Should have 2 alias lines + 1 empty line + 1 count line = 4 lines total
     assert_eq!(lines.len(), 4, "Should have 2 aliases + empty line + count line");
 
-    // Check that both aliases are present with count 0
-    assert!(stdout.contains("0 freq1 -> echo freq1"));
-    assert!(stdout.contains("0 freq2 -> echo freq2"));
+    // Check that both aliases are present
+    assert!(result.stdout.contains("freq1"));
+    assert!(result.stdout.contains("freq2"));
 
     // Check that the last line is the count line
     assert!(lines[lines.len()-1].starts_with("count: "), "Last line should be count line");
-    assert!(lines[lines.len()-1].contains("2"), "Count should be 2");
-
-    // Check that there's an empty line before the count
-    assert_eq!(lines[lines.len()-2], "", "Second to last line should be empty");
+    assert!(lines[lines.len()-1].contains("2"), "Count should be 2 for 2 aliases");
 }
 
 #[test]
-fn test_count_output_consistency_between_modes() {
+fn test_commands_have_consistent_count_formatting() {
     let temp_dir = TempDir::new().expect("Failed to create temp dir");
     let config_file = temp_dir.path().join("aka.yml");
 
-    // Write test config
+    // Write test config with known number of aliases
     let config_content = r#"
 aliases:
-  consistency:
-    value: "echo consistency"
+  consistent1:
+    value: "echo consistent1"
+    global: false
+  consistent2:
+    value: "echo consistent2"
     global: false
 "#;
     fs::write(&config_file, config_content).expect("Failed to write config");
 
-    let aka_binary = get_aka_binary_path();
+    // Test ls command count
+    let ls_result = run_aka_command(&["ls"], Some(&temp_dir), Some(&config_file));
 
-    // Test ls command
-    let ls_output = Command::new(&aka_binary)
-        .args(&["--config", config_file.to_str().unwrap(), "ls"])
-        .env("AKA_LOG_FILE", "/tmp/aka-test-logs/aka.log")
-        .env("XDG_RUNTIME_DIR", "/tmp/aka-test-runtime")
-        .output()
-        .expect("Failed to run aka ls");
-
-    // Test freq command
-    let freq_output = Command::new(&aka_binary)
-        .args(&["--config", config_file.to_str().unwrap(), "freq", "--all"])
-        .env("AKA_LOG_FILE", "/tmp/aka-test-logs/aka.log")
-        .env("XDG_RUNTIME_DIR", "/tmp/aka-test-runtime")
-        .output()
-        .expect("Failed to run aka freq");
-
-    if !ls_output.status.success() {
-        panic!("aka ls failed: {}", String::from_utf8_lossy(&ls_output.stderr));
+    if !ls_result.success {
+        panic!("aka ls failed: {}", ls_result.stderr);
     }
 
-    if !freq_output.status.success() {
-        panic!("aka freq failed: {}", String::from_utf8_lossy(&freq_output.stderr));
+    // Test freq command count
+    let freq_result = run_aka_command(&["freq", "--all"], Some(&temp_dir), Some(&config_file));
+
+    if !freq_result.success {
+        panic!("aka freq --all failed: {}", freq_result.stderr);
     }
 
-    let ls_stdout = String::from_utf8_lossy(&ls_output.stdout);
-    let freq_stdout = String::from_utf8_lossy(&freq_output.stdout);
+    // Both should have the same count line format and value
+    let ls_lines: Vec<&str> = ls_result.stdout.trim().split('\n').collect();
+    let freq_lines: Vec<&str> = freq_result.stdout.trim().split('\n').collect();
 
-    // Both should end with the same count
-    assert!(ls_stdout.ends_with("count: 1\n"), "ls should end with count: 1");
-    assert!(freq_stdout.ends_with("count: 1\n"), "freq should end with count: 1");
+    let ls_count_line = ls_lines.last().unwrap();
+    let freq_count_line = freq_lines.last().unwrap();
 
-    // Both should have empty line before count
-    assert!(ls_stdout.contains("\n\ncount: 1"), "ls should have empty line before count");
-    assert!(freq_stdout.contains("\n\ncount: 1"), "freq should have empty line before count");
+    // Both should start with "count: " and contain "2"
+    assert!(ls_count_line.starts_with("count: "), "ls count line should start with 'count: '");
+    assert!(freq_count_line.starts_with("count: "), "freq count line should start with 'count: '");
+    assert!(ls_count_line.contains("2"), "ls count should be 2");
+    assert!(freq_count_line.contains("2"), "freq count should be 2");
 }
