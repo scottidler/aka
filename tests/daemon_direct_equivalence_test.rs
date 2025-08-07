@@ -28,6 +28,8 @@ fn start_daemon_with_config(config_path: &str) -> std::process::Child {
 
     Command::new("target/debug/aka-daemon")
         .args(&["--config", config_path, "--foreground"])
+        .env("AKA_LOG_FILE", "/tmp/aka-test-logs/aka.log")  // Direct test logs to /tmp
+        .env("XDG_RUNTIME_DIR", "/tmp/aka-test-runtime")   // Isolate daemon socket
         .spawn()
         .expect("Failed to start daemon")
 }
@@ -46,6 +48,8 @@ fn run_aka_command(config_path: &str, args: &[&str]) -> (String, String, i32) {
     let mut cmd = Command::new(&aka_binary);
     cmd.args(&["--config", config_path]);
     cmd.args(args);
+    cmd.env("AKA_LOG_FILE", "/tmp/aka-test-logs/aka.log");  // Direct test logs to /tmp
+    cmd.env("XDG_RUNTIME_DIR", "/tmp/aka-test-runtime");   // Isolate daemon socket
 
     let output = cmd.output().expect("Failed to run aka command");
 
@@ -107,13 +111,13 @@ fn test_query_command_equivalence() {
         println!("Testing query: '{}'", test_case);
 
         // Test direct mode (no daemon)
-        let (direct_stdout, direct_stderr, direct_code) = run_aka_command(config_path, &["query", test_case]);
+        let (direct_stdout, _, direct_code) = run_aka_command(config_path, &["query", test_case]);
 
         // Start daemon and test daemon mode
         let mut daemon = start_daemon_with_config(config_path);
         std::thread::sleep(Duration::from_millis(500)); // Wait for daemon to start
 
-        let (daemon_stdout, daemon_stderr, daemon_code) = run_aka_command(config_path, &["query", test_case]);
+        let (daemon_stdout, _, daemon_code) = run_aka_command(config_path, &["query", test_case]);
 
         // Stop daemon
         daemon.kill().expect("Failed to kill daemon");
@@ -150,13 +154,13 @@ fn test_list_command_equivalence() {
         println!("Testing list: {:?}", test_case);
 
         // Test direct mode (no daemon)
-        let (direct_stdout, direct_stderr, direct_code) = run_aka_command(config_path, test_case);
+        let (direct_stdout, _, direct_code) = run_aka_command(config_path, test_case);
 
         // Start daemon and test daemon mode
         let mut daemon = start_daemon_with_config(config_path);
         std::thread::sleep(Duration::from_millis(500)); // Wait for daemon to start
 
-        let (daemon_stdout, daemon_stderr, daemon_code) = run_aka_command(config_path, test_case);
+        let (daemon_stdout, _, daemon_code) = run_aka_command(config_path, test_case);
 
         // Stop daemon
         daemon.kill().expect("Failed to kill daemon");
@@ -190,13 +194,13 @@ fn test_freq_command_equivalence() {
         println!("Testing freq: {:?}", test_case);
 
         // Test direct mode (no daemon)
-        let (direct_stdout, direct_stderr, direct_code) = run_aka_command(config_path, test_case);
+        let (direct_stdout, _, direct_code) = run_aka_command(config_path, test_case);
 
         // Start daemon and test daemon mode
         let mut daemon = start_daemon_with_config(config_path);
         std::thread::sleep(Duration::from_millis(500)); // Wait for daemon to start
 
-        let (daemon_stdout, daemon_stderr, daemon_code) = run_aka_command(config_path, test_case);
+        let (daemon_stdout, _, daemon_code) = run_aka_command(config_path, test_case);
 
         // Stop daemon
         daemon.kill().expect("Failed to kill daemon");
@@ -238,13 +242,13 @@ fn test_eol_parameter_equivalence() {
         direct_args.push(query);
 
         // Test direct mode (no daemon)
-        let (direct_stdout, direct_stderr, direct_code) = run_aka_command(config_path, &direct_args);
+        let (direct_stdout, _, direct_code) = run_aka_command(config_path, &direct_args);
 
         // Start daemon and test daemon mode
         let mut daemon = start_daemon_with_config(config_path);
         std::thread::sleep(Duration::from_millis(500)); // Wait for daemon to start
 
-        let (daemon_stdout, daemon_stderr, daemon_code) = run_aka_command(config_path, &direct_args);
+        let (daemon_stdout, _, daemon_code) = run_aka_command(config_path, &direct_args);
 
         // Stop daemon
         daemon.kill().expect("Failed to kill daemon");
@@ -297,13 +301,13 @@ aliases:
         println!("Testing config '{}' with query '{}'", config_path, query);
 
         // Test direct mode (no daemon)
-        let (direct_stdout, direct_stderr, direct_code) = run_aka_command(config_path, &["query", query]);
+        let (direct_stdout, _, direct_code) = run_aka_command(config_path, &["query", query]);
 
         // Start daemon and test daemon mode
         let mut daemon = start_daemon_with_config(config_path);
         std::thread::sleep(Duration::from_millis(500)); // Wait for daemon to start
 
-        let (daemon_stdout, daemon_stderr, daemon_code) = run_aka_command(config_path, &["query", query]);
+        let (daemon_stdout, _, daemon_code) = run_aka_command(config_path, &["query", query]);
 
         // Stop daemon
         daemon.kill().expect("Failed to kill daemon");
@@ -330,13 +334,13 @@ fn test_error_handling_equivalence() {
     println!("Testing error handling with invalid config");
 
     // Test direct mode (no daemon)
-    let (direct_stdout, direct_stderr, direct_code) = run_aka_command(config_path, &["query", "test"]);
+    let (_, _, direct_code) = run_aka_command(config_path, &["query", "test"]);
 
     // Start daemon and test daemon mode (daemon should fail to start or handle gracefully)
     let mut daemon = start_daemon_with_config(config_path);
     std::thread::sleep(Duration::from_millis(500)); // Wait for daemon to start (or fail)
 
-    let (daemon_stdout, daemon_stderr, daemon_code) = run_aka_command(config_path, &["query", "test"]);
+    let (_, _, daemon_code) = run_aka_command(config_path, &["query", "test"]);
 
     // Stop daemon
     daemon.kill().expect("Failed to kill daemon");

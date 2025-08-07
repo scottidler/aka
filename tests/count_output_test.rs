@@ -38,6 +38,8 @@ aliases:
     let aka_binary = get_aka_binary_path();
     let output = Command::new(&aka_binary)
         .args(&["--config", config_file.to_str().unwrap(), "ls"])
+        .env("AKA_LOG_FILE", "/tmp/aka-test-logs/aka.log")
+        .env("XDG_RUNTIME_DIR", "/tmp/aka-test-runtime")
         .output()
         .expect("Failed to run aka ls");
 
@@ -84,6 +86,8 @@ aliases:
     let aka_binary = get_aka_binary_path();
     let output = Command::new(&aka_binary)
         .args(&["--config", config_file.to_str().unwrap(), "freq", "--all"])
+        .env("AKA_LOG_FILE", "/tmp/aka-test-logs/aka.log")
+        .env("XDG_RUNTIME_DIR", "/tmp/aka-test-runtime")
         .output()
         .expect("Failed to run aka freq");
 
@@ -128,12 +132,16 @@ aliases:
     // Test ls command
     let ls_output = Command::new(&aka_binary)
         .args(&["--config", config_file.to_str().unwrap(), "ls"])
+        .env("AKA_LOG_FILE", "/tmp/aka-test-logs/aka.log")
+        .env("XDG_RUNTIME_DIR", "/tmp/aka-test-runtime")
         .output()
         .expect("Failed to run aka ls");
 
     // Test freq command
     let freq_output = Command::new(&aka_binary)
         .args(&["--config", config_file.to_str().unwrap(), "freq", "--all"])
+        .env("AKA_LOG_FILE", "/tmp/aka-test-logs/aka.log")
+        .env("XDG_RUNTIME_DIR", "/tmp/aka-test-runtime")
         .output()
         .expect("Failed to run aka freq");
 

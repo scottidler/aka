@@ -60,6 +60,7 @@ fn test_freq_command_basic() {
         .args(&["freq"])
         .env("HOME", temp_dir.path())
         .env("XDG_RUNTIME_DIR", temp_dir.path().join("run"))
+        .env("AKA_LOG_FILE", "/tmp/aka-test-logs/aka.log")
         .output()
         .expect("Failed to run aka freq");
 
@@ -94,6 +95,7 @@ fn test_freq_command_with_all_option() {
         .args(&["freq", "--all"])
         .env("HOME", temp_dir.path())
         .env("XDG_RUNTIME_DIR", temp_dir.path().join("run"))
+        .env("AKA_LOG_FILE", "/tmp/aka-test-logs/aka.log")
         .output()
         .expect("Failed to run aka freq --all");
 
@@ -163,6 +165,7 @@ aliases:
         .args(&["freq"])
         .env("HOME", temp_dir.path())
         .env("XDG_RUNTIME_DIR", temp_dir.path().join("run"))
+        .env("AKA_LOG_FILE", "/tmp/aka-test-logs/aka.log")
         .output()
         .expect("Failed to run aka freq");
 
@@ -193,6 +196,8 @@ fn test_freq_command_help() {
 
     let output = Command::new(&aka_binary)
         .args(&["freq", "--help"])
+        .env("AKA_LOG_FILE", "/tmp/aka-test-logs/aka.log")
+        .env("XDG_RUNTIME_DIR", "/tmp/aka-test-runtime")
         .output()
         .expect("Failed to run aka freq --help");
 
@@ -224,6 +229,8 @@ fn test_freq_command_in_main_help() {
 
     let output = Command::new(&aka_binary)
         .args(&["--help"])
+        .env("AKA_LOG_FILE", "/tmp/aka-test-logs/aka.log")
+        .env("XDG_RUNTIME_DIR", "/tmp/aka-test-runtime")
         .output()
         .expect("Failed to run aka --help");
 
@@ -274,6 +281,7 @@ aliases:
             .args(&["query", "test-alias"])
             .env("HOME", temp_dir.path())
             .env("XDG_RUNTIME_DIR", temp_dir.path().join("run"))
+            .env("AKA_LOG_FILE", "/tmp/aka-test-logs/aka.log")
             .output()
             .expect("Failed to run aka query");
 
@@ -287,6 +295,7 @@ aliases:
         .args(&["freq"])
         .env("HOME", temp_dir.path())
         .env("XDG_RUNTIME_DIR", temp_dir.path().join("run"))
+        .env("AKA_LOG_FILE", "/tmp/aka-test-logs/aka.log")
         .output()
         .expect("Failed to run aka freq");
 

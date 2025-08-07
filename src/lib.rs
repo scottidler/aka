@@ -58,6 +58,8 @@ fn is_benchmark_mode() -> bool {
     std::env::var("AKA_DEBUG_TIMING").is_ok()
 }
 
+
+
 // Timing instrumentation framework
 #[derive(Debug, Clone)]
 pub struct TimingData {
@@ -376,11 +378,20 @@ pub fn setup_logging(home_dir: &PathBuf) -> Result<()> {
             .target(env_logger::Target::Stdout)
             .init();
     } else {
-        // In normal mode, log to file
-        let log_dir = home_dir.join(".local").join("share").join("aka").join("logs");
+        // Check if custom log file location is specified via environment variable
+        let log_file_path = if let Ok(custom_log_path) = std::env::var("AKA_LOG_FILE") {
+            PathBuf::from(custom_log_path)
+        } else {
+            // Default to production location
+            let log_dir = home_dir.join(".local").join("share").join("aka").join("logs");
+            std::fs::create_dir_all(&log_dir)?;
+            log_dir.join("aka.log")
+        };
 
-        std::fs::create_dir_all(&log_dir)?;
-        let log_file_path = log_dir.join("aka.log");
+        // Ensure the parent directory exists
+        if let Some(parent) = log_file_path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
 
         let log_file = OpenOptions::new()
             .create(true)

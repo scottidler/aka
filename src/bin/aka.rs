@@ -414,6 +414,9 @@ struct DaemonOpts {
     #[clap(long, help = "Uninstall system service")]
     uninstall: bool,
 
+    #[clap(long, help = "Reinstall system service (uninstall then install)")]
+    reinstall: bool,
+
     #[clap(long, help = "Start daemon")]
     start: bool,
 
@@ -951,6 +954,10 @@ fn handle_daemon_command(daemon_opts: &DaemonOpts) -> Result<()> {
         service_manager.install_service()?;
     } else if daemon_opts.uninstall {
         service_manager.uninstall_service()?;
+    } else if daemon_opts.reinstall {
+        service_manager.uninstall_service()?;
+        std::thread::sleep(std::time::Duration::from_secs(1));
+        service_manager.install_service()?;
     } else if daemon_opts.start {
         service_manager.start_service()?;
     } else if daemon_opts.stop {
@@ -1000,7 +1007,7 @@ fn handle_daemon_command(daemon_opts: &DaemonOpts) -> Result<()> {
             }
         }
     } else {
-        println!("Usage: aka daemon [--install|--uninstall|--start|--stop|--restart|--reload|--status|--legend|--export-timing|--timing-summary]");
+        println!("Usage: aka daemon [--install|--uninstall|--reinstall|--start|--stop|--restart|--reload|--status|--legend|--export-timing|--timing-summary]");
         return Ok(());
     }
 
