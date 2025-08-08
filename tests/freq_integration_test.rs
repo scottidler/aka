@@ -161,24 +161,44 @@ aliases:
 "#;
     fs::write(&config_file, config_content).expect("Failed to write config");
 
-    // Use the alias a few times to increment its count
-    for _ in 0..3 {
-        let result = run_aka_command(&["query", "test-alias"], Some(&temp_dir), None);
+    // Create a unique cache directory for this specific test run
+    let unique_cache_dir = temp_dir.path().join("isolated-cache");
+    std::fs::create_dir_all(&unique_cache_dir).expect("Failed to create cache dir");
 
-        if !result.success {
-            panic!("aka query failed: {}", result.stderr);
+    // Use the alias a few times to increment its count
+    for i in 1..=3 {
+        let mut cmd = std::process::Command::new(common::get_aka_binary_path());
+        cmd.args(&["query", "test-alias"])
+            .env("HOME", temp_dir.path())
+            .env("AKA_CACHE_DIR", &unique_cache_dir)
+            .env("AKA_LOG_FILE", "/tmp/aka-test-logs/aka.log")
+            .env("XDG_RUNTIME_DIR", "/tmp/aka-test-runtime");
+
+        let output = cmd.output().expect("Failed to run aka command");
+
+        if !output.status.success() {
+            panic!("aka query failed on iteration {}: {}", i, String::from_utf8_lossy(&output.stderr));
         }
     }
 
     // Now run freq to see the usage count
-    let result = run_aka_command(&["freq"], Some(&temp_dir), None);
+    let mut cmd = std::process::Command::new(common::get_aka_binary_path());
+    cmd.args(&["freq"])
+        .env("HOME", temp_dir.path())
+        .env("AKA_CACHE_DIR", &unique_cache_dir)
+        .env("AKA_LOG_FILE", "/tmp/aka-test-logs/aka.log")
+        .env("XDG_RUNTIME_DIR", "/tmp/aka-test-runtime");
 
-    if !result.success {
-        panic!("aka freq failed: {}", result.stderr);
+    let output = cmd.output().expect("Failed to run aka command");
+    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+
+    if !output.status.success() {
+        panic!("aka freq failed: {}", stderr);
     }
 
-    // Should show the alias with count 3
-    assert!(result.stdout.contains("test-alias"), "Should contain test-alias");
-    assert!(result.stdout.contains("3"), "Should show count of 3");
-    assert!(result.stdout.contains("echo \"test\""), "Should show the alias value");
+    // Should show the alias with count 3 - format is "   3 test-alias -> echo "test""
+    assert!(stdout.contains("test-alias"), "Should contain test-alias");
+    assert!(stdout.contains("   3 test-alias"), "Should show count of 3 in the correct format");
+    assert!(stdout.contains("echo \"test\""), "Should show the alias value");
 }

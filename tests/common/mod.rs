@@ -56,6 +56,7 @@ pub fn run_aka_command(
     }
 
     cmd.env("AKA_LOG_FILE", "/tmp/aka-test-logs/aka.log");
+    cmd.env("AKA_CACHE_DIR", "/tmp/aka-test-cache");
 
     let output = cmd.output().expect("Failed to run aka command");
     let success = output.status.success();

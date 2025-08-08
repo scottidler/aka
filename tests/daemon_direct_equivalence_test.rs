@@ -29,6 +29,7 @@ fn start_daemon_with_config(config_path: &str) -> std::process::Child {
     Command::new("target/debug/aka-daemon")
         .args(&["--config", config_path, "--foreground"])
         .env("AKA_LOG_FILE", "/tmp/aka-test-logs/aka.log")  // Direct test logs to /tmp
+        .env("AKA_CACHE_DIR", "/tmp/aka-test-cache")  // Direct test cache to /tmp
         .env("XDG_RUNTIME_DIR", "/tmp/aka-test-runtime")   // Isolate daemon socket
         .spawn()
         .expect("Failed to start daemon")
@@ -49,6 +50,7 @@ fn run_aka_command(config_path: &str, args: &[&str]) -> (String, String, i32) {
     cmd.args(&["--config", config_path]);
     cmd.args(args);
     cmd.env("AKA_LOG_FILE", "/tmp/aka-test-logs/aka.log");  // Direct test logs to /tmp
+    cmd.env("AKA_CACHE_DIR", "/tmp/aka-test-cache");  // Direct test cache to /tmp
     cmd.env("XDG_RUNTIME_DIR", "/tmp/aka-test-runtime");   // Isolate daemon socket
 
     let output = cmd.output().expect("Failed to run aka command");

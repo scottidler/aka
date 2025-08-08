@@ -927,7 +927,14 @@ pub fn determine_socket_path(home_dir: &PathBuf) -> Result<PathBuf> {
 }
 
 pub fn get_alias_cache_path(home_dir: &PathBuf) -> Result<PathBuf> {
-    let data_dir = home_dir.join(".local").join("share").join("aka");
+    // Check if custom cache directory is specified via environment variable
+    let data_dir = if let Ok(custom_cache_dir) = std::env::var("AKA_CACHE_DIR") {
+        PathBuf::from(custom_cache_dir)
+    } else {
+        // Default to production location
+        home_dir.join(".local").join("share").join("aka")
+    };
+
     std::fs::create_dir_all(&data_dir)?;
     Ok(data_dir.join("aka.json"))
 }

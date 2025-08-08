@@ -666,8 +666,9 @@ fn initialize_daemon_server(
 fn main() {
     let opts = DaemonOpts::parse();
 
-    // Set up logging
-    let home_dir = dirs::home_dir()
+    // Set up logging - respect HOME environment variable for tests
+    let home_dir = std::env::var("HOME").ok().map(PathBuf::from)
+        .or_else(|| dirs::home_dir())
         .ok_or_else(|| eyre!("Unable to determine home directory"))
         .unwrap_or_else(|e| {
             eprintln!("Error: {}", e);

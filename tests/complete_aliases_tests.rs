@@ -136,6 +136,7 @@ aliases:
         .args(&["run", "-q", "--", "-c", config_file.to_str().unwrap(), "__complete_aliases"])
         .env("HOME", home_dir.to_str().unwrap())
         .env("AKA_LOG_FILE", "/tmp/aka-test-logs/aka.log")
+        .env("AKA_CACHE_DIR", "/tmp/aka-test-cache")
         .env("XDG_RUNTIME_DIR", "/tmp/aka-test-runtime")  // Isolate daemon socket
         .output()
         .expect("Failed to execute command");
@@ -179,6 +180,7 @@ aliases:
         .args(&["run", "-q", "--", "-c", config_file.to_str().unwrap(), "__complete_aliases"])
         .env("HOME", home_dir.to_str().unwrap())
         .env("AKA_LOG_FILE", "/tmp/aka-test-logs/aka.log")
+        .env("AKA_CACHE_DIR", "/tmp/aka-test-cache")
         .env("XDG_RUNTIME_DIR", "/tmp/aka-test-runtime")  // Isolate daemon socket
         .output()
         .expect("Failed to execute command");
@@ -220,6 +222,7 @@ aliases:
         .args(&["run", "-q", "--", "-c", config_file.to_str().unwrap(), "__complete_aliases"])
         .env("HOME", home_dir.to_str().unwrap())
         .env("AKA_LOG_FILE", "/tmp/aka-test-logs/aka.log")
+        .env("AKA_CACHE_DIR", "/tmp/aka-test-cache")
         .env("XDG_RUNTIME_DIR", "/tmp/aka-test-runtime")  // Isolate daemon socket
         .output()
         .expect("Failed to execute command");
