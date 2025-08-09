@@ -1,9 +1,0 @@
-{
-  "hooks": [
-    {
-      "event": "onSave",
-      "command": "whitespace -r",
-      "include": ["**/*"]
-    }
-  ]
-}
