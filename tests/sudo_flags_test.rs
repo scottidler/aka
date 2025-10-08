@@ -1,6 +1,6 @@
 use aka_lib::*;
-use tempfile::TempDir;
 use std::fs;
+use tempfile::TempDir;
 
 #[test]
 fn test_sudo_with_flags() {

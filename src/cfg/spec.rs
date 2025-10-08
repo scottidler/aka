@@ -130,7 +130,13 @@ lookups:
 
         assert_eq!(spec.defaults.version, 1);
         assert_eq!(spec.aliases.len(), 1);
-        assert_eq!(spec.aliases.get("alias1").ok_or_else(|| eyre::eyre!("alias1 not found"))?.value, "echo Hello World");
+        assert_eq!(
+            spec.aliases
+                .get("alias1")
+                .ok_or_else(|| eyre::eyre!("alias1 not found"))?
+                .value,
+            "echo Hello World"
+        );
         assert_eq!(spec.lookups["region"]["prod|apps"], "us-east-1");
         assert_eq!(spec.lookups["region"]["staging|test|dev|ops"], "us-west-2");
 

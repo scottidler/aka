@@ -1,7 +1,7 @@
-use eyre::Result;
-use tempfile::NamedTempFile;
-use std::io::Write;
 use aka_lib::AKA;
+use eyre::Result;
+use std::io::Write;
+use tempfile::NamedTempFile;
 
 /// Test basic variable interpolation
 #[test]
@@ -314,4 +314,3 @@ aliases:
 
     Ok(())
 }
-

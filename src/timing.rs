@@ -2,12 +2,11 @@ use eyre::{eyre, Result};
 use log::debug;
 use std::fs::OpenOptions;
 use std::path::PathBuf;
-use std::time::{Instant, Duration, SystemTime};
-
+use std::time::{Duration, Instant, SystemTime};
 
 // Global timing storage for analysis
-use std::sync::Mutex;
 use lazy_static::lazy_static;
+use std::sync::Mutex;
 
 // Import ProcessingMode from lib.rs
 use crate::ProcessingMode;
@@ -18,9 +17,9 @@ lazy_static! {
 
 // Check if benchmark mode is enabled
 pub fn is_benchmark_mode() -> bool {
-    std::env::var("AKA_BENCHMARK").is_ok() ||
-    std::env::var("AKA_TIMING").is_ok() ||
-    std::env::var("AKA_DEBUG_TIMING").is_ok()
+    std::env::var("AKA_BENCHMARK").is_ok()
+        || std::env::var("AKA_TIMING").is_ok()
+        || std::env::var("AKA_DEBUG_TIMING").is_ok()
 }
 
 // Timing instrumentation framework
@@ -103,53 +102,61 @@ impl TimingData {
         };
 
         debug!("{} === TIMING BREAKDOWN ({:?}) ===", emoji, self.mode);
-        debug!("  🎯 Total execution: {:.3}ms", self.total_duration.as_secs_f64() * 1000.0);
+        debug!(
+            "  🎯 Total execution: {:.3}ms",
+            self.total_duration.as_secs_f64() * 1000.0
+        );
 
         if let Some(config_duration) = self.config_load_duration {
-            debug!("  📋 Config loading: {:.3}ms ({:.1}%)",
+            debug!(
+                "  📋 Config loading: {:.3}ms ({:.1}%)",
                 config_duration.as_secs_f64() * 1000.0,
                 (config_duration.as_secs_f64() / self.total_duration.as_secs_f64()) * 100.0
             );
         }
 
         if let Some(ipc_duration) = self.ipc_duration {
-            debug!("  🔌 IPC communication: {:.3}ms ({:.1}%)",
+            debug!(
+                "  🔌 IPC communication: {:.3}ms ({:.1}%)",
                 ipc_duration.as_secs_f64() * 1000.0,
                 (ipc_duration.as_secs_f64() / self.total_duration.as_secs_f64()) * 100.0
             );
         }
 
-        debug!("  ⚙️  Processing: {:.3}ms ({:.1}%)",
+        debug!(
+            "  ⚙️  Processing: {:.3}ms ({:.1}%)",
             self.processing_duration.as_secs_f64() * 1000.0,
             (self.processing_duration.as_secs_f64() / self.total_duration.as_secs_f64()) * 100.0
         );
 
         // Calculate overhead
-        let accounted = self.config_load_duration.unwrap_or_default() +
-                       self.ipc_duration.unwrap_or_default() +
-                       self.processing_duration;
+        let accounted = self.config_load_duration.unwrap_or_default()
+            + self.ipc_duration.unwrap_or_default()
+            + self.processing_duration;
         let overhead = self.total_duration.saturating_sub(accounted);
-        debug!("  🏗️  Overhead: {:.3}ms ({:.1}%)",
+        debug!(
+            "  🏗️  Overhead: {:.3}ms ({:.1}%)",
             overhead.as_secs_f64() * 1000.0,
             (overhead.as_secs_f64() / self.total_duration.as_secs_f64()) * 100.0
         );
     }
 
     pub fn to_csv_line(&self) -> String {
-        let timestamp_ms = self.timestamp
+        let timestamp_ms = self
+            .timestamp
             .duration_since(SystemTime::UNIX_EPOCH)
             .unwrap_or_default()
             .as_millis();
 
-        let config_ms = self.config_load_duration
+        let config_ms = self
+            .config_load_duration
             .map(|d| d.as_secs_f64() * 1000.0)
             .unwrap_or(0.0);
 
-        let ipc_ms = self.ipc_duration
-            .map(|d| d.as_secs_f64() * 1000.0)
-            .unwrap_or(0.0);
+        let ipc_ms = self.ipc_duration.map(|d| d.as_secs_f64() * 1000.0).unwrap_or(0.0);
 
-        format!("{},{:?},{:.3},{:.3},{:.3},{:.3}",
+        format!(
+            "{},{:?},{:.3},{:.3},{:.3},{:.3}",
             timestamp_ms,
             self.mode,
             self.total_duration.as_secs_f64() * 1000.0,
@@ -180,7 +187,11 @@ fn parse_csv_line(line: &str) -> Result<TimingData> {
 
     Ok(TimingData {
         total_duration: Duration::from_millis(total_ms as u64),
-        config_load_duration: if config_ms > 0.0 { Some(Duration::from_millis(config_ms as u64)) } else { None },
+        config_load_duration: if config_ms > 0.0 {
+            Some(Duration::from_millis(config_ms as u64))
+        } else {
+            None
+        },
         ipc_duration: if ipc_ms > 0.0 { Some(Duration::from_millis(ipc_ms as u64)) } else { None },
         processing_duration: Duration::from_millis(processing_ms as u64),
         mode,
@@ -214,12 +225,9 @@ pub fn log_timing(timing: TimingData) {
             }
 
             let csv_line = timing.to_csv_line();
-            if let Ok(mut file) = OpenOptions::new()
-                .create(true)
-                .append(true)
-                .open(timing_file_path) {
+            if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(timing_file_path) {
                 use std::io::Write;
-                let _ = writeln!(file, "{}", csv_line);
+                let _ = writeln!(file, "{csv_line}");
             }
         }
     }
@@ -270,8 +278,14 @@ pub fn get_timing_summary() -> Result<(Duration, Duration, usize, usize)> {
         all_timings.extend(log.iter().cloned());
     }
 
-    let daemon_timings: Vec<_> = all_timings.iter().filter(|t| matches!(t.mode, ProcessingMode::Daemon)).collect();
-    let direct_timings: Vec<_> = all_timings.iter().filter(|t| matches!(t.mode, ProcessingMode::Direct)).collect();
+    let daemon_timings: Vec<_> = all_timings
+        .iter()
+        .filter(|t| matches!(t.mode, ProcessingMode::Daemon))
+        .collect();
+    let direct_timings: Vec<_> = all_timings
+        .iter()
+        .filter(|t| matches!(t.mode, ProcessingMode::Direct))
+        .collect();
 
     let daemon_avg = if !daemon_timings.is_empty() {
         daemon_timings.iter().map(|t| t.total_duration).sum::<Duration>() / daemon_timings.len() as u32

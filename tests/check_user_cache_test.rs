@@ -1,7 +1,6 @@
 /// Test that checks if the user's actual cache file is stale
 /// This test will FAIL if the cache needs to be regenerated
-
-use aka_lib::{sync_cache_with_config_path, load_alias_cache, hash_config_file, get_config_path};
+use aka_lib::{get_config_path, hash_config_file, load_alias_cache, sync_cache_with_config_path};
 use eyre::Result;
 
 #[test]
@@ -26,27 +25,35 @@ fn test_user_cache_is_synchronized() -> Result<()> {
     println!("Correct cache aliases: {}", correct_cache.aliases.len());
 
     // The hashes should match
-    assert_eq!(current_cache.hash, current_hash,
-               "Cache hash doesn't match config hash - cache is stale!");
+    assert_eq!(
+        current_cache.hash, current_hash,
+        "Cache hash doesn't match config hash - cache is stale!"
+    );
 
     // Check specific aliases that the user mentioned
     if let (Some(lappy_cached), Some(lappy_correct)) =
-        (current_cache.aliases.get("lappy"), correct_cache.aliases.get("lappy")) {
+        (current_cache.aliases.get("lappy"), correct_cache.aliases.get("lappy"))
+    {
         println!("lappy cached value: {}", lappy_cached.value);
         println!("lappy correct value: {}", lappy_correct.value);
-        assert_eq!(lappy_cached.value, lappy_correct.value,
-                   "lappy has wrong value in cache");
-        assert_eq!(lappy_cached.global, lappy_correct.global,
-                   "lappy has wrong global property in cache");
+        assert_eq!(
+            lappy_cached.value, lappy_correct.value,
+            "lappy has wrong value in cache"
+        );
+        assert_eq!(
+            lappy_cached.global, lappy_correct.global,
+            "lappy has wrong global property in cache"
+        );
     }
 
     // Check if "desk" exists
-    assert!(correct_cache.aliases.contains_key("desk"),
-            "desk should exist in correct cache");
+    assert!(
+        correct_cache.aliases.contains_key("desk"),
+        "desk should exist in correct cache"
+    );
     if !current_cache.aliases.contains_key("desk") {
         panic!("desk is missing from current cache but should exist!");
     }
 
     Ok(())
 }
-

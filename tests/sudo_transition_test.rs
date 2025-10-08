@@ -1,6 +1,6 @@
 use aka_lib::*;
-use tempfile::TempDir;
 use std::fs;
+use tempfile::TempDir;
 
 #[test]
 fn test_sudo_transition_sequence() {
@@ -59,7 +59,9 @@ aliases:
     assert!(result4.contains("$(which") || result4.contains("-E"));
 
     // Step 5: sudo with already wrapped command
-    let result5 = aka.replace("sudo $(which rkvr) rmrf").expect("Should process sudo $(which rkvr) rmrf");
+    let result5 = aka
+        .replace("sudo $(which rkvr) rmrf")
+        .expect("Should process sudo $(which rkvr) rmrf");
     println!("Step 5 - sudo $(which rkvr) rmrf: '{}'", result5);
     // Should be idempotent - no double wrapping
     assert!(result5.contains("sudo"));
@@ -67,7 +69,9 @@ aliases:
     assert!(!result5.contains("$(which $(which"));
 
     // Step 6: sudo with already wrapped command and target
-    let result6 = aka.replace("sudo $(which rkvr) rmrf target").expect("Should process sudo $(which rkvr) rmrf target");
+    let result6 = aka
+        .replace("sudo $(which rkvr) rmrf target")
+        .expect("Should process sudo $(which rkvr) rmrf target");
     println!("Step 6 - sudo $(which rkvr) rmrf target: '{}'", result6);
     // Should preserve target argument
     assert!(result6.contains("sudo"));
@@ -109,7 +113,9 @@ aliases:
 
     // Test that already wrapped commands don't get double-wrapped
     let already_wrapped = "sudo $(which rkvr) rmrf target";
-    let result = aka.replace(already_wrapped).expect("Should process already wrapped command");
+    let result = aka
+        .replace(already_wrapped)
+        .expect("Should process already wrapped command");
 
     println!("Input: {}", already_wrapped);
     println!("Output: {}", result);
@@ -183,7 +189,9 @@ aliases:
     let config_path = get_config_path(&home_dir).expect("Failed to get config path");
     let mut aka = AKA::new(false, home_dir, config_path).expect("Failed to create AKA");
 
-    let result = aka.replace("sudo rmrf target").expect("Should process sudo rmrf target");
+    let result = aka
+        .replace("sudo rmrf target")
+        .expect("Should process sudo rmrf target");
 
     println!("Input: sudo rmrf target");
     println!("Output: {}", result);

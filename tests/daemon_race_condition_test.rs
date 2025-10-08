@@ -1,12 +1,12 @@
-use std::sync::{Arc, Mutex, Barrier};
-use std::thread;
-use std::time::{Duration, Instant};
 use std::fs;
 use std::path::PathBuf;
+use std::sync::{Arc, Barrier, Mutex};
+use std::thread;
+use std::time::{Duration, Instant};
 use tempfile::TempDir;
 
 // Import daemon types
-use aka_lib::{AKA, hash_config_file, get_config_path};
+use aka_lib::{get_config_path, hash_config_file, AKA};
 
 #[cfg(test)]
 mod daemon_race_condition_tests {
@@ -67,7 +67,12 @@ aliases:
         let (_temp_dir, config_path, home_dir) = setup_test_environment("query_reload_race_fixed");
 
         // Load initial config
-        let initial_aka = AKA::new(false, home_dir.clone(), get_config_path(&home_dir).expect("Failed to get config path")).expect("Failed to load initial config");
+        let initial_aka = AKA::new(
+            false,
+            home_dir.clone(),
+            get_config_path(&home_dir).expect("Failed to get config path"),
+        )
+        .expect("Failed to load initial config");
         let initial_hash = hash_config_file(&config_path).expect("Failed to hash config");
 
         // NEW: Use atomic state management (single RwLock for both config and hash)
@@ -104,7 +109,12 @@ aliases:
 
             // NEW: Atomic reload logic
             let new_hash = hash_config_file(&config_path_reload).expect("Failed to hash updated config");
-            let new_aka = AKA::new(false, home_dir_reload.clone(), get_config_path(&home_dir_reload).expect("Failed to get config path")).expect("Failed to load updated config");
+            let new_aka = AKA::new(
+                false,
+                home_dir_reload.clone(),
+                get_config_path(&home_dir_reload).expect("Failed to get config path"),
+            )
+            .expect("Failed to load updated config");
 
             // ATOMIC STATE UPDATE: Update both config and hash together
             {
@@ -137,7 +147,10 @@ aliases:
                     if let Some(alias) = state_guard.aka.spec.aliases.get("test-alias-1") {
                         if alias.value.contains("updated") {
                             // This should NOT happen - old count with new values
-                            inconsistent_reads_query1.lock().unwrap().push(format!("Thread1-Iter{}: Old count with new values", i));
+                            inconsistent_reads_query1
+                                .lock()
+                                .unwrap()
+                                .push(format!("Thread1-Iter{}: Old count with new values", i));
                         }
                     }
                 } else if alias_count == 3 {
@@ -145,13 +158,19 @@ aliases:
                     if let Some(alias) = state_guard.aka.spec.aliases.get("test-alias-1") {
                         if alias.value.contains("initial") {
                             // This should NOT happen - new count with old values
-                            inconsistent_reads_query1.lock().unwrap().push(format!("Thread1-Iter{}: New count with old values", i));
+                            inconsistent_reads_query1
+                                .lock()
+                                .unwrap()
+                                .push(format!("Thread1-Iter{}: New count with old values", i));
                         }
                     }
 
                     // Should have the new alias
                     if !state_guard.aka.spec.aliases.contains_key("test-alias-3") {
-                        inconsistent_reads_query1.lock().unwrap().push(format!("Thread1-Iter{}: Missing new alias", i));
+                        inconsistent_reads_query1
+                            .lock()
+                            .unwrap()
+                            .push(format!("Thread1-Iter{}: Missing new alias", i));
                     }
                 }
 
@@ -180,14 +199,20 @@ aliases:
 
                     // Check if we're seeing valid state
                     if alias_count != 2 && alias_count != 3 {
-                        inconsistent_reads_query2.lock().unwrap().push(format!("Thread2-Iter{}: Invalid alias count: {}", i, alias_count));
+                        inconsistent_reads_query2
+                            .lock()
+                            .unwrap()
+                            .push(format!("Thread2-Iter{}: Invalid alias count: {}", i, alias_count));
                     }
 
                     // Check internal consistency
                     if alias_count == 2 {
                         if let Some(alias) = state_guard.aka.spec.aliases.get("test-alias-1") {
                             if alias.value.contains("updated") {
-                                inconsistent_reads_query2.lock().unwrap().push(format!("Thread2-Iter{}: Old count with new values", i));
+                                inconsistent_reads_query2
+                                    .lock()
+                                    .unwrap()
+                                    .push(format!("Thread2-Iter{}: Old count with new values", i));
                             }
                         }
                     }
@@ -219,7 +244,11 @@ aliases:
         assert!(race_occurred, "Race condition should have been triggered");
 
         // With atomic updates, there should be NO inconsistent reads
-        assert!(inconsistencies.is_empty(), "Atomic updates should prevent inconsistent reads, but found: {:?}", *inconsistencies);
+        assert!(
+            inconsistencies.is_empty(),
+            "Atomic updates should prevent inconsistent reads, but found: {:?}",
+            *inconsistencies
+        );
     }
 
     /// Test that demonstrates multiple reload triggers are now properly synchronized
@@ -228,7 +257,12 @@ aliases:
         let (_temp_dir, config_path, home_dir) = setup_test_environment("multiple_reload_triggers_sync");
 
         // NEW: Use atomic state management
-        let initial_aka = AKA::new(false, home_dir.clone(), get_config_path(&home_dir).expect("Failed to get config path")).expect("Failed to load initial config");
+        let initial_aka = AKA::new(
+            false,
+            home_dir.clone(),
+            get_config_path(&home_dir).expect("Failed to get config path"),
+        )
+        .expect("Failed to load initial config");
         let initial_hash = hash_config_file(&config_path).expect("Failed to hash config");
         let initial_state = TestDaemonState::new(initial_aka, initial_hash);
         let atomic_state = Arc::new(std::sync::RwLock::new(initial_state));
@@ -264,13 +298,16 @@ aliases:
                 match reload_mutex_clone.try_lock() {
                     Ok(_reload_guard) => {
                         // Update config file with thread-specific content
-                        let thread_config = format!(r#"
+                        let thread_config = format!(
+                            r#"
 lookups: {{}}
 aliases:
   test-alias-thread-{}:
     value: echo "thread {} update"
     global: true
-"#, thread_id, thread_id);
+"#,
+                            thread_id, thread_id
+                        );
 
                         fs::write(&config_path_clone, &thread_config).expect("Failed to write config");
 
@@ -283,7 +320,11 @@ aliases:
                                 // Simulate config loading time
                                 thread::sleep(Duration::from_millis(5));
 
-                                match AKA::new(false, home_dir_clone.clone(), get_config_path(&home_dir_clone).expect("Failed to get config path")) {
+                                match AKA::new(
+                                    false,
+                                    home_dir_clone.clone(),
+                                    get_config_path(&home_dir_clone).expect("Failed to get config path"),
+                                ) {
                                     Ok(new_aka) => {
                                         // ATOMIC UPDATE
                                         state_guard.aka = new_aka;
@@ -295,23 +336,26 @@ aliases:
                                         println!("Thread {} completed reload successfully", thread_id);
                                     }
                                     Err(e) => {
-                                        conflicts_detected_clone.lock().unwrap().push(
-                                            format!("Thread {} failed to load config: {}", thread_id, e)
-                                        );
+                                        conflicts_detected_clone
+                                            .lock()
+                                            .unwrap()
+                                            .push(format!("Thread {} failed to load config: {}", thread_id, e));
                                     }
                                 }
                             }
                             Err(_) => {
-                                conflicts_detected_clone.lock().unwrap().push(
-                                    format!("Thread {} failed to acquire state lock", thread_id)
-                                );
+                                conflicts_detected_clone
+                                    .lock()
+                                    .unwrap()
+                                    .push(format!("Thread {} failed to acquire state lock", thread_id));
                             }
                         }
                     }
                     Err(_) => {
-                        conflicts_detected_clone.lock().unwrap().push(
-                            format!("Thread {} failed to acquire reload mutex", thread_id)
-                        );
+                        conflicts_detected_clone
+                            .lock()
+                            .unwrap()
+                            .push(format!("Thread {} failed to acquire reload mutex", thread_id));
                     }
                 }
 
@@ -339,13 +383,19 @@ aliases:
         }
 
         // With proper synchronization, only one reload should succeed
-        assert_eq!(final_reload_count, 1, "Only one reload should succeed with proper synchronization");
+        assert_eq!(
+            final_reload_count, 1,
+            "Only one reload should succeed with proper synchronization"
+        );
         assert_eq!(conflicts.len(), 2, "Two threads should be blocked by reload mutex");
 
         // Verify the conflicts are due to mutex blocking, not lock failures
         for conflict in conflicts.iter() {
-            assert!(conflict.contains("failed to acquire reload mutex"),
-                   "Conflicts should be due to reload mutex blocking, not lock failures: {}", conflict);
+            assert!(
+                conflict.contains("failed to acquire reload mutex"),
+                "Conflicts should be due to reload mutex blocking, not lock failures: {}",
+                conflict
+            );
         }
     }
 
@@ -355,7 +405,12 @@ aliases:
         let (_temp_dir, config_path, home_dir) = setup_test_environment("atomic_state_consistency");
 
         // NEW: Use atomic state management
-        let initial_aka = AKA::new(false, home_dir.clone(), get_config_path(&home_dir).expect("Failed to get config path")).expect("Failed to load initial config");
+        let initial_aka = AKA::new(
+            false,
+            home_dir.clone(),
+            get_config_path(&home_dir).expect("Failed to get config path"),
+        )
+        .expect("Failed to load initial config");
         let initial_hash = hash_config_file(&config_path).expect("Failed to hash config");
         let initial_state = TestDaemonState::new(initial_aka, initial_hash);
         let atomic_state = Arc::new(std::sync::RwLock::new(initial_state));
@@ -377,7 +432,12 @@ aliases:
 
             // NEW: Atomic reload sequence
             let new_hash = hash_config_file(&config_path_reload).expect("Failed to hash config");
-            let new_aka = AKA::new(false, home_dir_reload.clone(), get_config_path(&home_dir_reload).expect("Failed to get config path")).expect("Failed to load config");
+            let new_aka = AKA::new(
+                false,
+                home_dir_reload.clone(),
+                get_config_path(&home_dir_reload).expect("Failed to get config path"),
+            )
+            .expect("Failed to load config");
 
             // ATOMIC UPDATE: Both config and hash updated together
             {
@@ -412,9 +472,10 @@ aliases:
                             let current_file_hash = hash_config_file(&config_path_observer).unwrap_or_default();
                             if stored_hash != current_file_hash {
                                 // This should NOT happen with atomic updates
-                                inconsistencies_observer.lock().unwrap().push(
-                                    format!("Iter {}: New config loaded but hash not updated", i)
-                                );
+                                inconsistencies_observer
+                                    .lock()
+                                    .unwrap()
+                                    .push(format!("Iter {}: New config loaded but hash not updated", i));
                             }
                         }
                     }
@@ -441,8 +502,11 @@ aliases:
         }
 
         // With atomic updates, there should be NO inconsistencies
-        assert!(detected_inconsistencies.is_empty(),
-               "Atomic state updates should prevent inconsistencies, but found: {:?}", *detected_inconsistencies);
+        assert!(
+            detected_inconsistencies.is_empty(),
+            "Atomic state updates should prevent inconsistencies, but found: {:?}",
+            *detected_inconsistencies
+        );
     }
 
     /// Test that demonstrates debouncing reduces wasted reload attempts
@@ -451,7 +515,12 @@ aliases:
         let (_temp_dir, config_path, home_dir) = setup_test_environment("debouncing_test");
 
         // NEW: Use atomic state management
-        let initial_aka = AKA::new(false, home_dir.clone(), get_config_path(&home_dir).expect("Failed to get config path")).expect("Failed to load initial config");
+        let initial_aka = AKA::new(
+            false,
+            home_dir.clone(),
+            get_config_path(&home_dir).expect("Failed to get config path"),
+        )
+        .expect("Failed to load initial config");
         let initial_hash = hash_config_file(&config_path).expect("Failed to hash config");
         let initial_state = TestDaemonState::new(initial_aka, initial_hash);
         let atomic_state = Arc::new(std::sync::RwLock::new(initial_state));
@@ -459,7 +528,7 @@ aliases:
         // Debouncing state (like the new daemon implementation)
         let reload_mutex = Arc::new(Mutex::new(()));
         let last_reload_time = Arc::new(Mutex::new(Instant::now() - Duration::from_millis(100))); // Start with old time
-        const DEBOUNCE_DELAY_MS: u64 = 20;  // Shorter for testing
+        const DEBOUNCE_DELAY_MS: u64 = 20; // Shorter for testing
 
         let reload_attempts = Arc::new(Mutex::new(0));
         let successful_reloads = Arc::new(Mutex::new(0));
@@ -483,13 +552,16 @@ aliases:
                 thread::sleep(Duration::from_millis(i * 5));
 
                 // Each thread simulates a file change event
-                let config_content = format!(r#"
+                let config_content = format!(
+                    r#"
 lookups: {{}}
 aliases:
   test-alias-{}:
     value: echo "rapid change {}"
     global: true
-"#, i, i);
+"#,
+                    i, i
+                );
 
                 fs::write(&config_path_clone, &config_content).expect("Failed to write config");
 
@@ -521,7 +593,11 @@ aliases:
                             // Simulate reload work
                             thread::sleep(Duration::from_millis(1));
 
-                            if let Ok(new_aka) = AKA::new(false, home_dir_clone.clone(), get_config_path(&home_dir_clone).expect("Failed to get config path")) {
+                            if let Ok(new_aka) = AKA::new(
+                                false,
+                                home_dir_clone.clone(),
+                                get_config_path(&home_dir_clone).expect("Failed to get config path"),
+                            ) {
                                 let new_hash = hash_config_file(&config_path_clone).unwrap_or_default();
 
                                 // ATOMIC UPDATE
@@ -560,7 +636,10 @@ aliases:
         println!("- Total reload attempts: {}", total_attempts);
         println!("- Successful reloads: {}", total_successes);
         println!("- Debounced attempts: {}", total_debounced);
-        println!("- Wasted attempts: {}", total_attempts - total_successes - total_debounced);
+        println!(
+            "- Wasted attempts: {}",
+            total_attempts - total_successes - total_debounced
+        );
 
         // This test shows that debouncing reduces wasted attempts
         assert_eq!(total_attempts, 10, "Should have 10 rapid reload attempts");
@@ -568,11 +647,15 @@ aliases:
 
         // With debouncing, fewer attempts should be wasted
         let wasted_attempts = total_attempts - total_successes - total_debounced;
-        println!("IMPROVEMENT: {} attempts were properly debounced, only {} were wasted",
-                 total_debounced, wasted_attempts);
+        println!(
+            "IMPROVEMENT: {} attempts were properly debounced, only {} were wasted",
+            total_debounced, wasted_attempts
+        );
 
         // Debouncing should significantly reduce waste compared to no debouncing
-        assert!(total_debounced > 0 || total_successes > 5,
-               "Either debouncing should prevent attempts OR most should succeed without contention");
+        assert!(
+            total_debounced > 0 || total_successes > 5,
+            "Either debouncing should prevent attempts OR most should succeed without contention"
+        );
     }
 }

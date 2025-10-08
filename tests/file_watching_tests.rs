@@ -1,7 +1,7 @@
+use aka_lib::{get_config_path, AKA};
 use std::fs;
 use std::time::Duration;
 use tempfile::TempDir;
-use aka_lib::{AKA, get_config_path};
 
 fn setup_test_environment(_test_name: &str) -> (TempDir, TempDir) {
     // Create temp directory for config file
@@ -63,7 +63,12 @@ aliases:
         fs::write(&config_file, TEST_CONFIG_INITIAL).expect("Failed to write initial config");
 
         // Load initial config
-        let mut aka = AKA::new(false, cache_path.to_path_buf(), get_config_path(&cache_path.to_path_buf()).expect("Failed to get config path")).expect("Failed to load initial config");
+        let mut aka = AKA::new(
+            false,
+            cache_path.to_path_buf(),
+            get_config_path(&cache_path.to_path_buf()).expect("Failed to get config path"),
+        )
+        .expect("Failed to load initial config");
         assert_eq!(aka.spec.aliases.len(), 2);
         assert!(aka.spec.aliases.contains_key("test-initial"));
         assert!(aka.spec.aliases.contains_key("test-local"));
@@ -72,7 +77,12 @@ aliases:
         fs::write(&config_file, TEST_CONFIG_UPDATED).expect("Failed to write updated config");
 
         // Manually reload config
-        aka = AKA::new(false, cache_path.to_path_buf(), get_config_path(&cache_path.to_path_buf()).expect("Failed to get config path")).expect("Failed to reload config");
+        aka = AKA::new(
+            false,
+            cache_path.to_path_buf(),
+            get_config_path(&cache_path.to_path_buf()).expect("Failed to get config path"),
+        )
+        .expect("Failed to reload config");
         assert_eq!(aka.spec.aliases.len(), 4);
         assert!(aka.spec.aliases.contains_key("test-initial"));
         assert!(aka.spec.aliases.contains_key("test-local"));
@@ -108,7 +118,10 @@ aliases:
         let updated_modified = updated_metadata.modified().expect("Failed to get modification time");
 
         // Verify modification time changed
-        assert!(updated_modified > initial_modified, "File modification time should have changed");
+        assert!(
+            updated_modified > initial_modified,
+            "File modification time should have changed"
+        );
 
         // Clean up
         // config_temp_dir will be dropped here
@@ -124,7 +137,11 @@ aliases:
 
         // Test valid config
         fs::write(&config_file, TEST_CONFIG_INITIAL).expect("Failed to write valid config");
-        let result = AKA::new(false, cache_path.to_path_buf(), get_config_path(&cache_path.to_path_buf()).expect("Failed to get config path"));
+        let result = AKA::new(
+            false,
+            cache_path.to_path_buf(),
+            get_config_path(&cache_path.to_path_buf()).expect("Failed to get config path"),
+        );
         assert!(result.is_ok(), "Loading valid config should succeed");
 
         // Test invalid config (missing required fields)
@@ -132,12 +149,20 @@ aliases:
 invalid_yaml: [
         "#;
         fs::write(&config_file, invalid_config).expect("Failed to write invalid config");
-        let result = AKA::new(false, cache_path.to_path_buf(), get_config_path(&cache_path.to_path_buf()).expect("Failed to get config path"));
+        let result = AKA::new(
+            false,
+            cache_path.to_path_buf(),
+            get_config_path(&cache_path.to_path_buf()).expect("Failed to get config path"),
+        );
         assert!(result.is_err(), "Loading invalid config should fail");
 
         // Test config that becomes valid again
         fs::write(&config_file, TEST_CONFIG_UPDATED).expect("Failed to write valid config again");
-        let result = AKA::new(false, cache_path.to_path_buf(), get_config_path(&cache_path.to_path_buf()).expect("Failed to get config path"));
+        let result = AKA::new(
+            false,
+            cache_path.to_path_buf(),
+            get_config_path(&cache_path.to_path_buf()).expect("Failed to get config path"),
+        );
         assert!(result.is_ok(), "Loading valid config again should succeed");
 
         // Clean up
@@ -154,22 +179,38 @@ invalid_yaml: [
         fs::write(&config_file, TEST_CONFIG_INITIAL).expect("Failed to write initial config");
 
         // Load initial config and test alias
-        let mut aka = AKA::new(false, cache_path.to_path_buf(), get_config_path(&cache_path.to_path_buf()).expect("Failed to get config path")).expect("Failed to load initial config");
-        let result = aka.replace_with_mode("test-initial", aka_lib::ProcessingMode::Direct).expect("Failed to process alias");
+        let mut aka = AKA::new(
+            false,
+            cache_path.to_path_buf(),
+            get_config_path(&cache_path.to_path_buf()).expect("Failed to get config path"),
+        )
+        .expect("Failed to load initial config");
+        let result = aka
+            .replace_with_mode("test-initial", aka_lib::ProcessingMode::Direct)
+            .expect("Failed to process alias");
         assert_eq!(result.trim(), "echo \"initial test\"");
 
         // Update config file with new alias
         fs::write(&config_file, TEST_CONFIG_UPDATED).expect("Failed to write updated config");
 
         // Reload config
-        let mut aka = AKA::new(false, cache_path.to_path_buf(), get_config_path(&cache_path.to_path_buf()).expect("Failed to get config path")).expect("Failed to reload config");
+        let mut aka = AKA::new(
+            false,
+            cache_path.to_path_buf(),
+            get_config_path(&cache_path.to_path_buf()).expect("Failed to get config path"),
+        )
+        .expect("Failed to reload config");
 
         // Test that old alias still works
-        let result = aka.replace_with_mode("test-initial", aka_lib::ProcessingMode::Direct).expect("Failed to process old alias");
+        let result = aka
+            .replace_with_mode("test-initial", aka_lib::ProcessingMode::Direct)
+            .expect("Failed to process old alias");
         assert_eq!(result.trim(), "echo \"initial test\"");
 
         // Test that new alias works
-        let result = aka.replace_with_mode("test-new-alias", aka_lib::ProcessingMode::Direct).expect("Failed to process new alias");
+        let result = aka
+            .replace_with_mode("test-new-alias", aka_lib::ProcessingMode::Direct)
+            .expect("Failed to process new alias");
         assert_eq!(result.trim(), "echo \"new alias added\"");
 
         // Clean up
@@ -191,7 +232,10 @@ invalid_yaml: [
         assert!(config_path.is_ok(), "get_config_path should succeed");
 
         let path = config_path.expect("get_config_path should return a valid path");
-        assert!(path.to_string_lossy().contains("aka.yml"), "Config path should contain aka.yml");
+        assert!(
+            path.to_string_lossy().contains("aka.yml"),
+            "Config path should contain aka.yml"
+        );
 
         // Clean up
         // config_temp_dir will be dropped here
@@ -207,12 +251,22 @@ invalid_yaml: [
 
         // Initial config with 2 aliases
         fs::write(&config_file, TEST_CONFIG_INITIAL).expect("Failed to write initial config");
-        let aka = AKA::new(false, cache_path.to_path_buf(), get_config_path(&cache_path.to_path_buf()).expect("Failed to get config path")).expect("Failed to load initial config");
+        let aka = AKA::new(
+            false,
+            cache_path.to_path_buf(),
+            get_config_path(&cache_path.to_path_buf()).expect("Failed to get config path"),
+        )
+        .expect("Failed to load initial config");
         assert_eq!(aka.spec.aliases.len(), 2);
 
         // Updated config with 4 aliases
         fs::write(&config_file, TEST_CONFIG_UPDATED).expect("Failed to write updated config");
-        let aka = AKA::new(false, cache_path.to_path_buf(), get_config_path(&cache_path.to_path_buf()).expect("Failed to get config path")).expect("Failed to reload config");
+        let aka = AKA::new(
+            false,
+            cache_path.to_path_buf(),
+            get_config_path(&cache_path.to_path_buf()).expect("Failed to get config path"),
+        )
+        .expect("Failed to reload config");
         assert_eq!(aka.spec.aliases.len(), 4);
 
         // Verify specific aliases exist
@@ -234,18 +288,19 @@ invalid_yaml: [
         let config_file = config_dir.join("aka.yml");
         fs::write(&config_file, TEST_CONFIG_UPDATED).expect("Failed to write config");
 
-        let aka = AKA::new(false, cache_path.to_path_buf(), get_config_path(&cache_path.to_path_buf()).expect("Failed to get config path")).expect("Failed to load config");
+        let aka = AKA::new(
+            false,
+            cache_path.to_path_buf(),
+            get_config_path(&cache_path.to_path_buf()).expect("Failed to get config path"),
+        )
+        .expect("Failed to load config");
 
         // Check global aliases
-        let global_aliases: Vec<_> = aka.spec.aliases.values()
-            .filter(|alias| alias.global)
-            .collect();
+        let global_aliases: Vec<_> = aka.spec.aliases.values().filter(|alias| alias.global).collect();
         assert_eq!(global_aliases.len(), 2); // test-initial and test-new-alias
 
         // Check local aliases
-        let local_aliases: Vec<_> = aka.spec.aliases.values()
-            .filter(|alias| !alias.global)
-            .collect();
+        let local_aliases: Vec<_> = aka.spec.aliases.values().filter(|alias| !alias.global).collect();
         assert_eq!(local_aliases.len(), 2); // test-local and test-another
 
         // Clean up
@@ -267,9 +322,17 @@ mod daemon_ipc_tests {
     #[derive(Serialize, Deserialize, Debug)]
     #[serde(tag = "type")]
     enum TestResponse {
-        ConfigReloaded { success: bool, aliases_count: usize, message: String },
-        Health { status: String },
-        Error { message: String },
+        ConfigReloaded {
+            success: bool,
+            aliases_count: usize,
+            message: String,
+        },
+        Health {
+            status: String,
+        },
+        Error {
+            message: String,
+        },
     }
 
     #[test]
@@ -281,7 +344,7 @@ mod daemon_ipc_tests {
 
         let deserialized: TestRequest = serde_json::from_str(&serialized).expect("Failed to deserialize request");
         match deserialized {
-            TestRequest::ReloadConfig => {}, // Success
+            TestRequest::ReloadConfig => {} // Success
             _ => panic!("Wrong request type after deserialization"),
         }
     }
@@ -302,11 +365,15 @@ mod daemon_ipc_tests {
 
         let deserialized: TestResponse = serde_json::from_str(&serialized).expect("Failed to deserialize response");
         match deserialized {
-            TestResponse::ConfigReloaded { success, aliases_count, message } => {
+            TestResponse::ConfigReloaded {
+                success,
+                aliases_count,
+                message,
+            } => {
                 assert!(success);
                 assert_eq!(aliases_count, 42);
                 assert_eq!(message, "Config reloaded successfully");
-            },
+            }
             _ => panic!("Wrong response type after deserialization"),
         }
     }
@@ -317,25 +384,31 @@ mod daemon_ipc_tests {
         let request = TestRequest::Health;
         let serialized_request = serde_json::to_string(&request).expect("Failed to serialize health request");
 
-        let response = TestResponse::Health { status: "healthy:10:aliases".to_string() };
+        let response = TestResponse::Health {
+            status: "healthy:10:aliases".to_string(),
+        };
         let serialized_response = serde_json::to_string(&response).expect("Failed to serialize health response");
 
         // Verify both can be deserialized
         let _: TestRequest = serde_json::from_str(&serialized_request).expect("Failed to deserialize health request");
-        let _: TestResponse = serde_json::from_str(&serialized_response).expect("Failed to deserialize health response");
+        let _: TestResponse =
+            serde_json::from_str(&serialized_response).expect("Failed to deserialize health response");
     }
 
     #[test]
     fn test_error_response_serialization() {
         // Test error response serialization
-        let response = TestResponse::Error { message: "Test error message".to_string() };
+        let response = TestResponse::Error {
+            message: "Test error message".to_string(),
+        };
         let serialized = serde_json::to_string(&response).expect("Failed to serialize error response");
 
-        let deserialized: TestResponse = serde_json::from_str(&serialized).expect("Failed to deserialize error response");
+        let deserialized: TestResponse =
+            serde_json::from_str(&serialized).expect("Failed to deserialize error response");
         match deserialized {
             TestResponse::Error { message } => {
                 assert_eq!(message, "Test error message");
-            },
+            }
             _ => panic!("Wrong response type after deserialization"),
         }
     }
@@ -344,16 +417,14 @@ mod daemon_ipc_tests {
 #[cfg(test)]
 mod integration_tests {
     use std::process::Command;
-    use std::sync::Arc;
     use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Arc;
     use std::sync::Mutex;
 
     #[test]
     fn test_daemon_binary_exists() {
         // Test that the daemon binary can be built
-        let output = Command::new("cargo")
-            .args(&["build", "--bin", "aka-daemon"])
-            .output();
+        let output = Command::new("cargo").args(&["build", "--bin", "aka-daemon"]).output();
 
         assert!(output.is_ok(), "Should be able to build aka-daemon");
         let output = output.expect("Should be able to execute cargo build command");

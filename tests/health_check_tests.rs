@@ -64,7 +64,10 @@ aliases:
 
         // When daemon is not running, it should fall back to direct mode validation
         // With valid config, this should return 0
-        assert_eq!(result, 0, "Health check should return 0 for valid config when daemon not running");
+        assert_eq!(
+            result, 0,
+            "Health check should return 0 for valid config when daemon not running"
+        );
     });
 }
 
@@ -159,7 +162,10 @@ aliases: {}
     }
 
     // Should return 2 for invalid config (empty aliases are considered invalid)
-    assert_eq!(result, 2, "Health check should return 2 when config has no aliases (invalid config)");
+    assert_eq!(
+        result, 2,
+        "Health check should return 2 when config has no aliases (invalid config)"
+    );
 }
 
 /// Test health check exit code meanings
@@ -273,7 +279,6 @@ aliases:
 #[cfg(test)]
 mod daemon_status_format_tests {
 
-
     /// Test that daemon status format matches expected patterns
     #[test]
     fn test_daemon_status_format_validation() {
@@ -289,15 +294,31 @@ mod daemon_status_format_tests {
 
         for status in valid_formats {
             // Test the format matches our expected pattern
-            assert!(status.starts_with("healthy:"), "Status should start with 'healthy:': {}", status);
-            assert!(status.ends_with(":synced") || status.ends_with(":stale"), "Status should end with ':synced' or ':stale': {}", status);
+            assert!(
+                status.starts_with("healthy:"),
+                "Status should start with 'healthy:': {}",
+                status
+            );
+            assert!(
+                status.ends_with(":synced") || status.ends_with(":stale"),
+                "Status should end with ':synced' or ':stale': {}",
+                status
+            );
 
             // Test that we can parse the alias count
             let parts: Vec<&str> = status.split(':').collect();
             assert_eq!(parts.len(), 3, "Status should have 3 parts: {}", status);
             assert_eq!(parts[0], "healthy", "First part should be 'healthy': {}", status);
-            assert!(parts[1].parse::<u32>().is_ok(), "Second part should be a number: {}", status);
-            assert!(parts[2] == "synced" || parts[2] == "stale", "Third part should be 'synced' or 'stale': {}", status);
+            assert!(
+                parts[1].parse::<u32>().is_ok(),
+                "Second part should be a number: {}",
+                status
+            );
+            assert!(
+                parts[2] == "synced" || parts[2] == "stale",
+                "Third part should be 'synced' or 'stale': {}",
+                status
+            );
         }
     }
 
@@ -315,8 +336,15 @@ mod daemon_status_format_tests {
         for status in invalid_formats {
             // These should NOT match our new parsing logic
             let parts: Vec<&str> = status.split(':').collect();
-            let matches_new_format = parts.len() == 3 && parts[0] == "healthy" && parts[1].parse::<u32>().is_ok() && (parts[2] == "synced" || parts[2] == "stale");
-            assert!(!matches_new_format, "Old format should not match new parsing logic: {}", status);
+            let matches_new_format = parts.len() == 3
+                && parts[0] == "healthy"
+                && parts[1].parse::<u32>().is_ok()
+                && (parts[2] == "synced" || parts[2] == "stale");
+            assert!(
+                !matches_new_format,
+                "Old format should not match new parsing logic: {}",
+                status
+            );
         }
     }
 }

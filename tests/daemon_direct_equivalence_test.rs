@@ -10,7 +10,10 @@ fn get_aka_binary_path() -> String {
         .expect("Failed to build aka binary");
 
     if !output.status.success() {
-        panic!("Failed to build aka binary: {}", String::from_utf8_lossy(&output.stderr));
+        panic!(
+            "Failed to build aka binary: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
     }
 
     "target/debug/aka".to_string()
@@ -23,22 +26,23 @@ fn start_daemon_with_config(config_path: &str) -> std::process::Child {
         .expect("Failed to build aka-daemon binary");
 
     if !daemon_output.status.success() {
-        panic!("Failed to build aka-daemon binary: {}", String::from_utf8_lossy(&daemon_output.stderr));
+        panic!(
+            "Failed to build aka-daemon binary: {}",
+            String::from_utf8_lossy(&daemon_output.stderr)
+        );
     }
 
     Command::new("target/debug/aka-daemon")
         .args(&["--config", config_path, "--foreground"])
-        .env("AKA_LOG_FILE", "/tmp/aka-test-logs/aka.log")  // Direct test logs to /tmp
-        .env("AKA_CACHE_DIR", "/tmp/aka-test-cache")  // Direct test cache to /tmp
-        .env("XDG_RUNTIME_DIR", "/tmp/aka-test-runtime")   // Isolate daemon socket
+        .env("AKA_LOG_FILE", "/tmp/aka-test-logs/aka.log") // Direct test logs to /tmp
+        .env("AKA_CACHE_DIR", "/tmp/aka-test-cache") // Direct test cache to /tmp
+        .env("XDG_RUNTIME_DIR", "/tmp/aka-test-runtime") // Isolate daemon socket
         .spawn()
         .expect("Failed to start daemon")
 }
 
 fn stop_daemon() {
-    let _ = Command::new("pkill")
-        .arg("aka-daemon")
-        .output();
+    let _ = Command::new("pkill").arg("aka-daemon").output();
 
     // Wait a bit for cleanup
     std::thread::sleep(Duration::from_millis(100));
@@ -49,16 +53,16 @@ fn run_aka_command(config_path: &str, args: &[&str]) -> (String, String, i32) {
     let mut cmd = Command::new(&aka_binary);
     cmd.args(&["--config", config_path]);
     cmd.args(args);
-    cmd.env("AKA_LOG_FILE", "/tmp/aka-test-logs/aka.log");  // Direct test logs to /tmp
-    cmd.env("AKA_CACHE_DIR", "/tmp/aka-test-cache");  // Direct test cache to /tmp
-    cmd.env("XDG_RUNTIME_DIR", "/tmp/aka-test-runtime");   // Isolate daemon socket
+    cmd.env("AKA_LOG_FILE", "/tmp/aka-test-logs/aka.log"); // Direct test logs to /tmp
+    cmd.env("AKA_CACHE_DIR", "/tmp/aka-test-cache"); // Direct test cache to /tmp
+    cmd.env("XDG_RUNTIME_DIR", "/tmp/aka-test-runtime"); // Isolate daemon socket
 
     let output = cmd.output().expect("Failed to run aka command");
 
     (
         String::from_utf8_lossy(&output.stdout).to_string(),
         String::from_utf8_lossy(&output.stderr).to_string(),
-        output.status.code().unwrap_or(-1)
+        output.status.code().unwrap_or(-1),
     )
 }
 
@@ -86,7 +90,8 @@ aliases:
   freq_test2:
     value: "echo freq2"
     global: false
-"#.to_string()
+"#
+    .to_string()
 }
 
 #[test]
@@ -126,10 +131,16 @@ fn test_query_command_equivalence() {
         stop_daemon();
 
         // Assert equivalence
-        assert_eq!(direct_stdout, daemon_stdout,
-            "Query '{}' stdout differs between direct and daemon mode", test_case);
-        assert_eq!(direct_code, daemon_code,
-            "Query '{}' exit code differs between direct and daemon mode", test_case);
+        assert_eq!(
+            direct_stdout, daemon_stdout,
+            "Query '{}' stdout differs between direct and daemon mode",
+            test_case
+        );
+        assert_eq!(
+            direct_code, daemon_code,
+            "Query '{}' exit code differs between direct and daemon mode",
+            test_case
+        );
     }
 }
 
@@ -169,10 +180,16 @@ fn test_list_command_equivalence() {
         stop_daemon();
 
         // Assert equivalence
-        assert_eq!(direct_stdout, daemon_stdout,
-            "List {:?} stdout differs between direct and daemon mode", test_case);
-        assert_eq!(direct_code, daemon_code,
-            "List {:?} exit code differs between direct and daemon mode", test_case);
+        assert_eq!(
+            direct_stdout, daemon_stdout,
+            "List {:?} stdout differs between direct and daemon mode",
+            test_case
+        );
+        assert_eq!(
+            direct_code, daemon_code,
+            "List {:?} exit code differs between direct and daemon mode",
+            test_case
+        );
     }
 }
 
@@ -184,10 +201,7 @@ fn test_freq_command_equivalence() {
     let config_path = config_file.to_str().unwrap();
 
     // Test cases for freq command
-    let test_cases = vec![
-        vec!["freq"],
-        vec!["freq", "--all"],
-    ];
+    let test_cases = vec![vec!["freq"], vec!["freq", "--all"]];
 
     // Stop any existing daemon
     stop_daemon();
@@ -209,10 +223,16 @@ fn test_freq_command_equivalence() {
         stop_daemon();
 
         // Assert equivalence
-        assert_eq!(direct_stdout, daemon_stdout,
-            "Freq {:?} stdout differs between direct and daemon mode", test_case);
-        assert_eq!(direct_code, daemon_code,
-            "Freq {:?} exit code differs between direct and daemon mode", test_case);
+        assert_eq!(
+            direct_stdout, daemon_stdout,
+            "Freq {:?} stdout differs between direct and daemon mode",
+            test_case
+        );
+        assert_eq!(
+            direct_code, daemon_code,
+            "Freq {:?} exit code differs between direct and daemon mode",
+            test_case
+        );
     }
 }
 
@@ -257,10 +277,16 @@ fn test_eol_parameter_equivalence() {
         stop_daemon();
 
         // Assert equivalence
-        assert_eq!(direct_stdout, daemon_stdout,
-            "Query '{}' with eol={} stdout differs between direct and daemon mode", query, eol);
-        assert_eq!(direct_code, daemon_code,
-            "Query '{}' with eol={} exit code differs between direct and daemon mode", query, eol);
+        assert_eq!(
+            direct_stdout, daemon_stdout,
+            "Query '{}' with eol={} stdout differs between direct and daemon mode",
+            query, eol
+        );
+        assert_eq!(
+            direct_code, daemon_code,
+            "Query '{}' with eol={} exit code differs between direct and daemon mode",
+            query, eol
+        );
     }
 }
 
@@ -269,21 +295,29 @@ fn test_custom_config_equivalence() {
     // Create two different config files
     let temp_dir1 = TempDir::new().expect("Failed to create temp dir 1");
     let config_file1 = temp_dir1.path().join("aka1.yml");
-    fs::write(&config_file1, r#"
+    fs::write(
+        &config_file1,
+        r#"
 aliases:
   test1:
     value: "echo config1"
     global: false
-"#).expect("Failed to write config 1");
+"#,
+    )
+    .expect("Failed to write config 1");
 
     let temp_dir2 = TempDir::new().expect("Failed to create temp dir 2");
     let config_file2 = temp_dir2.path().join("aka2.yml");
-    fs::write(&config_file2, r#"
+    fs::write(
+        &config_file2,
+        r#"
 aliases:
   test2:
     value: "echo config2"
     global: false
-"#).expect("Failed to write config 2");
+"#,
+    )
+    .expect("Failed to write config 2");
 
     let config_path1 = config_file1.to_str().unwrap();
     let config_path2 = config_file2.to_str().unwrap();
@@ -316,10 +350,16 @@ aliases:
         stop_daemon();
 
         // Assert equivalence
-        assert_eq!(direct_stdout, daemon_stdout,
-            "Config '{}' query '{}' stdout differs between direct and daemon mode", config_path, query);
-        assert_eq!(direct_code, daemon_code,
-            "Config '{}' query '{}' exit code differs between direct and daemon mode", config_path, query);
+        assert_eq!(
+            direct_stdout, daemon_stdout,
+            "Config '{}' query '{}' stdout differs between direct and daemon mode",
+            config_path, query
+        );
+        assert_eq!(
+            direct_code, daemon_code,
+            "Config '{}' query '{}' exit code differs between direct and daemon mode",
+            config_path, query
+        );
     }
 }
 
@@ -378,11 +418,7 @@ fn test_performance_consistency() {
     stop_daemon();
 
     // Test multiple operations to ensure consistency
-    let operations = vec![
-        vec!["ls"],
-        vec!["freq", "--all"],
-        vec!["query", "alias50"],
-    ];
+    let operations = vec![vec!["ls"], vec!["freq", "--all"], vec!["query", "alias50"]];
 
     for operation in &operations {
         println!("Testing performance consistency for {:?}", operation);
@@ -405,10 +441,16 @@ fn test_performance_consistency() {
         stop_daemon();
 
         // Assert functional equivalence (performance can differ)
-        assert_eq!(direct_stdout, daemon_stdout,
-            "Operation {:?} stdout differs between direct and daemon mode", operation);
-        assert_eq!(direct_code, daemon_code,
-            "Operation {:?} exit code differs between direct and daemon mode", operation);
+        assert_eq!(
+            direct_stdout, daemon_stdout,
+            "Operation {:?} stdout differs between direct and daemon mode",
+            operation
+        );
+        assert_eq!(
+            direct_code, daemon_code,
+            "Operation {:?} exit code differs between direct and daemon mode",
+            operation
+        );
 
         println!("Direct mode: {:?}, Daemon mode: {:?}", direct_duration, daemon_duration);
     }

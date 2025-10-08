@@ -1,10 +1,9 @@
 /// Detailed trace of what the parser creates for pipe-separated aliases
-
-use aka_lib::{ConfigLoader, AliasCache, merge_cache_with_config_path, hash_config_file};
-use std::fs;
-use std::collections::HashMap;
-use tempfile::TempDir;
+use aka_lib::{hash_config_file, merge_cache_with_config_path, AliasCache, ConfigLoader};
 use eyre::Result;
+use std::collections::HashMap;
+use std::fs;
+use tempfile::TempDir;
 
 #[test]
 fn test_trace_parser_output() -> Result<()> {
@@ -61,13 +60,16 @@ aliases:
 
     // Create old cache with just "home"
     let mut old_aliases = HashMap::new();
-    old_aliases.insert("home".to_string(), aka_lib::AliasType {
-        name: "home".to_string(),
-        value: "ssh desk.lan".to_string(),
-        space: true,
-        global: false,
-        count: 5,
-    });
+    old_aliases.insert(
+        "home".to_string(),
+        aka_lib::AliasType {
+            name: "home".to_string(),
+            value: "ssh desk.lan".to_string(),
+            space: true,
+            global: false,
+            count: 5,
+        },
+    );
     let old_cache = AliasCache {
         hash: "old_hash".to_string(),
         aliases: old_aliases,
@@ -83,13 +85,23 @@ aliases:
 
     eprintln!("\n=== NEW CACHE (after merge) ===");
     for (name, alias) in &new_cache.aliases {
-        eprintln!("'{}': count={}, value='{}', address={:p}",
-                  name, alias.count, alias.value, alias);
+        eprintln!(
+            "'{}': count={}, value='{}', address={:p}",
+            name, alias.count, alias.value, alias
+        );
     }
 
     // Test expectations
-    assert_eq!(new_cache.aliases.get("home").unwrap().count, 5, "home should preserve count");
-    assert_eq!(new_cache.aliases.get("desk").unwrap().count, 0, "desk should have count=0");
+    assert_eq!(
+        new_cache.aliases.get("home").unwrap().count,
+        5,
+        "home should preserve count"
+    );
+    assert_eq!(
+        new_cache.aliases.get("desk").unwrap().count,
+        0,
+        "desk should have count=0"
+    );
 
     Ok(())
 }
@@ -113,13 +125,16 @@ aliases:
 
     // Create initial cache manually
     let mut initial_aliases = HashMap::new();
-    initial_aliases.insert("home".to_string(), aka_lib::AliasType {
-        name: "home".to_string(),
-        value: "ssh desk.lan".to_string(),
-        space: true,
-        global: false,
-        count: 1,
-    });
+    initial_aliases.insert(
+        "home".to_string(),
+        aka_lib::AliasType {
+            name: "home".to_string(),
+            value: "ssh desk.lan".to_string(),
+            space: true,
+            global: false,
+            count: 1,
+        },
+    );
     let initial_cache = AliasCache {
         hash: hash1.clone(),
         aliases: initial_aliases,
@@ -169,12 +184,17 @@ aliases:
     );
 
     eprintln!("\n=== FINAL ASSERTIONS ===");
-    eprintln!("home count: {} (expected: 1)", cache_after_sync2.aliases.get("home").unwrap().count);
-    eprintln!("desk count: {} (expected: 0)", cache_after_sync2.aliases.get("desk").unwrap().count);
+    eprintln!(
+        "home count: {} (expected: 1)",
+        cache_after_sync2.aliases.get("home").unwrap().count
+    );
+    eprintln!(
+        "desk count: {} (expected: 0)",
+        cache_after_sync2.aliases.get("desk").unwrap().count
+    );
 
     assert_eq!(cache_after_sync2.aliases.get("home").unwrap().count, 1);
     assert_eq!(cache_after_sync2.aliases.get("desk").unwrap().count, 0);
 
     Ok(())
 }
-

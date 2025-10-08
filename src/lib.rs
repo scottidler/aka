@@ -1,15 +1,14 @@
 use eyre::{eyre, Result};
-use log::{info, debug, warn};
+use log::{debug, info, warn};
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::fs::OpenOptions;
 use std::path::PathBuf;
 use xxhash_rust::xxh3::xxh3_64;
-use std::collections::HashMap;
-use serde::{Serialize, Deserialize};
-use serde_json;
 
 pub mod cfg;
-pub mod protocol;
 pub mod error;
+pub mod protocol;
 pub mod timing;
 
 use cfg::alias::Alias;
@@ -25,32 +24,20 @@ pub use cfg::spec::Spec as ConfigSpec;
 pub use protocol::{DaemonRequest, DaemonResponse};
 
 // Re-export error types for enhanced error handling
-pub use error::{AkaError, ErrorContext, ValidationError, enhance_error};
+pub use error::{enhance_error, AkaError, ErrorContext, ValidationError};
 
 // Re-export timing types for performance analysis
-pub use timing::{TimingData, TimingCollector, log_timing, export_timing_csv, get_timing_summary, is_benchmark_mode};
+pub use timing::{export_timing_csv, get_timing_summary, is_benchmark_mode, log_timing, TimingCollector, TimingData};
 
 // JSON cache structure for aliases with usage counts
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
 pub struct AliasCache {
     pub hash: String,
     pub aliases: HashMap<String, Alias>,
 }
 
-impl Default for AliasCache {
-    fn default() -> Self {
-        Self {
-            hash: String::new(),
-            aliases: HashMap::new(),
-        }
-    }
-}
-
-pub fn get_config_path(home_dir: &PathBuf) -> Result<PathBuf> {
-    let config_dirs = [
-        home_dir.join(".config").join("aka"),
-        home_dir.clone(),
-    ];
+pub fn get_config_path(home_dir: &std::path::Path) -> Result<PathBuf> {
+    let config_dirs = [home_dir.join(".config").join("aka"), home_dir.to_path_buf()];
 
     let config_files = ["aka.yml", "aka.yaml", ".aka.yml", ".aka.yaml"];
     let mut attempted_paths = Vec::new();
@@ -65,14 +52,14 @@ pub fn get_config_path(home_dir: &PathBuf) -> Result<PathBuf> {
         }
     }
 
-    let context = ErrorContext::new("locating configuration file")
-        .with_context("checking standard configuration locations");
+    let context =
+        ErrorContext::new("locating configuration file").with_context("checking standard configuration locations");
 
-    let aka_error = context.to_config_not_found_error(attempted_paths, home_dir.clone(), None);
+    let aka_error = context.to_config_not_found_error(attempted_paths, home_dir.to_path_buf(), None);
     Err(eyre::eyre!(aka_error))
 }
 
-pub fn get_config_path_with_override(home_dir: &PathBuf, override_path: &Option<PathBuf>) -> Result<PathBuf> {
+pub fn get_config_path_with_override(home_dir: &std::path::Path, override_path: &Option<PathBuf>) -> Result<PathBuf> {
     match override_path {
         Some(path) => {
             if path.exists() {
@@ -82,7 +69,8 @@ pub fn get_config_path_with_override(home_dir: &PathBuf, override_path: &Option<
                     .with_file(path.clone())
                     .with_context("custom config path specified via --config option");
 
-                let aka_error = context.to_config_not_found_error(vec![path.clone()], home_dir.clone(), Some(path.clone()));
+                let aka_error =
+                    context.to_config_not_found_error(vec![path.clone()], home_dir.to_path_buf(), Some(path.clone()));
                 Err(eyre::eyre!(aka_error))
             }
         }
@@ -97,7 +85,7 @@ pub fn test_config(file: &PathBuf) -> Result<PathBuf> {
     Err(eyre!("config {:?} not found!", file))
 }
 
-pub fn setup_logging(home_dir: &PathBuf) -> Result<()> {
+pub fn setup_logging(home_dir: &std::path::Path) -> Result<()> {
     if is_benchmark_mode() {
         // In benchmark mode, log to stdout for visibility
         env_logger::Builder::from_env(env_logger::Env::default().filter_or("RUST_LOG", "info"))
@@ -119,10 +107,7 @@ pub fn setup_logging(home_dir: &PathBuf) -> Result<()> {
             std::fs::create_dir_all(parent)?;
         }
 
-        let log_file = OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&log_file_path)?;
+        let log_file = OpenOptions::new().create(true).append(true).open(&log_file_path)?;
 
         env_logger::Builder::from_env(env_logger::Env::default().filter_or("RUST_LOG", "info"))
             .target(env_logger::Target::Pipe(Box::new(log_file)))
@@ -132,13 +117,13 @@ pub fn setup_logging(home_dir: &PathBuf) -> Result<()> {
     Ok(())
 }
 
-pub fn hash_config_file(config_path: &PathBuf) -> Result<String> {
+pub fn hash_config_file(config_path: &std::path::Path) -> Result<String> {
     let content = std::fs::read(config_path)?;
     let hash = xxh3_64(&content);
-    Ok(format!("{:016x}", hash))
+    Ok(format!("{hash:016x}"))
 }
 
-pub fn get_stored_hash(home_dir: &PathBuf) -> Result<Option<String>> {
+pub fn get_stored_hash(home_dir: &std::path::Path) -> Result<Option<String>> {
     // Get hash from the cache file instead of separate config.hash file
     let cache = load_alias_cache(home_dir)?;
     if cache.hash.is_empty() {
@@ -148,10 +133,10 @@ pub fn get_stored_hash(home_dir: &PathBuf) -> Result<Option<String>> {
     }
 }
 
-pub fn store_hash(hash: &str, _home_dir: &PathBuf) -> Result<()> {
+pub fn store_hash(hash: &str, _home_dir: &std::path::Path) -> Result<()> {
     // Hash is now stored in the cache file itself, so this is a no-op
     // The hash gets stored when we save the cache via sync_cache_with_config
-    debug!("Hash storage is now handled by cache file (hash: {})", hash);
+    debug!("Hash storage is now handled by cache file (hash: {hash})");
     Ok(())
 }
 
@@ -163,17 +148,17 @@ fn check_daemon_health(socket_path: &PathBuf) -> Result<bool> {
         Ok(stream) => {
             // Set a short timeout for the connection
             if let Err(e) = stream.set_read_timeout(Some(std::time::Duration::from_millis(500))) {
-                debug!("⚠️ Failed to set read timeout: {}", e);
+                debug!("⚠️ Failed to set read timeout: {e}");
                 return Ok(false);
             }
             if let Err(e) = stream.set_write_timeout(Some(std::time::Duration::from_millis(500))) {
-                debug!("⚠️ Failed to set write timeout: {}", e);
+                debug!("⚠️ Failed to set write timeout: {e}");
                 return Ok(false);
             }
             stream
         }
         Err(e) => {
-            debug!("⚠️ Failed to connect to daemon socket: {}", e);
+            debug!("⚠️ Failed to connect to daemon socket: {e}");
             return Ok(false);
         }
     };
@@ -188,7 +173,7 @@ fn check_daemon_health(socket_path: &PathBuf) -> Result<bool> {
         });
 
         debug!("📤 Sending health request to daemon");
-        if let Ok(_) = writeln!(stream, "{}", health_request) {
+        if writeln!(stream, "{health_request}").is_ok() {
             let mut reader = BufReader::new(&stream);
             let mut response_line = String::new();
 
@@ -196,17 +181,21 @@ fn check_daemon_health(socket_path: &PathBuf) -> Result<bool> {
                 Ok(_) => {
                     debug!("📥 Received daemon response: {}", response_line.trim());
 
-                    if let Ok(response) = serde_json::from_str::<serde_json::Value>(&response_line.trim()) {
+                    if let Ok(response) = serde_json::from_str::<serde_json::Value>(response_line.trim()) {
                         if let Some(status) = response.get("status").and_then(|s| s.as_str()) {
-                            debug!("🔍 Daemon status parsed: {}", status);
+                            debug!("🔍 Daemon status parsed: {status}");
                             // Parse format: "healthy:COUNT:synced" or "healthy:COUNT:stale"
                             // Must be exactly 3 parts separated by colons
                             let parts: Vec<&str> = status.split(':').collect();
-                            if parts.len() == 3 && parts[0] == "healthy" && parts[1].parse::<u32>().is_ok() && (parts[2] == "synced" || parts[2] == "stale") {
-                                debug!("✅ Daemon is healthy and has config loaded: {}", status);
+                            if parts.len() == 3
+                                && parts[0] == "healthy"
+                                && parts[1].parse::<u32>().is_ok()
+                                && (parts[2] == "synced" || parts[2] == "stale")
+                            {
+                                debug!("✅ Daemon is healthy and has config loaded: {status}");
                                 return Ok(true); // Daemon healthy
                             } else {
-                                debug!("⚠️ Daemon status indicates unhealthy: {}", status);
+                                debug!("⚠️ Daemon status indicates unhealthy: {status}");
                                 return Ok(false); // Daemon unhealthy
                             }
                         } else {
@@ -217,7 +206,7 @@ fn check_daemon_health(socket_path: &PathBuf) -> Result<bool> {
                     }
                 }
                 Err(e) => {
-                    debug!("⚠️ Failed to read daemon response: {}", e);
+                    debug!("⚠️ Failed to read daemon response: {e}");
                 }
             }
         } else {
@@ -230,22 +219,22 @@ fn check_daemon_health(socket_path: &PathBuf) -> Result<bool> {
 }
 
 fn validate_fresh_config_and_store_hash(
-    config_path: &PathBuf,
+    config_path: &std::path::Path,
     current_hash: &str,
-    home_dir: &PathBuf,
+    home_dir: &std::path::Path,
 ) -> Result<i32> {
     // Use the same loader as direct mode for consistency
     let loader = Loader::new();
-    debug!("🔄 Loading fresh config from: {:?}", config_path);
+    debug!("🔄 Loading fresh config from: {config_path:?}");
     match loader.load(config_path) {
         Ok(spec) => {
             debug!("✅ Fresh config loaded successfully");
 
             // Config is valid, store the new hash
             if let Err(e) = store_hash(current_hash, home_dir) {
-                debug!("⚠️ Warning: could not store config hash: {}", e);
+                debug!("⚠️ Warning: could not store config hash: {e}");
             } else {
-                debug!("✅ New config hash stored: {}", current_hash);
+                debug!("✅ New config hash stored: {current_hash}");
             }
 
             // Check if we have any aliases
@@ -260,7 +249,7 @@ fn validate_fresh_config_and_store_hash(
             Ok(0) // All good
         }
         Err(e) => {
-            debug!("❌ Health check failed: config file invalid: {}", e);
+            debug!("❌ Health check failed: config file invalid: {e}");
             debug!("🚨 All health check methods failed - ZLE should not use aka");
             debug!("🎯 Health check result: CONFIG_INVALID (returning 2)");
             Ok(2) // Config file invalid - critical failure
@@ -268,22 +257,22 @@ fn validate_fresh_config_and_store_hash(
     }
 }
 
-pub fn execute_health_check(home_dir: &PathBuf, config_override: &Option<PathBuf>) -> Result<i32> {
+pub fn execute_health_check(home_dir: &std::path::Path, config_override: &Option<PathBuf>) -> Result<i32> {
     debug!("🏥 === HEALTH CHECK START ===");
     debug!("📋 Health check will determine the best processing path");
-    debug!("🔧 Config override: {:?}", config_override);
+    debug!("🔧 Config override: {config_override:?}");
 
     // Step 1: Check if daemon is available and healthy
     debug!("📋 Step 1: Checking daemon health");
     if let Ok(socket_path) = determine_socket_path(home_dir) {
-        debug!("🔌 Daemon socket path: {:?}", socket_path);
+        debug!("🔌 Daemon socket path: {socket_path:?}");
         if socket_path.exists() {
             match check_daemon_health(&socket_path)? {
                 true => {
                     debug!("✅ Daemon is healthy and running");
                     debug!("🎯 Health check result: DAEMON_HEALTHY (returning 0)");
                     return Ok(0); // Daemon healthy - best case
-                },
+                }
                 false => {
                     debug!("❌ Daemon socket exists but daemon is dead - stale socket detected");
                     debug!("🎯 Health check result: STALE_SOCKET (returning 4)");
@@ -291,7 +280,7 @@ pub fn execute_health_check(home_dir: &PathBuf, config_override: &Option<PathBuf
                 }
             }
         } else {
-            debug!("❌ Daemon socket not found at path: {:?}", socket_path);
+            debug!("❌ Daemon socket not found at path: {socket_path:?}");
         }
     } else {
         debug!("❌ Cannot determine daemon socket path");
@@ -303,15 +292,15 @@ pub fn execute_health_check(home_dir: &PathBuf, config_override: &Option<PathBuf
     // Use custom config if provided, otherwise default
     let config_path = match config_override {
         Some(custom_path) => {
-            debug!("🔧 Using custom config path: {:?}", custom_path);
+            debug!("🔧 Using custom config path: {custom_path:?}");
             custom_path.clone()
-        },
+        }
         None => {
             debug!("🔧 Using default config path resolution");
             match get_config_path(home_dir) {
                 Ok(path) => path,
                 Err(e) => {
-                    debug!("❌ Health check failed: config file not found: {}", e);
+                    debug!("❌ Health check failed: config file not found: {e}");
                     debug!("🎯 Health check result: CONFIG_NOT_FOUND (returning 1)");
                     return Ok(1); // Config file not found
                 }
@@ -319,17 +308,17 @@ pub fn execute_health_check(home_dir: &PathBuf, config_override: &Option<PathBuf
         }
     };
 
-    debug!("📄 Final config path for health check: {:?}", config_path);
+    debug!("📄 Final config path for health check: {config_path:?}");
 
     // Step 3: Calculate current config hash
     debug!("📋 Step 3: Calculating current config hash");
     let current_hash = match hash_config_file(&config_path) {
         Ok(hash) => {
-            debug!("✅ Current config hash calculated: {}", hash);
+            debug!("✅ Current config hash calculated: {hash}");
             hash
         }
         Err(e) => {
-            debug!("❌ Health check failed: cannot read config file: {}", e);
+            debug!("❌ Health check failed: cannot read config file: {e}");
             debug!("🎯 Health check result: CONFIG_READ_ERROR (returning 1)");
             return Ok(1); // Cannot read config file
         }
@@ -342,13 +331,13 @@ pub fn execute_health_check(home_dir: &PathBuf, config_override: &Option<PathBuf
 
         match stored_hash {
             Some(stored) => {
-                debug!("🔍 Found stored hash: {}", stored);
+                debug!("🔍 Found stored hash: {stored}");
                 if stored == current_hash {
                     debug!("✅ Hash matches! Config cache is valid, can use direct mode");
                     debug!("🎯 Health check result: CACHE_VALID (returning 0)");
                     return Ok(0);
                 } else {
-                    debug!("⚠️ Hash mismatch: stored={}, current={}", stored, current_hash);
+                    debug!("⚠️ Hash mismatch: stored={stored}, current={current_hash}");
                     debug!("📋 Cache invalid, need fresh config load");
                 }
             }
@@ -368,8 +357,8 @@ pub fn execute_health_check(home_dir: &PathBuf, config_override: &Option<PathBuf
 // Processing mode enum to track daemon vs direct processing
 #[derive(Debug, Clone, Copy)]
 pub enum ProcessingMode {
-    Daemon,  // Processing via daemon (goblin emoji 👹)
-    Direct,  // Processing directly (inbox emoji 📥)
+    Daemon, // Processing via daemon (goblin emoji 👹)
+    Direct, // Processing directly (inbox emoji 📥)
 }
 
 // Sudo wrapping utility functions
@@ -384,7 +373,7 @@ fn is_command_available_to_root(command: &str) -> bool {
     // Use sudo -n (non-interactive) to check root's PATH
     // This is the only reliable way to determine root availability
     std::process::Command::new("sudo")
-        .args(&["-n", "which", command])
+        .args(["-n", "which", command])
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
         .status()
@@ -415,39 +404,42 @@ fn is_user_only_command(command: &str) -> bool {
 fn needs_sudo_wrapping(command: &str) -> bool {
     // Skip if already wrapped (idempotent)
     if is_already_wrapped(command) {
-        debug!("Command already wrapped: {}", command);
+        debug!("Command already wrapped: {command}");
         return false;
     }
 
     // Skip complex commands (contain spaces, pipes, redirects, etc.)
-    if command.contains(' ') || command.contains('|') || command.contains('&')
-       || command.contains('>') || command.contains('<') || command.contains(';') {
-        debug!("Skipping complex command: {}", command);
+    if command.contains(' ')
+        || command.contains('|')
+        || command.contains('&')
+        || command.contains('>')
+        || command.contains('<')
+        || command.contains(';')
+    {
+        debug!("Skipping complex command: {command}");
         return false;
     }
 
     // Only wrap if it's available to user but not root
     let needs_wrapping = is_user_only_command(command);
-    debug!("Command '{}' needs wrapping: {}", command, needs_wrapping);
+    debug!("Command '{command}' needs wrapping: {needs_wrapping}");
     needs_wrapping
 }
 
 /// Check if a command is user-installed and needs environment preservation
 fn is_user_installed_tool(command: &str) -> bool {
-    if let Ok(output) = std::process::Command::new("which")
-        .arg(command)
-        .output()
-    {
+    if let Ok(output) = std::process::Command::new("which").arg(command).output() {
         if output.status.success() {
             let path = String::from_utf8_lossy(&output.stdout);
             let path = path.trim();
 
             // Check if command is in user directories
-            if path.contains("/.cargo/bin/") ||
-               path.contains("/.local/bin/") ||
-               path.contains("/home/") ||
-               path.starts_with(&std::env::var("HOME").unwrap_or_default()) {
-                debug!("Command '{}' at '{}' is user-installed", command, path);
+            if path.contains("/.cargo/bin/")
+                || path.contains("/.local/bin/")
+                || path.contains("/home/")
+                || path.starts_with(&std::env::var("HOME").unwrap_or_default())
+            {
+                debug!("Command '{command}' at '{path}' is user-installed");
                 return true;
             }
         }
@@ -471,7 +463,7 @@ impl AKA {
 
         // Calculate config hash
         let config_hash = hash_config_file(&config_path)?;
-        debug!("🔒 Config hash: {}", config_hash);
+        debug!("🔒 Config hash: {config_hash}");
 
         // Time loader creation and config loading - use same loader as health check
         let start_load = Instant::now();
@@ -497,14 +489,17 @@ impl AKA {
         let default_config_path = get_config_path(&home_dir).unwrap_or_else(|_| PathBuf::new());
 
         debug!("🔍 Config path comparison:");
-        debug!("  📄 Provided config: {:?}", config_path);
-        debug!("  📄 Default config: {:?}", default_config_path);
+        debug!("  📄 Provided config: {config_path:?}");
+        debug!("  📄 Default config: {default_config_path:?}");
         debug!("  ✅ Paths equal: {}", config_path == default_config_path);
 
         if config_path == default_config_path {
             // Using default config, so use cache
             let cache = sync_cache_with_config_path(&home_dir, &config_path)?;
-            debug!("📋 Using cached aliases with usage counts ({} aliases)", cache.aliases.len());
+            debug!(
+                "📋 Using cached aliases with usage counts ({} aliases)",
+                cache.aliases.len()
+            );
             // Log a sample alias count for debugging
             if let Some((name, alias)) = cache.aliases.iter().next() {
                 debug!("📋 Sample alias '{}' has count: {}", name, alias.count);
@@ -512,7 +507,10 @@ impl AKA {
             spec.aliases = cache.aliases;
         } else {
             // Using custom config, skip cache and use config as-is
-            debug!("📋 Using custom config, skipping cache ({} aliases)", spec.aliases.len());
+            debug!(
+                "📋 Using custom config, skipping cache ({} aliases)",
+                spec.aliases.len()
+            );
         }
         let cache_duration = start_cache.elapsed();
 
@@ -523,7 +521,12 @@ impl AKA {
         debug!("  🗃️  Cache handling: {:.3}ms", cache_duration.as_secs_f64() * 1000.0);
         debug!("  🎯 Total time: {:.3}ms", total_duration.as_secs_f64() * 1000.0);
 
-        Ok(AKA { eol, spec, config_hash, home_dir })
+        Ok(AKA {
+            eol,
+            spec,
+            config_hash,
+            home_dir,
+        })
     }
 
     pub fn use_alias(&self, alias: &Alias, pos: usize) -> bool {
@@ -570,7 +573,7 @@ impl AKA {
     }
 
     pub fn replace_with_mode(&mut self, cmdline: &str, mode: ProcessingMode) -> Result<String> {
-        debug!("🔍 STARTING REPLACEMENT: Input command line: '{}'", cmdline);
+        debug!("🔍 STARTING REPLACEMENT: Input command line: '{cmdline}'");
         let mut pos: usize = 0;
         let mut space = " ";
         let mut replaced = false;
@@ -583,7 +586,7 @@ impl AKA {
             return Ok(String::new());
         }
 
-        debug!("🔍 SPLIT ARGS: {:?}", args);
+        debug!("🔍 SPLIT ARGS: {args:?}");
 
         // Check for sudo trigger pattern: command ends with "!" (only when eol=true)
         if self.eol && !args.is_empty() {
@@ -591,7 +594,7 @@ impl AKA {
                 if last_arg == "!" {
                     args.pop(); // Remove the "!"
                     sudo = true;
-                    debug!("🔍 SUDO TRIGGER DETECTED: Removed '!' from args, remaining: {:?}", args);
+                    debug!("🔍 SUDO TRIGGER DETECTED: Removed '!' from args, remaining: {args:?}");
 
                     // If args is now empty (lone "!"), return empty string
                     if args.is_empty() {
@@ -605,7 +608,7 @@ impl AKA {
         if !args.is_empty() && args[0] == "sudo" {
             sudo = true;
             let sudo_part = args.remove(0);
-            debug!("🔍 SUDO DETECTED: Removed '{}' from args, remaining: {:?}", sudo_part, args);
+            debug!("🔍 SUDO DETECTED: Removed '{sudo_part}' from args, remaining: {args:?}");
 
             // Handle sudo with flags (like -E, -i, etc.)
             let mut sudo_flags = Vec::new();
@@ -614,15 +617,16 @@ impl AKA {
             // Collect any sudo flags that come after sudo
             while !args.is_empty() && args[0].starts_with('-') {
                 let flag = args.remove(0);
-                debug!("🔍 SUDO FLAG DETECTED: Removed '{}' from args, remaining: {:?}", flag, args);
+                debug!("🔍 SUDO FLAG DETECTED: Removed '{flag}' from args, remaining: {args:?}");
 
                 // Handle flags that take values (like -u, -g, -C, etc.)
-                let needs_value = flag == "-u" || flag == "-g" || flag == "-C" || flag == "-s" || flag == "-r" || flag == "-t";
+                let needs_value =
+                    flag == "-u" || flag == "-g" || flag == "-C" || flag == "-s" || flag == "-r" || flag == "-t";
                 sudo_flags.push(flag);
 
                 if needs_value && !args.is_empty() && !args[0].starts_with('-') {
                     let value = args.remove(0);
-                    debug!("🔍 SUDO FLAG VALUE DETECTED: Removed '{}' from args, remaining: {:?}", value, args);
+                    debug!("🔍 SUDO FLAG VALUE DETECTED: Removed '{value}' from args, remaining: {args:?}");
                     sudo_flags.push(value);
                 }
             }
@@ -634,26 +638,26 @@ impl AKA {
 
             // Store the sudo flags for later reconstruction
             sudo_prefix = sudo_flags.join(" ");
-            debug!("🔍 SUDO PREFIX: '{}'", sudo_prefix);
+            debug!("🔍 SUDO PREFIX: '{sudo_prefix}'");
         }
 
         while pos < args.len() {
             let current_arg = args[pos].clone();
-            debug!("🔍 PROCESSING ARG[{}]: '{}'", pos, current_arg);
+            debug!("🔍 PROCESSING ARG[{pos}]: '{current_arg}'");
 
             // Perform lookup replacement logic
             if current_arg.starts_with("lookup:") && current_arg.contains("[") && current_arg.ends_with("]") {
                 let parts: Vec<&str> = current_arg.splitn(2, '[').collect();
                 let lookup = parts[0].trim_start_matches("lookup:");
                 let key = parts[1].trim_end_matches("]");
-                debug!("🔍 LOOKUP DETECTED: lookup='{}', key='{}'", lookup, key);
+                debug!("🔍 LOOKUP DETECTED: lookup='{lookup}', key='{key}'");
                 if let Some(replacement) = self.perform_lookup(key, lookup) {
-                    debug!("🔧 LOOKUP REPLACEMENT: '{}' -> '{}'", current_arg, replacement);
+                    debug!("🔧 LOOKUP REPLACEMENT: '{current_arg}' -> '{replacement}'");
                     args[pos] = replacement.clone(); // Replace in args
                     replaced = true;
                     continue; // Reevaluate the current position after replacement
                 } else {
-                    debug!("🔍 LOOKUP FAILED: No replacement found for lookup='{}', key='{}'", lookup, key);
+                    debug!("🔍 LOOKUP FAILED: No replacement found for lookup='{lookup}', key='{key}'");
                 }
             }
 
@@ -663,11 +667,11 @@ impl AKA {
             let should_use_alias = match self.spec.aliases.get(&current_arg) {
                 Some(alias) => {
                     let should_use = self.use_alias(alias, pos);
-                    debug!("🔍 ALIAS CHECK: '{}' -> should_use={}", current_arg, should_use);
+                    debug!("🔍 ALIAS CHECK: '{current_arg}' -> should_use={should_use}");
                     should_use
                 }
                 None => {
-                    debug!("🔍 NO ALIAS: '{}' not found in aliases", current_arg);
+                    debug!("🔍 NO ALIAS: '{current_arg}' not found in aliases");
                     false
                 }
             };
@@ -678,7 +682,15 @@ impl AKA {
                 // Now we can safely get mutable reference
                 if let Some(alias) = self.spec.aliases.get_mut(&current_arg) {
                     debug!("🔍 PROCESSING ALIAS: '{}' -> '{}'", current_arg, alias.value);
-                    Self::process_alias_replacement(alias, &current_arg, cmdline, &mut remainders, pos, &aliases_for_interpolation, self.eol)?
+                    Self::process_alias_replacement(
+                        alias,
+                        &current_arg,
+                        cmdline,
+                        &mut remainders,
+                        pos,
+                        &aliases_for_interpolation,
+                        self.eol,
+                    )?
                 } else {
                     (current_arg.clone(), 0, false, " ")
                 }
@@ -687,63 +699,59 @@ impl AKA {
             };
 
             if replaced_alias {
-                debug!("🔧 ALIAS REPLACEMENT: '{}' -> '{}' (count={}, space='{}')", current_arg, value, count, space_str);
+                debug!("🔧 ALIAS REPLACEMENT: '{current_arg}' -> '{value}' (count={count}, space='{space_str}')");
                 replaced = true;
                 // Only update space when we actually replace an alias
                 space = space_str;
             } else {
-                debug!("🔍 NO REPLACEMENT: '{}' unchanged", current_arg);
+                debug!("🔍 NO REPLACEMENT: '{current_arg}' unchanged");
             }
 
             let beg = pos + 1;
             let end = beg + count;
 
             let args_before = args.clone();
-            if space.is_empty() {
-                args.drain(beg..end);
-            } else {
-                args.drain(beg..end);
-            }
+            args.drain(beg..end);
             args.splice(pos..=pos, Self::split_respecting_quotes(&value));
-            debug!("🔍 ARGS UPDATE: {:?} -> {:?}", args_before, args);
+            debug!("🔍 ARGS UPDATE: {args_before:?} -> {args:?}");
             pos += 1;
         }
 
         if sudo {
             let command = args[0].clone();
-            debug!("🔍 SUDO PROCESSING: command='{}'", command);
+            debug!("🔍 SUDO PROCESSING: command='{command}'");
             let args_before_sudo = args.clone();
 
             // Check if we need to wrap the command with $(which)
             if needs_sudo_wrapping(&command) {
                 let old_arg = args[0].clone();
-                args[0] = format!("$(which {})", command);
+                args[0] = format!("$(which {command})");
                 debug!("🔧 SUDO $(which) WRAPPING: '{}' -> '{}'", old_arg, args[0]);
             } else {
-                debug!("🔍 SUDO NO WRAPPING: '{}' does not need $(which) wrapping", command);
+                debug!("🔍 SUDO NO WRAPPING: '{command}' does not need $(which) wrapping");
             }
 
             // For user-installed tools, preserve environment with -E flag
             if is_user_installed_tool(&command) {
-                debug!("🔍 USER-INSTALLED TOOL DETECTED: '{}'", command);
+                debug!("🔍 USER-INSTALLED TOOL DETECTED: '{command}'");
                 // Check if -E flag is not already present
                 if !sudo_prefix.contains("-E") {
-                    sudo_prefix = format!("{} -E", sudo_prefix);
-                    debug!("🔧 ADDED -E FLAG: sudo_prefix now: '{}'", sudo_prefix);
+                    sudo_prefix = format!("{sudo_prefix} -E");
+                    debug!("🔧 ADDED -E FLAG: sudo_prefix now: '{sudo_prefix}'");
                 } else {
-                    debug!("🔧 -E FLAG ALREADY PRESENT: sudo_prefix: '{}'", sudo_prefix);
+                    debug!("🔧 -E FLAG ALREADY PRESENT: sudo_prefix: '{sudo_prefix}'");
                 }
             } else {
-                debug!("🔍 NOT USER-INSTALLED: '{}' is system command", command);
+                debug!("🔍 NOT USER-INSTALLED: '{command}' is system command");
             }
 
             args.insert(0, sudo_prefix);
-            debug!("🔧 ADDED SUDO: args now: {:?}", args);
+            debug!("🔧 ADDED SUDO: args now: {args:?}");
 
             // Interactive tools like rkvr should work properly with the environment preservation
-            debug!("🔍 SUDO PROCESSING COMPLETE: command='{}', replaced={}", command, replaced);
+            debug!("🔍 SUDO PROCESSING COMPLETE: command='{command}', replaced={replaced}");
 
-            debug!("🔧 SUDO TRANSFORMATION: {:?} -> {:?}", args_before_sudo, args);
+            debug!("🔧 SUDO TRANSFORMATION: {args_before_sudo:?} -> {args:?}");
         }
 
         let result = if replaced || sudo {
@@ -752,7 +760,7 @@ impl AKA {
             String::new()
         };
 
-        debug!("🔍 FINAL RESULT: replaced={}, sudo={}, result='{}'", replaced, sudo, result);
+        debug!("🔍 FINAL RESULT: replaced={replaced}, sudo={sudo}, result='{result}'");
 
         if replaced || sudo {
             let emoji = match mode {
@@ -769,7 +777,7 @@ impl AKA {
                     aliases: self.spec.aliases.clone(),
                 };
                 if let Err(e) = save_alias_cache(&cache, &self.home_dir) {
-                    warn!("⚠️ Failed to save alias cache: {}", e);
+                    warn!("⚠️ Failed to save alias cache: {e}");
                 }
             }
         } else {
@@ -788,10 +796,15 @@ impl AKA {
         alias_map: &std::collections::HashMap<String, crate::cfg::alias::Alias>,
         eol: bool,
     ) -> Result<(String, usize, bool, &'static str)> {
-        debug!("🔍 ALIAS REPLACEMENT LOGIC: alias='{}', current_arg='{}', pos={}, global={}",
-               alias.name, current_arg, pos, alias.global);
-        debug!("🔍 ALIAS DETAILS: value='{}', space={}, cmdline='{}'", alias.value, alias.space, cmdline);
-        debug!("🔍 REMAINDERS: {:?}", remainders);
+        debug!(
+            "🔍 ALIAS REPLACEMENT LOGIC: alias='{}', current_arg='{}', pos={}, global={}",
+            alias.name, current_arg, pos, alias.global
+        );
+        debug!(
+            "🔍 ALIAS DETAILS: value='{}', space={}, cmdline='{}'",
+            alias.value, alias.space, cmdline
+        );
+        debug!("🔍 REMAINDERS: {remainders:?}");
 
         if (alias.global && cmdline.contains(&alias.value))
             || (!alias.global && pos == 0 && cmdline.starts_with(&alias.value))
@@ -801,10 +814,10 @@ impl AKA {
             Ok((current_arg.to_string(), 0, false, space))
         } else {
             let space = if alias.space { " " } else { "" };
-            debug!("🔍 CALLING ALIAS.REPLACE: remainders={:?}", remainders);
+            debug!("🔍 CALLING ALIAS.REPLACE: remainders={remainders:?}");
             let (v, c) = alias.replace(remainders, alias_map, eol)?;
             let replaced = v != alias.name;
-            debug!("🔍 ALIAS.REPLACE RESULT: v='{}', c={}, replaced={}", v, c, replaced);
+            debug!("🔍 ALIAS.REPLACE RESULT: v='{v}', c={c}, replaced={replaced}");
             if replaced {
                 // Increment usage count when alias is actually used
                 alias.count += 1;
@@ -826,15 +839,11 @@ where
     let alias_count = aliases.len();
 
     if aliases.is_empty() {
-        return format!("No aliases found.\n\ncount: 0");
+        return "No aliases found.\n\ncount: 0".to_string();
     }
 
     // Calculate the maximum alias name width for alignment
-    let max_name_width = aliases
-        .iter()
-        .map(|alias| alias.name.len())
-        .max()
-        .unwrap_or(0);
+    let max_name_width = aliases.iter().map(|alias| alias.name.len()).max().unwrap_or(0);
 
     let output = aliases
         .iter()
@@ -851,7 +860,7 @@ where
                 let lines: Vec<&str> = alias.value.split('\n').collect();
                 let mut result = format!("{}{}", prefix, lines[0]);
                 for line in &lines[1..] {
-                    result.push_str(&format!("\n{}{}", indent, line));
+                    result.push_str(&format!("\n{indent}{line}"));
                 }
                 result
             } else {
@@ -861,7 +870,7 @@ where
         .collect::<Vec<_>>()
         .join("\n");
 
-    format!("{}\n\ncount: {}", output, alias_count)
+    format!("{output}\n\ncount: {alias_count}")
 }
 
 /// Create an iterator that filters and sorts aliases based on display criteria
@@ -875,8 +884,7 @@ pub fn prepare_aliases_for_display_iter<'a>(
 ) -> impl Iterator<Item = Alias> + 'a {
     let mut filtered_aliases: Vec<_> = aliases
         .filter(move |alias| !global_only || alias.global)
-        .filter(move |alias| patterns.is_empty() ||
-                patterns.iter().any(|pattern| alias.name.starts_with(pattern)))
+        .filter(move |alias| patterns.is_empty() || patterns.iter().any(|pattern| alias.name.starts_with(pattern)))
         .filter(move |alias| !show_counts || show_all || alias.count > 0)
         .cloned()
         .collect();
@@ -915,7 +923,7 @@ pub fn get_alias_names_for_completion(aka: &AKA) -> Vec<String> {
 }
 
 // Utility function to determine socket path for daemon
-pub fn determine_socket_path(home_dir: &PathBuf) -> Result<PathBuf> {
+pub fn determine_socket_path(home_dir: &std::path::Path) -> Result<PathBuf> {
     // Try XDG_RUNTIME_DIR first
     if let Ok(runtime_dir) = std::env::var("XDG_RUNTIME_DIR") {
         let path = PathBuf::from(runtime_dir).join("aka").join("daemon.sock");
@@ -926,7 +934,7 @@ pub fn determine_socket_path(home_dir: &PathBuf) -> Result<PathBuf> {
     Ok(home_dir.join(".local/share/aka/daemon.sock"))
 }
 
-pub fn get_alias_cache_path(home_dir: &PathBuf) -> Result<PathBuf> {
+pub fn get_alias_cache_path(home_dir: &std::path::Path) -> Result<PathBuf> {
     // Check if custom cache directory is specified via environment variable
     let data_dir = if let Ok(custom_cache_dir) = std::env::var("AKA_CACHE_DIR") {
         PathBuf::from(custom_cache_dir)
@@ -958,20 +966,20 @@ pub fn get_alias_cache_path_with_base(base_dir: Option<&PathBuf>) -> Result<Path
     Ok(data_dir.join("aka.json"))
 }
 
-pub fn calculate_config_hash(home_dir: &PathBuf) -> Result<String> {
+pub fn calculate_config_hash(home_dir: &std::path::Path) -> Result<String> {
     let config_path = get_config_path(home_dir)?;
     hash_config_file(&config_path)
 }
 
-pub fn load_alias_cache(home_dir: &PathBuf) -> Result<AliasCache> {
+pub fn load_alias_cache(home_dir: &std::path::Path) -> Result<AliasCache> {
     let cache_path = get_alias_cache_path(home_dir)?;
 
     if !cache_path.exists() {
-        debug!("Cache file doesn't exist: {:?}, returning default", cache_path);
+        debug!("Cache file doesn't exist: {cache_path:?}, returning default");
         return Ok(AliasCache::default());
     }
 
-    debug!("Loading alias cache from: {:?}", cache_path);
+    debug!("Loading alias cache from: {cache_path:?}");
     let content = std::fs::read_to_string(&cache_path)?;
     let mut cache: AliasCache = serde_json::from_str(&content)?;
 
@@ -982,7 +990,11 @@ pub fn load_alias_cache(home_dir: &PathBuf) -> Result<AliasCache> {
         }
     }
 
-    debug!("Loaded {} aliases from cache with hash: {}", cache.aliases.len(), cache.hash);
+    debug!(
+        "Loaded {} aliases from cache with hash: {}",
+        cache.aliases.len(),
+        cache.hash
+    );
     Ok(cache)
 }
 
@@ -990,11 +1002,11 @@ pub fn load_alias_cache_with_base(base_dir: Option<&PathBuf>) -> Result<AliasCac
     let cache_path = get_alias_cache_path_with_base(base_dir)?;
 
     if !cache_path.exists() {
-        debug!("Cache file doesn't exist: {:?}, returning default", cache_path);
+        debug!("Cache file doesn't exist: {cache_path:?}, returning default");
         return Ok(AliasCache::default());
     }
 
-    debug!("Loading alias cache from: {:?}", cache_path);
+    debug!("Loading alias cache from: {cache_path:?}");
     let content = std::fs::read_to_string(&cache_path)?;
     let mut cache: AliasCache = serde_json::from_str(&content)?;
 
@@ -1005,11 +1017,15 @@ pub fn load_alias_cache_with_base(base_dir: Option<&PathBuf>) -> Result<AliasCac
         }
     }
 
-    debug!("Loaded {} aliases from cache with hash: {}", cache.aliases.len(), cache.hash);
+    debug!(
+        "Loaded {} aliases from cache with hash: {}",
+        cache.aliases.len(),
+        cache.hash
+    );
     Ok(cache)
 }
 
-pub fn save_alias_cache(cache: &AliasCache, home_dir: &PathBuf) -> Result<()> {
+pub fn save_alias_cache(cache: &AliasCache, home_dir: &std::path::Path) -> Result<()> {
     let cache_path = get_alias_cache_path(home_dir)?;
 
     let content = serde_json::to_string_pretty(cache)?;
@@ -1019,7 +1035,7 @@ pub fn save_alias_cache(cache: &AliasCache, home_dir: &PathBuf) -> Result<()> {
     std::fs::write(&temp_path, content)?;
     std::fs::rename(&temp_path, &cache_path)?;
 
-    debug!("Saved alias cache to: {:?}", cache_path);
+    debug!("Saved alias cache to: {cache_path:?}");
     Ok(())
 }
 
@@ -1033,11 +1049,11 @@ pub fn save_alias_cache_with_base(cache: &AliasCache, base_dir: Option<&PathBuf>
     std::fs::write(&temp_path, content)?;
     std::fs::rename(&temp_path, &cache_path)?;
 
-    debug!("Saved alias cache to: {:?}", cache_path);
+    debug!("Saved alias cache to: {cache_path:?}");
     Ok(())
 }
 
-pub fn sync_cache_with_config(home_dir: &PathBuf) -> Result<AliasCache> {
+pub fn sync_cache_with_config(home_dir: &std::path::Path) -> Result<AliasCache> {
     // 1. Calculate current YAML hash
     let current_hash = calculate_config_hash(home_dir)?;
 
@@ -1056,7 +1072,7 @@ pub fn sync_cache_with_config(home_dir: &PathBuf) -> Result<AliasCache> {
     Ok(cache)
 }
 
-pub fn sync_cache_with_config_path(home_dir: &PathBuf, config_path: &PathBuf) -> Result<AliasCache> {
+pub fn sync_cache_with_config_path(home_dir: &std::path::Path, config_path: &std::path::Path) -> Result<AliasCache> {
     // 1. Calculate current YAML hash from the specific config file
     let current_hash = hash_config_file(config_path)?;
 
@@ -1078,7 +1094,7 @@ pub fn sync_cache_with_config_path(home_dir: &PathBuf, config_path: &PathBuf) ->
 pub fn merge_cache_with_config(
     old_cache: AliasCache,
     new_hash: String,
-    home_dir: &PathBuf
+    home_dir: &std::path::Path,
 ) -> Result<AliasCache> {
     // 1. Load new config from YAML
     let config_path = get_config_path(home_dir)?;
@@ -1106,7 +1122,7 @@ pub fn merge_cache_with_config(
 pub fn merge_cache_with_config_path(
     old_cache: AliasCache,
     new_hash: String,
-    config_path: &PathBuf
+    config_path: &std::path::Path,
 ) -> Result<AliasCache> {
     // 1. Load new config from the specific YAML file
     let loader = Loader::new();
@@ -1130,14 +1146,12 @@ pub fn merge_cache_with_config_path(
     Ok(new_cache)
 }
 
-
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use cfg::spec::Defaults;
     use std::collections::HashMap;
     use std::path::PathBuf;
-    use cfg::spec::Defaults;
 
     fn create_test_aka_with_aliases(aliases: HashMap<String, Alias>) -> AKA {
         let spec = Spec {
@@ -1147,7 +1161,7 @@ mod tests {
         };
 
         AKA {
-            eol: true,  // Enable eol mode for variadic aliases
+            eol: true, // Enable eol mode for variadic aliases
             spec,
             config_hash: "test_hash".to_string(),
             home_dir: std::env::temp_dir(),
@@ -1157,13 +1171,16 @@ mod tests {
     #[test]
     fn test_alias_with_space_true() {
         let mut aliases = HashMap::new();
-        aliases.insert("ls".to_string(), Alias {
-            name: "ls".to_string(),
-            value: "eza".to_string(),
-            space: true,
-            global: false,
-            count: 0,
-        });
+        aliases.insert(
+            "ls".to_string(),
+            Alias {
+                name: "ls".to_string(),
+                value: "eza".to_string(),
+                space: true,
+                global: false,
+                count: 0,
+            },
+        );
 
         let mut aka = create_test_aka_with_aliases(aliases);
         let result = aka.replace("ls").unwrap();
@@ -1175,13 +1192,16 @@ mod tests {
     #[test]
     fn test_alias_with_space_false() {
         let mut aliases = HashMap::new();
-        aliases.insert("gc".to_string(), Alias {
-            name: "gc".to_string(),
-            value: "git commit -m\"".to_string(),
-            space: false,
-            global: false,
-            count: 0,
-        });
+        aliases.insert(
+            "gc".to_string(),
+            Alias {
+                name: "gc".to_string(),
+                value: "git commit -m\"".to_string(),
+                space: false,
+                global: false,
+                count: 0,
+            },
+        );
 
         let mut aka = create_test_aka_with_aliases(aliases);
         let result = aka.replace("gc").unwrap();
@@ -1193,13 +1213,16 @@ mod tests {
     #[test]
     fn test_alias_with_space_false_complex() {
         let mut aliases = HashMap::new();
-        aliases.insert("ping10".to_string(), Alias {
-            name: "ping10".to_string(),
-            value: "ping 10.10.10.".to_string(),
-            space: false,
-            global: false,
-            count: 0,
-        });
+        aliases.insert(
+            "ping10".to_string(),
+            Alias {
+                name: "ping10".to_string(),
+                value: "ping 10.10.10.".to_string(),
+                space: false,
+                global: false,
+                count: 0,
+            },
+        );
 
         let mut aka = create_test_aka_with_aliases(aliases);
         let result = aka.replace("ping10").unwrap();
@@ -1211,20 +1234,26 @@ mod tests {
     #[test]
     fn test_multiple_aliases_space_preserved() {
         let mut aliases = HashMap::new();
-        aliases.insert("gc".to_string(), Alias {
-            name: "gc".to_string(),
-            value: "git commit -m\"".to_string(),
-            space: false,
-            global: false,
-            count: 0,
-        });
-        aliases.insert("ls".to_string(), Alias {
-            name: "ls".to_string(),
-            value: "eza".to_string(),
-            space: true,
-            global: false,
-            count: 0,
-        });
+        aliases.insert(
+            "gc".to_string(),
+            Alias {
+                name: "gc".to_string(),
+                value: "git commit -m\"".to_string(),
+                space: false,
+                global: false,
+                count: 0,
+            },
+        );
+        aliases.insert(
+            "ls".to_string(),
+            Alias {
+                name: "ls".to_string(),
+                value: "eza".to_string(),
+                space: true,
+                global: false,
+                count: 0,
+            },
+        );
 
         let mut aka = create_test_aka_with_aliases(aliases);
 
@@ -1240,13 +1269,16 @@ mod tests {
     #[test]
     fn test_alias_with_arguments_space_false() {
         let mut aliases = HashMap::new();
-        aliases.insert("gc".to_string(), Alias {
-            name: "gc".to_string(),
-            value: "git commit -m\"".to_string(),
-            space: false,
-            global: false,
-            count: 0,
-        });
+        aliases.insert(
+            "gc".to_string(),
+            Alias {
+                name: "gc".to_string(),
+                value: "git commit -m\"".to_string(),
+                space: false,
+                global: false,
+                count: 0,
+            },
+        );
 
         let mut aka = create_test_aka_with_aliases(aliases);
         let result = aka.replace("gc some message").unwrap();
@@ -1258,13 +1290,16 @@ mod tests {
     #[test]
     fn test_alias_with_arguments_space_true() {
         let mut aliases = HashMap::new();
-        aliases.insert("ls".to_string(), Alias {
-            name: "ls".to_string(),
-            value: "eza".to_string(),
-            space: true,
-            global: false,
-            count: 0,
-        });
+        aliases.insert(
+            "ls".to_string(),
+            Alias {
+                name: "ls".to_string(),
+                value: "eza".to_string(),
+                space: true,
+                global: false,
+                count: 0,
+            },
+        );
 
         let mut aka = create_test_aka_with_aliases(aliases);
         let result = aka.replace("ls -la").unwrap();
@@ -1287,13 +1322,16 @@ mod tests {
     #[test]
     fn test_variadic_alias_space_false() {
         let mut aliases = HashMap::new();
-        aliases.insert("echo_all".to_string(), Alias {
-            name: "echo_all".to_string(),
-            value: "echo $@".to_string(),
-            space: false,
-            global: false,
-            count: 0,
-        });
+        aliases.insert(
+            "echo_all".to_string(),
+            Alias {
+                name: "echo_all".to_string(),
+                value: "echo $@".to_string(),
+                space: false,
+                global: false,
+                count: 0,
+            },
+        );
 
         let mut aka = create_test_aka_with_aliases(aliases);
         let result = aka.replace("echo_all hello world").unwrap();
@@ -1305,13 +1343,16 @@ mod tests {
     #[test]
     fn test_variadic_alias_space_true() {
         let mut aliases = HashMap::new();
-        aliases.insert("echo_all".to_string(), Alias {
-            name: "echo_all".to_string(),
-            value: "echo $@".to_string(),
-            space: true,
-            global: false,
-            count: 0,
-        });
+        aliases.insert(
+            "echo_all".to_string(),
+            Alias {
+                name: "echo_all".to_string(),
+                value: "echo $@".to_string(),
+                space: true,
+                global: false,
+                count: 0,
+            },
+        );
 
         let mut aka = create_test_aka_with_aliases(aliases);
         let result = aka.replace("echo_all hello world").unwrap();
@@ -1323,13 +1364,16 @@ mod tests {
     #[test]
     fn test_positional_alias_space_false() {
         let mut aliases = HashMap::new();
-        aliases.insert("greet".to_string(), Alias {
-            name: "greet".to_string(),
-            value: "echo Hello $1".to_string(),
-            space: false,
-            global: false,
-            count: 0,
-        });
+        aliases.insert(
+            "greet".to_string(),
+            Alias {
+                name: "greet".to_string(),
+                value: "echo Hello $1".to_string(),
+                space: false,
+                global: false,
+                count: 0,
+            },
+        );
 
         let mut aka = create_test_aka_with_aliases(aliases);
         let result = aka.replace("greet World").unwrap();
@@ -1341,13 +1385,16 @@ mod tests {
     #[test]
     fn test_positional_alias_space_true() {
         let mut aliases = HashMap::new();
-        aliases.insert("greet".to_string(), Alias {
-            name: "greet".to_string(),
-            value: "echo Hello $1".to_string(),
-            space: true,
-            global: false,
-            count: 0,
-        });
+        aliases.insert(
+            "greet".to_string(),
+            Alias {
+                name: "greet".to_string(),
+                value: "echo Hello $1".to_string(),
+                space: true,
+                global: false,
+                count: 0,
+            },
+        );
 
         let mut aka = create_test_aka_with_aliases(aliases);
         let result = aka.replace("greet World").unwrap();
@@ -1369,8 +1416,6 @@ mod tests {
         assert!(!is_already_wrapped("$(which "));
         assert!(!is_already_wrapped(" which ls)"));
     }
-
-
 
     #[test]
     fn test_needs_sudo_wrapping_already_wrapped() {
@@ -1395,13 +1440,16 @@ mod tests {
     #[test]
     fn test_sudo_wrapping_idempotent() {
         let mut aliases = HashMap::new();
-        aliases.insert("ls".to_string(), Alias {
-            name: "ls".to_string(),
-            value: "eza".to_string(),
-            space: true,
-            global: false,
-            count: 0,
-        });
+        aliases.insert(
+            "ls".to_string(),
+            Alias {
+                name: "ls".to_string(),
+                value: "eza".to_string(),
+                space: true,
+                global: false,
+                count: 0,
+            },
+        );
 
         let mut aka = create_test_aka_with_aliases(aliases);
 
@@ -1409,7 +1457,7 @@ mod tests {
         let result1 = aka.replace("sudo ls").unwrap();
 
         // Second application should be idempotent
-        let result2 = aka.replace(&result1.trim()).unwrap();
+        let result2 = aka.replace(result1.trim()).unwrap();
 
         // Should not double-wrap
         assert!(!result2.contains("$(which $(which"));
@@ -1433,8 +1481,10 @@ mod tests {
             let result = aka.replace(cmd).unwrap();
             // Should not contain $(which) wrapping for system commands
             // Note: The actual behavior depends on system state, but should not double-wrap
-            assert!(!result.contains("$(which $(which"),
-                   "Should not double-wrap system command: {}", result);
+            assert!(
+                !result.contains("$(which $(which"),
+                "Should not double-wrap system command: {result}"
+            );
         }
     }
 
@@ -1444,38 +1494,45 @@ mod tests {
         let mut aka = create_test_aka_with_aliases(aliases);
 
         // Test with commands that definitely don't exist
-        let nonexistent_commands = vec![
-            "sudo nonexistent_command_12345",
-            "sudo fake_binary_xyz",
-        ];
+        let nonexistent_commands = vec!["sudo nonexistent_command_12345", "sudo fake_binary_xyz"];
 
         for cmd in nonexistent_commands {
             let result = aka.replace(cmd).unwrap();
             // Should not wrap commands that don't exist for the user
-            assert!(!result.contains("$(which nonexistent"),
-                   "Should not wrap nonexistent command: {}", result);
-            assert!(!result.contains("$(which fake_binary"),
-                   "Should not wrap nonexistent command: {}", result);
+            assert!(
+                !result.contains("$(which nonexistent"),
+                "Should not wrap nonexistent command: {result}"
+            );
+            assert!(
+                !result.contains("$(which fake_binary"),
+                "Should not wrap nonexistent command: {result}"
+            );
         }
     }
 
     #[test]
     fn test_sudo_wrapping_with_aliases() {
         let mut aliases = HashMap::new();
-        aliases.insert("ls".to_string(), Alias {
-            name: "ls".to_string(),
-            value: "eza -la".to_string(),
-            space: true,
-            global: false,
-            count: 0,
-        });
-        aliases.insert("cat".to_string(), Alias {
-            name: "cat".to_string(),
-            value: "bat -p".to_string(),
-            space: true,
-            global: false,
-            count: 0,
-        });
+        aliases.insert(
+            "ls".to_string(),
+            Alias {
+                name: "ls".to_string(),
+                value: "eza -la".to_string(),
+                space: true,
+                global: false,
+                count: 0,
+            },
+        );
+        aliases.insert(
+            "cat".to_string(),
+            Alias {
+                name: "cat".to_string(),
+                value: "bat -p".to_string(),
+                space: true,
+                global: false,
+                count: 0,
+            },
+        );
 
         let mut aka = create_test_aka_with_aliases(aliases);
 
@@ -1505,25 +1562,28 @@ mod tests {
         // Edge cases
         let edge_cases = vec![
             ("sudo", "sudo "),  // Just sudo
-            ("sudo ", "sudo "),  // Sudo with space
+            ("sudo ", "sudo "), // Sudo with space
         ];
 
         for (input, expected) in edge_cases {
             let result = aka.replace(input).unwrap();
-            assert_eq!(result, expected, "Edge case '{}' failed", input);
+            assert_eq!(result, expected, "Edge case '{input}' failed");
         }
     }
 
     #[test]
     fn test_sudo_wrapping_preserves_arguments() {
         let mut aliases = HashMap::new();
-        aliases.insert("ls".to_string(), Alias {
-            name: "ls".to_string(),
-            value: "eza".to_string(),
-            space: true,
-            global: false,
-            count: 0,
-        });
+        aliases.insert(
+            "ls".to_string(),
+            Alias {
+                name: "ls".to_string(),
+                value: "eza".to_string(),
+                space: true,
+                global: false,
+                count: 0,
+            },
+        );
 
         let mut aka = create_test_aka_with_aliases(aliases);
 
@@ -1543,27 +1603,36 @@ mod tests {
     #[test]
     fn test_get_alias_names_for_completion() {
         let mut aliases = HashMap::new();
-        aliases.insert("zz".to_string(), Alias {
-            name: "zz".to_string(),
-            value: "eza -la".to_string(),
-            space: true,
-            global: false,
-            count: 0,
-        });
-        aliases.insert("cat".to_string(), Alias {
-            name: "cat".to_string(),
-            value: "bat -p".to_string(),
-            space: true,
-            global: false,
-            count: 0,
-        });
-        aliases.insert("ls".to_string(), Alias {
-            name: "ls".to_string(),
-            value: "eza".to_string(),
-            space: true,
-            global: false,
-            count: 0,
-        });
+        aliases.insert(
+            "zz".to_string(),
+            Alias {
+                name: "zz".to_string(),
+                value: "eza -la".to_string(),
+                space: true,
+                global: false,
+                count: 0,
+            },
+        );
+        aliases.insert(
+            "cat".to_string(),
+            Alias {
+                name: "cat".to_string(),
+                value: "bat -p".to_string(),
+                space: true,
+                global: false,
+                count: 0,
+            },
+        );
+        aliases.insert(
+            "ls".to_string(),
+            Alias {
+                name: "ls".to_string(),
+                value: "eza".to_string(),
+                space: true,
+                global: false,
+                count: 0,
+            },
+        );
 
         let aka = create_test_aka_with_aliases(aliases);
         let names = get_alias_names_for_completion(&aka);
@@ -1585,27 +1654,36 @@ mod tests {
     #[test]
     fn test_get_alias_names_for_completion_special_chars() {
         let mut aliases = HashMap::new();
-        aliases.insert("!!".to_string(), Alias {
-            name: "!!".to_string(),
-            value: "sudo !!".to_string(),
-            space: true,
-            global: false,
-            count: 0,
-        });
-        aliases.insert("|c".to_string(), Alias {
-            name: "|c".to_string(),
-            value: "| xclip -sel clip".to_string(),
-            space: true,
-            global: true,
-            count: 0,
-        });
-        aliases.insert("...".to_string(), Alias {
-            name: "...".to_string(),
-            value: "cd ../..".to_string(),
-            space: true,
-            global: false,
-            count: 0,
-        });
+        aliases.insert(
+            "!!".to_string(),
+            Alias {
+                name: "!!".to_string(),
+                value: "sudo !!".to_string(),
+                space: true,
+                global: false,
+                count: 0,
+            },
+        );
+        aliases.insert(
+            "|c".to_string(),
+            Alias {
+                name: "|c".to_string(),
+                value: "| xclip -sel clip".to_string(),
+                space: true,
+                global: true,
+                count: 0,
+            },
+        );
+        aliases.insert(
+            "...".to_string(),
+            Alias {
+                name: "...".to_string(),
+                value: "cd ../..".to_string(),
+                space: true,
+                global: false,
+                count: 0,
+            },
+        );
 
         let aka = create_test_aka_with_aliases(aliases);
         let names = get_alias_names_for_completion(&aka);
@@ -1617,28 +1695,34 @@ mod tests {
     #[test]
     fn test_sudo_trigger_comprehensive() {
         let mut aliases = HashMap::new();
-        aliases.insert("ls".to_string(), Alias {
-            name: "ls".to_string(),
-            value: "eza".to_string(),
-            space: true,
-            global: false,
-            count: 0,
-        });
+        aliases.insert(
+            "ls".to_string(),
+            Alias {
+                name: "ls".to_string(),
+                value: "eza".to_string(),
+                space: true,
+                global: false,
+                count: 0,
+            },
+        );
 
         // Test with eol=true (should work)
         let mut aka_eol = create_test_aka_with_aliases(aliases.clone());
         aka_eol.eol = true;
 
         let result = aka_eol.replace("touch file !").unwrap();
-        assert!(result.starts_with("sudo"), "Should start with sudo: {}", result);
-        assert!(result.contains("touch file"), "Should contain original command: {}", result);
-        assert!(!result.contains("!"), "Should not contain exclamation mark: {}", result);
+        assert!(result.starts_with("sudo"), "Should start with sudo: {result}");
+        assert!(
+            result.contains("touch file"),
+            "Should contain original command: {result}"
+        );
+        assert!(!result.contains("!"), "Should not contain exclamation mark: {result}");
 
         // Test with alias expansion
         let result = aka_eol.replace("ls !").unwrap();
-        assert!(result.starts_with("sudo"), "Should start with sudo: {}", result);
-        assert!(result.contains("eza"), "Should expand alias: {}", result);
-        assert!(!result.contains("!"), "Should not contain exclamation mark: {}", result);
+        assert!(result.starts_with("sudo"), "Should start with sudo: {result}");
+        assert!(result.contains("eza"), "Should expand alias: {result}");
+        assert!(!result.contains("!"), "Should not contain exclamation mark: {result}");
 
         // Test with eol=false (should NOT work)
         let mut aka_no_eol = create_test_aka_with_aliases(aliases);
@@ -1660,9 +1744,12 @@ mod tests {
 
         // Test with quoted arguments
         let result = aka.replace("echo \"test\" !").unwrap();
-        assert!(result.starts_with("sudo"), "Should work with quoted arguments: {}", result);
-        assert!(result.contains("echo \"test\""), "Should preserve quotes: {}", result);
-        assert!(!result.contains("!"), "Should not contain exclamation mark: {}", result);
+        assert!(
+            result.starts_with("sudo"),
+            "Should work with quoted arguments: {result}"
+        );
+        assert!(result.contains("echo \"test\""), "Should preserve quotes: {result}");
+        assert!(!result.contains("!"), "Should not contain exclamation mark: {result}");
 
         // Test lone exclamation mark (should be ignored)
         let result = aka.replace("!").unwrap();
@@ -1670,8 +1757,14 @@ mod tests {
 
         // Test multiple exclamation marks (only last one should matter)
         let result = aka.replace("echo ! test !").unwrap();
-        assert!(result.starts_with("sudo"), "Should trigger sudo with trailing exclamation: {}", result);
-        assert!(result.contains("echo ! test"), "Should preserve earlier exclamation marks: {}", result);
+        assert!(
+            result.starts_with("sudo"),
+            "Should trigger sudo with trailing exclamation: {result}"
+        );
+        assert!(
+            result.contains("echo ! test"),
+            "Should preserve earlier exclamation marks: {result}"
+        );
         assert!(!result.ends_with("!"), "Should not end with exclamation mark");
     }
 
@@ -1705,7 +1798,6 @@ mod tests {
     // High Priority Tests: Configuration Path Resolution Edge Cases
     #[test]
     fn test_get_config_path_nonexistent_home() {
-
         // Test with a non-existent home directory
         let fake_home = PathBuf::from("/nonexistent/fake/home");
         let result = get_config_path(&fake_home);
@@ -1716,8 +1808,8 @@ mod tests {
 
     #[test]
     fn test_get_config_path_multiple_config_locations() {
-        use tempfile::TempDir;
         use std::fs;
+        use tempfile::TempDir;
 
         // Create temporary directory structure
         let temp_dir = TempDir::new().unwrap();
@@ -1743,8 +1835,8 @@ mod tests {
 
     #[test]
     fn test_get_config_path_yaml_vs_yml_precedence() {
-        use tempfile::TempDir;
         use std::fs;
+        use tempfile::TempDir;
 
         let temp_dir = TempDir::new().unwrap();
         let home_path = temp_dir.path();
@@ -1766,8 +1858,8 @@ mod tests {
 
     #[test]
     fn test_get_config_path_fallback_to_home_directory() {
-        use tempfile::TempDir;
         use std::fs;
+        use tempfile::TempDir;
 
         let temp_dir = TempDir::new().unwrap();
         let home_path = temp_dir.path();
@@ -1782,8 +1874,8 @@ mod tests {
 
     #[test]
     fn test_get_config_path_hidden_file_precedence() {
-        use tempfile::TempDir;
         use std::fs;
+        use tempfile::TempDir;
 
         let temp_dir = TempDir::new().unwrap();
         let home_path = temp_dir.path();
@@ -1804,7 +1896,6 @@ mod tests {
     // High Priority Tests: Cache File I/O Error Scenarios
     #[test]
     fn test_load_cache_nonexistent_home_directory() {
-
         let fake_home = PathBuf::from("/nonexistent/fake/home");
         let result = load_alias_cache(&fake_home);
 
@@ -1814,7 +1905,7 @@ mod tests {
             Ok(cache) => {
                 assert!(cache.aliases.is_empty());
                 assert!(!cache.hash.is_empty()); // Should have some hash
-            },
+            }
             Err(_) => {
                 // Expected error for non-existent directory - this is also valid
             }
@@ -1857,20 +1948,26 @@ mod tests {
     fn test_alias_replacement_with_circular_reference_detection() {
         let mut aliases = HashMap::new();
         // Create potential circular reference: a -> b -> a
-        aliases.insert("a".to_string(), Alias {
-            name: "a".to_string(),
-            value: "b".to_string(),
-            space: false,
-            global: false,
-            count: 0,
-        });
-        aliases.insert("b".to_string(), Alias {
-            name: "b".to_string(),
-            value: "a".to_string(),
-            space: false,
-            global: false,
-            count: 0,
-        });
+        aliases.insert(
+            "a".to_string(),
+            Alias {
+                name: "a".to_string(),
+                value: "b".to_string(),
+                space: false,
+                global: false,
+                count: 0,
+            },
+        );
+        aliases.insert(
+            "b".to_string(),
+            Alias {
+                name: "b".to_string(),
+                value: "a".to_string(),
+                space: false,
+                global: false,
+                count: 0,
+            },
+        );
 
         let mut aka = create_test_aka_with_aliases(aliases);
 
@@ -1883,13 +1980,16 @@ mod tests {
     #[test]
     fn test_alias_replacement_with_empty_command() {
         let mut aliases = HashMap::new();
-        aliases.insert("ls".to_string(), Alias {
-            name: "ls".to_string(),
-            value: "eza".to_string(),
-            space: true,
-            global: false,
-            count: 0,
-        });
+        aliases.insert(
+            "ls".to_string(),
+            Alias {
+                name: "ls".to_string(),
+                value: "eza".to_string(),
+                space: true,
+                global: false,
+                count: 0,
+            },
+        );
         let mut aka = create_test_aka_with_aliases(aliases);
 
         // Test empty command
@@ -1905,27 +2005,36 @@ mod tests {
     fn test_alias_replacement_with_special_characters() {
         let mut aliases = HashMap::new();
         // Create aliases with special characters
-        aliases.insert("@test".to_string(), Alias {
-            name: "@test".to_string(),
-            value: "echo at-test".to_string(),
-            space: false,
-            global: false,
-            count: 0,
-        });
-        aliases.insert("test#".to_string(), Alias {
-            name: "test#".to_string(),
-            value: "echo hash-test".to_string(),
-            space: false,
-            global: false,
-            count: 0,
-        });
-        aliases.insert("test$var".to_string(), Alias {
-            name: "test$var".to_string(),
-            value: "echo dollar-test".to_string(),
-            space: false,
-            global: false,
-            count: 0,
-        });
+        aliases.insert(
+            "@test".to_string(),
+            Alias {
+                name: "@test".to_string(),
+                value: "echo at-test".to_string(),
+                space: false,
+                global: false,
+                count: 0,
+            },
+        );
+        aliases.insert(
+            "test#".to_string(),
+            Alias {
+                name: "test#".to_string(),
+                value: "echo hash-test".to_string(),
+                space: false,
+                global: false,
+                count: 0,
+            },
+        );
+        aliases.insert(
+            "test$var".to_string(),
+            Alias {
+                name: "test$var".to_string(),
+                value: "echo dollar-test".to_string(),
+                space: false,
+                global: false,
+                count: 0,
+            },
+        );
 
         let mut aka = create_test_aka_with_aliases(aliases);
 
@@ -1943,13 +2052,16 @@ mod tests {
     #[test]
     fn test_alias_replacement_preserves_multiple_spaces() {
         let mut aliases = HashMap::new();
-        aliases.insert("ls".to_string(), Alias {
-            name: "ls".to_string(),
-            value: "eza".to_string(),
-            space: true,
-            global: false,
-            count: 0,
-        });
+        aliases.insert(
+            "ls".to_string(),
+            Alias {
+                name: "ls".to_string(),
+                value: "eza".to_string(),
+                space: true,
+                global: false,
+                count: 0,
+            },
+        );
         let mut aka = create_test_aka_with_aliases(aliases);
 
         // Test that multiple spaces are preserved
@@ -1963,18 +2075,21 @@ mod tests {
     #[test]
     fn test_alias_replacement_with_very_long_command() {
         let mut aliases = HashMap::new();
-        aliases.insert("ls".to_string(), Alias {
-            name: "ls".to_string(),
-            value: "eza".to_string(),
-            space: true,
-            global: false,
-            count: 0,
-        });
+        aliases.insert(
+            "ls".to_string(),
+            Alias {
+                name: "ls".to_string(),
+                value: "eza".to_string(),
+                space: true,
+                global: false,
+                count: 0,
+            },
+        );
         let mut aka = create_test_aka_with_aliases(aliases);
 
         // Test with very long command line
         let long_args = "a".repeat(1000);
-        let command = format!("ls {}", long_args);
+        let command = format!("ls {long_args}");
         let result = aka.replace(&command).unwrap();
 
         assert!(result.starts_with("eza"));
@@ -2030,7 +2145,6 @@ mod tests {
     // High Priority Tests: Error Handling and Edge Cases
     #[test]
     fn test_setup_logging_with_invalid_directory() {
-
         // Test logging setup with invalid directory
         let fake_home = PathBuf::from("/nonexistent/fake/home");
         let result = setup_logging(&fake_home);
@@ -2042,7 +2156,6 @@ mod tests {
 
     #[test]
     fn test_get_cache_path_with_permission_issues() {
-
         // Test with a path that might have permission issues
         let restricted_path = PathBuf::from("/root");
         let result = get_alias_cache_path(&restricted_path);
@@ -2051,7 +2164,7 @@ mod tests {
         match result {
             Ok(path) => {
                 assert!(path.to_string_lossy().contains("aka"));
-            },
+            }
             Err(_) => {
                 // Expected for permission issues
             }
@@ -2061,27 +2174,36 @@ mod tests {
     #[test]
     fn test_alias_replacement_with_unicode_characters() {
         let mut aliases = HashMap::new();
-        aliases.insert("🚀".to_string(), Alias {
-            name: "🚀".to_string(),
-            value: "echo rocket".to_string(),
-            space: false,
-            global: false,
-            count: 0,
-        });
-        aliases.insert("café".to_string(), Alias {
-            name: "café".to_string(),
-            value: "echo coffee".to_string(),
-            space: false,
-            global: false,
-            count: 0,
-        });
-        aliases.insert("测试".to_string(), Alias {
-            name: "测试".to_string(),
-            value: "echo test".to_string(),
-            space: false,
-            global: false,
-            count: 0,
-        });
+        aliases.insert(
+            "🚀".to_string(),
+            Alias {
+                name: "🚀".to_string(),
+                value: "echo rocket".to_string(),
+                space: false,
+                global: false,
+                count: 0,
+            },
+        );
+        aliases.insert(
+            "café".to_string(),
+            Alias {
+                name: "café".to_string(),
+                value: "echo coffee".to_string(),
+                space: false,
+                global: false,
+                count: 0,
+            },
+        );
+        aliases.insert(
+            "测试".to_string(),
+            Alias {
+                name: "测试".to_string(),
+                value: "echo test".to_string(),
+                space: false,
+                global: false,
+                count: 0,
+            },
+        );
 
         let mut aka = create_test_aka_with_aliases(aliases);
 
@@ -2095,6 +2217,4 @@ mod tests {
         let result = aka.replace("测试").unwrap();
         assert_eq!(result, "echo test");
     }
-
-
 }

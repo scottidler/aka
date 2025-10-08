@@ -1,6 +1,6 @@
 use std::fs;
-use tempfile::TempDir;
 use std::path::PathBuf;
+use tempfile::TempDir;
 
 mod common;
 use common::*;
@@ -47,7 +47,10 @@ fn test_freq_command_basic() {
 
     // By default, should only show used aliases (count > 0)
     // Since all aliases have count 0, should show "No aliases found."
-    assert!(result.stdout.contains("No aliases found."), "Should show 'No aliases found.' when no aliases are used");
+    assert!(
+        result.stdout.contains("No aliases found."),
+        "Should show 'No aliases found.' when no aliases are used"
+    );
 }
 
 #[test]
@@ -72,20 +75,30 @@ fn test_freq_command_with_all_option() {
 
     // Should be formatted with proper spacing
     let lines: Vec<&str> = result.stdout.trim().split('\n').collect();
-    assert_eq!(lines.len(), 6, "Should have 4 aliases + empty line + count line with --all");
+    assert_eq!(
+        lines.len(),
+        6,
+        "Should have 4 aliases + empty line + count line with --all"
+    );
 
     // Check that lines are properly formatted (count alias -> value)
     // Skip the last 2 lines (empty line and count line)
-    for line in &lines[..lines.len()-2] {
+    for line in &lines[..lines.len() - 2] {
         let parts: Vec<&str> = line.split_whitespace().collect();
-        assert!(parts.len() >= 4, "Each line should have at least 4 parts: count, alias, ->, value");
+        assert!(
+            parts.len() >= 4,
+            "Each line should have at least 4 parts: count, alias, ->, value"
+        );
         assert_eq!(parts[0], "0", "Count should be 0 for unused aliases");
         assert_eq!(parts[2], "->", "Should have -> separator");
     }
 
     // Check that the last line is the count line
-    assert!(lines[lines.len()-1].starts_with("count: "), "Last line should be count line");
-    assert!(lines[lines.len()-1].contains("4"), "Count should be 4 for 4 aliases");
+    assert!(
+        lines[lines.len() - 1].starts_with("count: "),
+        "Last line should be count line"
+    );
+    assert!(lines[lines.len() - 1].contains("4"), "Count should be 4 for 4 aliases");
 }
 
 #[test]
@@ -113,7 +126,10 @@ aliases:
 
     // By default, should only show used aliases (count > 0)
     // Since dummy alias has count 0, should show "No aliases found."
-    assert!(result.stdout.contains("No aliases found."), "Should show 'No aliases found.' when no aliases are used");
+    assert!(
+        result.stdout.contains("No aliases found."),
+        "Should show 'No aliases found.' when no aliases are used"
+    );
 }
 
 #[test]
@@ -125,9 +141,15 @@ fn test_freq_command_help() {
     }
 
     // Should contain help information
-    assert!(result.stdout.contains("show alias usage frequency statistics"), "Should contain description");
+    assert!(
+        result.stdout.contains("show alias usage frequency statistics"),
+        "Should contain description"
+    );
     assert!(result.stdout.contains("--all"), "Should contain --all option");
-    assert!(result.stdout.contains("show all aliases including unused ones"), "Should contain --all description");
+    assert!(
+        result.stdout.contains("show all aliases including unused ones"),
+        "Should contain --all description"
+    );
 }
 
 #[test]
@@ -139,8 +161,14 @@ fn test_freq_command_in_main_help() {
     }
 
     // Should contain the freq command in the main help
-    assert!(result.stdout.contains("freq"), "Should contain 'freq' command in main help");
-    assert!(result.stdout.contains("show alias usage frequency statistics"), "Should contain freq description");
+    assert!(
+        result.stdout.contains("freq"),
+        "Should contain 'freq' command in main help"
+    );
+    assert!(
+        result.stdout.contains("show alias usage frequency statistics"),
+        "Should contain freq description"
+    );
 }
 
 #[test]
@@ -177,7 +205,11 @@ aliases:
         let output = cmd.output().expect("Failed to run aka command");
 
         if !output.status.success() {
-            panic!("aka query failed on iteration {}: {}", i, String::from_utf8_lossy(&output.stderr));
+            panic!(
+                "aka query failed on iteration {}: {}",
+                i,
+                String::from_utf8_lossy(&output.stderr)
+            );
         }
     }
 
@@ -199,6 +231,9 @@ aliases:
 
     // Should show the alias with count 3 - format is "   3 test-alias -> echo "test""
     assert!(stdout.contains("test-alias"), "Should contain test-alias");
-    assert!(stdout.contains("   3 test-alias"), "Should show count of 3 in the correct format");
+    assert!(
+        stdout.contains("   3 test-alias"),
+        "Should show count of 3 in the correct format"
+    );
     assert!(stdout.contains("echo \"test\""), "Should show the alias value");
 }

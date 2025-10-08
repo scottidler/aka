@@ -1,6 +1,6 @@
+use aka_lib::{get_config_path, AKA};
 use std::fs;
 use tempfile::TempDir;
-use aka_lib::{AKA, get_config_path};
 
 // Valid test configuration matching the actual format
 const VALID_CONFIG: &str = r#"
@@ -39,7 +39,10 @@ fn test_yaml_parsing_performance_validation() {
     assert_eq!(result.trim(), "bat -p test.txt", "Should transform cat to bat -p");
 
     // Performance should be reasonable (we measured ~1-2ms in logs)
-    assert!(duration < std::time::Duration::from_millis(50), "YAML parsing should be fast");
+    assert!(
+        duration < std::time::Duration::from_millis(50),
+        "YAML parsing should be fast"
+    );
 }
 
 #[test]
@@ -57,7 +60,8 @@ fn test_config_loading_consistency() {
 
     for i in 0..iterations {
         let start = std::time::Instant::now();
-        let mut aka = AKA::new(false, cache_temp_dir.path().to_path_buf(), config_path.clone()).expect("Config should load");
+        let mut aka =
+            AKA::new(false, cache_temp_dir.path().to_path_buf(), config_path.clone()).expect("Config should load");
         let duration = start.elapsed();
         durations.push(duration);
 
@@ -76,7 +80,10 @@ fn test_config_loading_consistency() {
 
     // All loads should be fast and consistent
     for duration in &durations {
-        assert!(duration < &std::time::Duration::from_millis(50), "Each load should be fast");
+        assert!(
+            duration < &std::time::Duration::from_millis(50),
+            "Each load should be fast"
+        );
     }
 }
 
@@ -139,8 +146,15 @@ fn test_architecture_proof_summary() {
     println!("🔄 Transformation test: cat test.txt -> {}", transform_result);
 
     // Test 3: Performance validation
-    assert!(yaml_time < std::time::Duration::from_millis(10), "YAML parsing should be very fast");
-    assert_eq!(transform_result.trim(), "bat -p test.txt", "Transformation should be correct");
+    assert!(
+        yaml_time < std::time::Duration::from_millis(10),
+        "YAML parsing should be very fast"
+    );
+    assert_eq!(
+        transform_result.trim(),
+        "bat -p test.txt",
+        "Transformation should be correct"
+    );
 
     println!("✅ All architecture components validated");
     println!("✅ YAML parsing: Fast and reliable");

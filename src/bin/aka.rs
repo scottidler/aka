@@ -1,36 +1,28 @@
 use clap::{Parser, Subcommand};
 use eyre::Result;
 use log::{debug, info, warn};
+use std::io::{BufRead, BufReader, Write};
+use std::os::unix::net::UnixStream;
 use std::path::PathBuf;
 use std::process::exit;
-use std::os::unix::net::UnixStream;
-use std::io::{BufRead, BufReader, Write};
 use std::time::{Duration, Instant};
-
 
 // Import from the shared library
 use aka_lib::{
-    setup_logging,
-    execute_health_check,
-    determine_socket_path,
-    get_config_path_with_override,
-    AKA,
-    ProcessingMode,
-    TimingCollector,
-    log_timing,
-    export_timing_csv,
-    get_timing_summary,
-    DaemonRequest,
-    DaemonResponse,
+    determine_socket_path, execute_health_check, export_timing_csv, get_config_path_with_override, get_timing_summary,
+    log_timing, setup_logging, DaemonRequest, DaemonResponse, ProcessingMode, TimingCollector, AKA,
 };
 
+// Version constant for compatibility checking
+const CLI_VERSION: &str = env!("GIT_DESCRIBE");
+
 // Daemon client constants and types - moved from shared library
-const DAEMON_CONNECTION_TIMEOUT_MS: u64 = 100;  // 100ms to connect
-const DAEMON_READ_TIMEOUT_MS: u64 = 200;        // 200ms to read response
-const DAEMON_WRITE_TIMEOUT_MS: u64 = 50;        // 50ms to write request
-const DAEMON_TOTAL_TIMEOUT_MS: u64 = 300;       // 300ms total operation limit
-const DAEMON_RETRY_DELAY_MS: u64 = 50;          // 50ms between retries
-const DAEMON_MAX_RETRIES: u32 = 1;              // Only 1 retry attempt
+const DAEMON_CONNECTION_TIMEOUT_MS: u64 = 100; // 100ms to connect
+const DAEMON_READ_TIMEOUT_MS: u64 = 200; // 200ms to read response
+const DAEMON_WRITE_TIMEOUT_MS: u64 = 50; // 50ms to write request
+const DAEMON_TOTAL_TIMEOUT_MS: u64 = 300; // 300ms total operation limit
+const DAEMON_RETRY_DELAY_MS: u64 = 50; // 50ms between retries
+const DAEMON_MAX_RETRIES: u32 = 1; // Only 1 retry attempt
 
 #[derive(Debug, Clone)]
 enum DaemonError {
@@ -55,10 +47,10 @@ impl std::fmt::Display for DaemonError {
             DaemonError::ConnectionRefused => write!(f, "Daemon connection refused"),
             DaemonError::SocketNotFound => write!(f, "Daemon socket not found"),
             DaemonError::SocketPermissionDenied => write!(f, "Daemon socket permission denied"),
-            DaemonError::ProtocolError(msg) => write!(f, "Daemon protocol error: {}", msg),
+            DaemonError::ProtocolError(msg) => write!(f, "Daemon protocol error: {msg}"),
             DaemonError::DaemonShutdown => write!(f, "Daemon is shutting down"),
             DaemonError::TotalOperationTimeout => write!(f, "Total daemon operation timeout"),
-            DaemonError::UnknownError(msg) => write!(f, "Unknown daemon error: {}", msg),
+            DaemonError::UnknownError(msg) => write!(f, "Unknown daemon error: {msg}"),
         }
     }
 }
@@ -121,8 +113,7 @@ struct DaemonClient;
 
 impl DaemonClient {
     fn send_request(request: DaemonRequest) -> Result<DaemonResponse> {
-        let home_dir = dirs::home_dir()
-            .ok_or_else(|| eyre::eyre!("Unable to determine home directory"))?;
+        let home_dir = dirs::home_dir().ok_or_else(|| eyre::eyre!("Unable to determine home directory"))?;
         let socket_path = determine_socket_path(&home_dir)?;
 
         Self::send_request_with_timeout(request, &socket_path).map_err(|e| e.into())
@@ -140,18 +131,29 @@ impl DaemonClient {
         for attempt in 0..=DAEMON_MAX_RETRIES {
             // Check total operation timeout
             if operation_start.elapsed() >= total_timeout {
-                debug!("🚨 Total daemon operation timeout exceeded: {}ms", operation_start.elapsed().as_millis());
+                debug!(
+                    "🚨 Total daemon operation timeout exceeded: {}ms",
+                    operation_start.elapsed().as_millis()
+                );
                 return Err(DaemonError::TotalOperationTimeout);
             }
 
             if attempt > 0 {
-                debug!("🔄 Daemon retry attempt {} after {}ms", attempt, operation_start.elapsed().as_millis());
+                debug!(
+                    "🔄 Daemon retry attempt {} after {}ms",
+                    attempt,
+                    operation_start.elapsed().as_millis()
+                );
                 std::thread::sleep(Duration::from_millis(DAEMON_RETRY_DELAY_MS));
             }
 
             match Self::attempt_single_request(&request, socket_path, &operation_start, &total_timeout) {
                 Ok(response) => {
-                    debug!("✅ Daemon request succeeded on attempt {} in {}ms", attempt + 1, operation_start.elapsed().as_millis());
+                    debug!(
+                        "✅ Daemon request succeeded on attempt {} in {}ms",
+                        attempt + 1,
+                        operation_start.elapsed().as_millis()
+                    );
                     return Ok(response);
                 }
                 Err(error) => {
@@ -175,14 +177,14 @@ impl DaemonClient {
         request: &DaemonRequest,
         socket_path: &PathBuf,
         operation_start: &Instant,
-        total_timeout: &Duration
+        total_timeout: &Duration,
     ) -> Result<DaemonResponse, DaemonError> {
         // Check timeout before connection
         if operation_start.elapsed() >= *total_timeout {
             return Err(DaemonError::TotalOperationTimeout);
         }
 
-        debug!("📡 Connecting to daemon at: {:?}", socket_path);
+        debug!("📡 Connecting to daemon at: {socket_path:?}");
 
         // Connect with timeout
         let mut stream = Self::connect_with_timeout(socket_path)?;
@@ -193,24 +195,25 @@ impl DaemonClient {
         }
 
         // Set socket timeouts
-        stream.set_read_timeout(Some(Duration::from_millis(DAEMON_READ_TIMEOUT_MS)))
+        stream
+            .set_read_timeout(Some(Duration::from_millis(DAEMON_READ_TIMEOUT_MS)))
             .map_err(|e| categorize_daemon_error(&e))?;
-        stream.set_write_timeout(Some(Duration::from_millis(DAEMON_WRITE_TIMEOUT_MS)))
+        stream
+            .set_write_timeout(Some(Duration::from_millis(DAEMON_WRITE_TIMEOUT_MS)))
             .map_err(|e| categorize_daemon_error(&e))?;
 
         // Send request
         let request_json = serde_json::to_string(&request)
-            .map_err(|e| DaemonError::ProtocolError(format!("Failed to serialize request: {}", e)))?;
+            .map_err(|e| DaemonError::ProtocolError(format!("Failed to serialize request: {e}")))?;
 
-        debug!("📤 Sending request: {}", request_json);
-        writeln!(stream, "{}", request_json)
-            .map_err(|e| {
-                if e.kind() == std::io::ErrorKind::TimedOut {
-                    DaemonError::WriteTimeout
-                } else {
-                    categorize_daemon_error(&e)
-                }
-            })?;
+        debug!("📤 Sending request: {request_json}");
+        writeln!(stream, "{request_json}").map_err(|e| {
+            if e.kind() == std::io::ErrorKind::TimedOut {
+                DaemonError::WriteTimeout
+            } else {
+                categorize_daemon_error(&e)
+            }
+        })?;
 
         // Check timeout after write
         if operation_start.elapsed() >= *total_timeout {
@@ -220,27 +223,24 @@ impl DaemonClient {
         // Read response
         let mut reader = BufReader::new(&stream);
         let mut response_line = String::new();
-        reader.read_line(&mut response_line)
-            .map_err(|e| {
-                if e.kind() == std::io::ErrorKind::TimedOut {
-                    DaemonError::ReadTimeout
-                } else {
-                    categorize_daemon_error(&e)
-                }
-            })?;
+        reader.read_line(&mut response_line).map_err(|e| {
+            if e.kind() == std::io::ErrorKind::TimedOut {
+                DaemonError::ReadTimeout
+            } else {
+                categorize_daemon_error(&e)
+            }
+        })?;
 
         debug!("📥 Received response: {}", response_line.trim());
 
         // Validate response size
         if let Err(e) = aka_lib::protocol::validate_message_size(&response_line) {
-            return Err(DaemonError::ProtocolError(format!("Response validation failed: {}", e)));
+            return Err(DaemonError::ProtocolError(format!("Response validation failed: {e}")));
         }
 
         // Parse response
-        let response: DaemonResponse = serde_json::from_str(&response_line.trim())
-            .map_err(|e| DaemonError::ProtocolError(format!("Failed to parse response: {}", e)))?;
-
-
+        let response: DaemonResponse = serde_json::from_str(response_line.trim())
+            .map_err(|e| DaemonError::ProtocolError(format!("Failed to parse response: {e}")))?;
 
         // Check for daemon shutdown response
         if let DaemonResponse::ShutdownAck = response {
@@ -292,15 +292,15 @@ impl DaemonClient {
 
 fn get_after_help() -> &'static str {
     let daemon_status = get_daemon_status_emoji();
-    Box::leak(format!(
-        "Logs are written to: ~/.local/share/aka/logs/aka.log\n\nDaemon status: {}",
-        daemon_status
-    ).into_boxed_str())
+    Box::leak(
+        format!("Logs are written to: ~/.local/share/aka/logs/aka.log\n\nDaemon status: {daemon_status}")
+            .into_boxed_str(),
+    )
 }
 
 fn get_daemon_status_emoji() -> &'static str {
-    use std::os::unix::net::UnixStream;
     use std::io::{BufRead, BufReader, Write};
+    use std::os::unix::net::UnixStream;
 
     // Check daemon status quickly and return appropriate emoji
     let home_dir = match dirs::home_dir() {
@@ -320,11 +320,11 @@ fn get_daemon_status_emoji() -> &'static str {
             // Daemon appears to be running, check config sync status
             if let Ok(mut stream) = UnixStream::connect(&socket_path) {
                 let health_request = r#"{"type":"Health"}"#;
-                if let Ok(_) = writeln!(stream, "{}", health_request) {
+                if writeln!(stream, "{health_request}").is_ok() {
                     let mut reader = BufReader::new(&stream);
                     let mut response_line = String::new();
-                    if let Ok(_) = reader.read_line(&mut response_line) {
-                        if let Ok(response) = serde_json::from_str::<serde_json::Value>(&response_line.trim()) {
+                    if reader.read_line(&mut response_line).is_ok() {
+                        if let Ok(response) = serde_json::from_str::<serde_json::Value>(response_line.trim()) {
                             if let Some(status) = response.get("status").and_then(|s| s.as_str()) {
                                 if status.contains(":stale") {
                                     return "🔄"; // Config out of sync
@@ -337,7 +337,7 @@ fn get_daemon_status_emoji() -> &'static str {
                 }
             }
             "⚠️" // Socket exists, process running, but health check failed
-        },
+        }
         (true, false) => "⚠️",  // Stale socket
         (false, false) => "❗", // Not running
         (false, true) => "❓",  // Weird state - process but no socket
@@ -477,7 +477,7 @@ impl ServiceManager {
         match self.start_service_silent() {
             Ok(_) => println!("✅ Daemon started successfully"),
             Err(e) => {
-                println!("⚠️  Failed to start daemon automatically: {}", e);
+                println!("⚠️  Failed to start daemon automatically: {e}");
                 println!("   You can start it manually with: aka daemon --start");
             }
         }
@@ -526,8 +526,10 @@ WantedBy=default.target
         fs::write(&service_file, service_content)?;
 
         // Reload systemd and enable service
-        Command::new("systemctl").args(&["--user", "daemon-reload"]).status()?;
-        Command::new("systemctl").args(&["--user", "enable", "aka-daemon.service"]).status()?;
+        Command::new("systemctl").args(["--user", "daemon-reload"]).status()?;
+        Command::new("systemctl")
+            .args(["--user", "enable", "aka-daemon.service"])
+            .status()?;
 
         println!("✅ SystemD service installed and enabled");
         Ok(())
@@ -607,7 +609,9 @@ WantedBy=default.target
             }
         }
 
-        Err(eyre::eyre!("Could not find aka-daemon binary. Please ensure it's installed and in PATH."))
+        Err(eyre::eyre!(
+            "Could not find aka-daemon binary. Please ensure it's installed and in PATH."
+        ))
     }
 
     fn start_service(&self) -> Result<()> {
@@ -617,25 +621,29 @@ WantedBy=default.target
 
         if cfg!(target_os = "linux") {
             let output = Command::new("systemctl")
-                .args(&["--user", "start", "aka-daemon.service"])
+                .args(["--user", "start", "aka-daemon.service"])
                 .output()?;
 
             if output.status.success() {
                 println!("✅ Daemon started via SystemD");
             } else {
-                return Err(eyre::eyre!("Failed to start daemon: {}",
-                    String::from_utf8_lossy(&output.stderr)));
+                return Err(eyre::eyre!(
+                    "Failed to start daemon: {}",
+                    String::from_utf8_lossy(&output.stderr)
+                ));
             }
         } else if cfg!(target_os = "macos") {
             let output = Command::new("launchctl")
-                .args(&["start", "com.scottidler.aka-daemon"])
+                .args(["start", "com.scottidler.aka-daemon"])
                 .output()?;
 
             if output.status.success() {
                 println!("✅ Daemon started via LaunchD");
             } else {
-                return Err(eyre::eyre!("Failed to start daemon: {}",
-                    String::from_utf8_lossy(&output.stderr)));
+                return Err(eyre::eyre!(
+                    "Failed to start daemon: {}",
+                    String::from_utf8_lossy(&output.stderr)
+                ));
             }
         } else {
             println!("⚠️  Service management not supported on this platform");
@@ -650,21 +658,25 @@ WantedBy=default.target
 
         if cfg!(target_os = "linux") {
             let output = Command::new("systemctl")
-                .args(&["--user", "start", "aka-daemon.service"])
+                .args(["--user", "start", "aka-daemon.service"])
                 .output()?;
 
             if !output.status.success() {
-                return Err(eyre::eyre!("Failed to start daemon: {}",
-                    String::from_utf8_lossy(&output.stderr)));
+                return Err(eyre::eyre!(
+                    "Failed to start daemon: {}",
+                    String::from_utf8_lossy(&output.stderr)
+                ));
             }
         } else if cfg!(target_os = "macos") {
             let output = Command::new("launchctl")
-                .args(&["start", "com.scottidler.aka-daemon"])
+                .args(["start", "com.scottidler.aka-daemon"])
                 .output()?;
 
             if !output.status.success() {
-                return Err(eyre::eyre!("Failed to start daemon: {}",
-                    String::from_utf8_lossy(&output.stderr)));
+                return Err(eyre::eyre!(
+                    "Failed to start daemon: {}",
+                    String::from_utf8_lossy(&output.stderr)
+                ));
             }
         } else {
             return Err(eyre::eyre!("Service management not supported on this platform"));
@@ -680,25 +692,29 @@ WantedBy=default.target
 
         if cfg!(target_os = "linux") {
             let output = Command::new("systemctl")
-                .args(&["--user", "stop", "aka-daemon.service"])
+                .args(["--user", "stop", "aka-daemon.service"])
                 .output()?;
 
             if output.status.success() {
                 println!("✅ Daemon stopped via SystemD");
             } else {
-                return Err(eyre::eyre!("Failed to stop daemon: {}",
-                    String::from_utf8_lossy(&output.stderr)));
+                return Err(eyre::eyre!(
+                    "Failed to stop daemon: {}",
+                    String::from_utf8_lossy(&output.stderr)
+                ));
             }
         } else if cfg!(target_os = "macos") {
             let output = Command::new("launchctl")
-                .args(&["stop", "com.scottidler.aka-daemon"])
+                .args(["stop", "com.scottidler.aka-daemon"])
                 .output()?;
 
             if output.status.success() {
                 println!("✅ Daemon stopped via LaunchD");
             } else {
-                return Err(eyre::eyre!("Failed to stop daemon: {}",
-                    String::from_utf8_lossy(&output.stderr)));
+                return Err(eyre::eyre!(
+                    "Failed to stop daemon: {}",
+                    String::from_utf8_lossy(&output.stderr)
+                ));
             }
         } else {
             println!("⚠️  Service management not supported on this platform");
@@ -714,7 +730,7 @@ WantedBy=default.target
                     std::thread::sleep(std::time::Duration::from_millis(100));
                     if socket_path.exists() {
                         if let Err(e) = fs::remove_file(&socket_path) {
-                            println!("⚠️  Failed to remove socket file: {}", e);
+                            println!("⚠️  Failed to remove socket file: {e}");
                         } else {
                             println!("🧹 Removed daemon socket file");
                         }
@@ -733,7 +749,7 @@ WantedBy=default.target
         // Check daemon binary
         let daemon_binary = self.get_daemon_binary_path();
         match daemon_binary {
-            Ok(path) => println!("📦 Daemon binary: ✅ Found at {:?}", path),
+            Ok(path) => println!("📦 Daemon binary: ✅ Found at {path:?}"),
             Err(_) => {
                 println!("📦 Daemon binary: ❌ Not found in PATH");
                 println!("   💡 Install with: cargo install --path .");
@@ -742,12 +758,11 @@ WantedBy=default.target
         }
 
         // Check socket file
-        let home_dir = dirs::home_dir()
-            .ok_or_else(|| eyre::eyre!("Unable to determine home directory"))?;
+        let home_dir = dirs::home_dir().ok_or_else(|| eyre::eyre!("Unable to determine home directory"))?;
         let socket_path = determine_socket_path(&home_dir)?;
         let socket_exists = socket_path.exists();
         if socket_exists {
-            println!("🔌 Socket file: ✅ Found at {:?}", socket_path);
+            println!("🔌 Socket file: ✅ Found at {socket_path:?}");
         } else {
             println!("🔌 Socket file: ❌ Not found");
         }
@@ -801,7 +816,7 @@ WantedBy=default.target
         use std::process::Command;
 
         let output = Command::new("systemctl")
-            .args(&["--user", "is-active", "aka-daemon.service"])
+            .args(["--user", "is-active", "aka-daemon.service"])
             .output()?;
 
         let status = String::from_utf8_lossy(&output.stdout).trim().to_string();
@@ -819,7 +834,7 @@ WantedBy=default.target
                 }
             }
             "failed" => println!("🏗️  SystemD service: ❌ Failed"),
-            _ => println!("🏗️  SystemD service: ❓ Unknown status: {}", status),
+            _ => println!("🏗️  SystemD service: ❓ Unknown status: {status}"),
         }
 
         Ok(())
@@ -829,7 +844,7 @@ WantedBy=default.target
         use std::process::Command;
 
         let output = Command::new("launchctl")
-            .args(&["list", "com.scottidler.aka-daemon"])
+            .args(["list", "com.scottidler.aka-daemon"])
             .output()?;
 
         let plist_file = dirs::home_dir()
@@ -851,12 +866,16 @@ WantedBy=default.target
         println!("🗑️  Uninstalling daemon service...");
 
         if cfg!(target_os = "linux") {
-            use std::process::Command;
             use std::fs;
+            use std::process::Command;
 
             // Stop and disable service
-            let _ = Command::new("systemctl").args(&["--user", "stop", "aka-daemon.service"]).status();
-            let _ = Command::new("systemctl").args(&["--user", "disable", "aka-daemon.service"]).status();
+            let _ = Command::new("systemctl")
+                .args(["--user", "stop", "aka-daemon.service"])
+                .status();
+            let _ = Command::new("systemctl")
+                .args(["--user", "disable", "aka-daemon.service"])
+                .status();
 
             // Remove service file
             let service_file = dirs::config_dir()
@@ -866,14 +885,16 @@ WantedBy=default.target
                 fs::remove_file(&service_file)?;
             }
 
-            let _ = Command::new("systemctl").args(&["--user", "daemon-reload"]).status();
+            let _ = Command::new("systemctl").args(["--user", "daemon-reload"]).status();
             println!("✅ SystemD service uninstalled");
         } else if cfg!(target_os = "macos") {
-            use std::process::Command;
             use std::fs;
+            use std::process::Command;
 
             // Unload service
-            let _ = Command::new("launchctl").args(&["unload", "com.scottidler.aka-daemon"]).status();
+            let _ = Command::new("launchctl")
+                .args(["unload", "com.scottidler.aka-daemon"])
+                .status();
 
             // Remove plist file
             let plist_file = dirs::home_dir()
@@ -894,7 +915,7 @@ WantedBy=default.target
                 if socket_path.exists() {
                     use std::fs;
                     if let Err(e) = fs::remove_file(&socket_path) {
-                        println!("⚠️  Failed to remove socket file: {}", e);
+                        println!("⚠️  Failed to remove socket file: {e}");
                     } else {
                         println!("🧹 Removed stale socket file");
                     }
@@ -923,22 +944,22 @@ fn handle_daemon_reload() -> Result<()> {
     match DaemonClient::send_request(request) {
         Ok(DaemonResponse::ConfigReloaded { success, message }) => {
             if success {
-                println!("✅ {}", message);
+                println!("✅ {message}");
             } else {
-                println!("❌ Config reload failed: {}", message);
+                println!("❌ Config reload failed: {message}");
                 return Err(eyre::eyre!("Config reload failed"));
             }
-        },
+        }
         Ok(DaemonResponse::Error { message }) => {
-            println!("❌ Daemon error: {}", message);
+            println!("❌ Daemon error: {message}");
             return Err(eyre::eyre!("Daemon error: {}", message));
-        },
+        }
         Ok(response) => {
-            println!("❌ Unexpected response: {:?}", response);
+            println!("❌ Unexpected response: {response:?}");
             return Err(eyre::eyre!("Unexpected daemon response"));
-        },
+        }
         Err(e) => {
-            println!("❌ Failed to communicate with daemon: {}", e);
+            println!("❌ Failed to communicate with daemon: {e}");
             println!("   Make sure the daemon is running with: aka daemon --status");
             return Err(eyre::eyre!("Daemon communication failed: {}", e));
         }
@@ -975,10 +996,10 @@ fn handle_daemon_command(daemon_opts: &DaemonOpts) -> Result<()> {
     } else if daemon_opts.export_timing {
         match export_timing_csv() {
             Ok(csv) => {
-                println!("{}", csv);
+                println!("{csv}");
             }
             Err(e) => {
-                eprintln!("Error exporting timing data: {}", e);
+                eprintln!("Error exporting timing data: {e}");
                 return Err(e);
             }
         }
@@ -989,20 +1010,23 @@ fn handle_daemon_command(daemon_opts: &DaemonOpts) -> Result<()> {
                 println!("================");
                 println!("👹 Daemon mode:");
                 println!("   Average: {:.3}ms", daemon_avg.as_secs_f64() * 1000.0);
-                println!("   Samples: {}", daemon_count);
+                println!("   Samples: {daemon_count}");
                 println!("📥 Direct mode:");
                 println!("   Average: {:.3}ms", direct_avg.as_secs_f64() * 1000.0);
-                println!("   Samples: {}", direct_count);
+                println!("   Samples: {direct_count}");
                 if daemon_count > 0 && direct_count > 0 {
                     let improvement = direct_avg.as_secs_f64() - daemon_avg.as_secs_f64();
                     let percentage = (improvement / direct_avg.as_secs_f64()) * 100.0;
                     println!("⚡ Performance:");
-                    println!("   Daemon is {:.3}ms faster ({:.1}% improvement)",
-                        improvement * 1000.0, percentage);
+                    println!(
+                        "   Daemon is {:.3}ms faster ({:.1}% improvement)",
+                        improvement * 1000.0,
+                        percentage
+                    );
                 }
             }
             Err(e) => {
-                eprintln!("Error getting timing summary: {}", e);
+                eprintln!("Error getting timing summary: {e}");
                 return Err(e);
             }
         }
@@ -1014,20 +1038,17 @@ fn handle_daemon_command(daemon_opts: &DaemonOpts) -> Result<()> {
     Ok(())
 }
 
-fn route_command_by_health_status(
-    health_status: i32,
-    opts: &AkaOpts,
-) -> Result<i32> {
+fn route_command_by_health_status(health_status: i32, opts: &AkaOpts) -> Result<i32> {
     match health_status {
         0 => {
             // Health check passed - daemon is healthy, use daemon
             debug!("✅ Health check passed (status=0), daemon is healthy");
             debug!("🔀 Routing to handle_command_via_daemon_with_fallback");
             handle_command_via_daemon_with_fallback(opts)
-        },
+        }
         _ => {
             // Any non-zero status means fallback to direct mode
-            debug!("⚠️ Health check returned status={}, falling back to direct mode", health_status);
+            debug!("⚠️ Health check returned status={health_status}, falling back to direct mode");
             debug!("🔀 Routing directly to handle_command_direct_timed");
 
             // Log the specific reason for fallback
@@ -1050,16 +1071,13 @@ fn route_command_by_health_status(
 
 fn handle_regular_command(opts: &AkaOpts) -> Result<i32> {
     debug!("🎯 === STARTING REGULAR COMMAND PROCESSING ===");
-    debug!("🔍 Command options: {:?}", opts);
+    debug!("🔍 Command options: {opts:?}");
 
     // Handle explicit health check command
-    if let Some(ref command) = &opts.command {
-        if let Command::HealthCheck = command {
-            debug!("🏥 Explicit health check command requested");
-            let home_dir = dirs::home_dir()
-                .ok_or_else(|| eyre::eyre!("Unable to determine home directory"))?;
-            return execute_health_check(&home_dir, &opts.config);
-        }
+    if let Some(Command::HealthCheck) = &opts.command {
+        debug!("🏥 Explicit health check command requested");
+        let home_dir = dirs::home_dir().ok_or_else(|| eyre::eyre!("Unable to determine home directory"))?;
+        return execute_health_check(&home_dir, &opts.config);
     }
 
     // CRITICAL: If --config is specified, ALWAYS use direct mode
@@ -1079,10 +1097,9 @@ fn handle_regular_command(opts: &AkaOpts) -> Result<i32> {
     debug!("📋 About to run execute_health_check with config: {:?}", opts.config);
 
     // Run health check to determine system state
-    let home_dir = dirs::home_dir()
-        .ok_or_else(|| eyre::eyre!("Unable to determine home directory"))?;
+    let home_dir = dirs::home_dir().ok_or_else(|| eyre::eyre!("Unable to determine home directory"))?;
     let health_status = execute_health_check(&home_dir, &opts.config)?;
-    debug!("📊 Health check completed with status: {}", health_status);
+    debug!("📊 Health check completed with status: {health_status}");
 
     route_command_by_health_status(health_status, opts)
 }
@@ -1108,7 +1125,7 @@ fn handle_command_via_daemon_with_fallback(opts: &AkaOpts) -> Result<i32> {
     };
     match determine_socket_path(&home_dir) {
         Ok(socket_path) => {
-            debug!("🔌 Socket path determined: {:?}", socket_path);
+            debug!("🔌 Socket path determined: {socket_path:?}");
             if socket_path.exists() {
                 debug!("✅ Socket file exists, attempting daemon communication");
 
@@ -1123,9 +1140,9 @@ fn handle_command_via_daemon_with_fallback(opts: &AkaOpts) -> Result<i32> {
                         log_timing(timing_data);
 
                         return Ok(result);
-                    },
+                    }
                     Err(e) => {
-                        warn!("⚠️ Daemon path failed: {}, falling back to direct", e);
+                        warn!("⚠️ Daemon path failed: {e}, falling back to direct");
                         debug!("🔄 Daemon communication failed, will try direct path");
                     }
                 }
@@ -1135,12 +1152,12 @@ fn handle_command_via_daemon_with_fallback(opts: &AkaOpts) -> Result<i32> {
             }
         }
         Err(e) => {
-            warn!("❌ Cannot determine socket path: {}, using direct path", e);
+            warn!("❌ Cannot determine socket path: {e}, using direct path");
         }
     }
 
     // Fallback to direct processing with timing
-                info!("🔄 Falling back to direct config processing");
+    info!("🔄 Falling back to direct config processing");
     debug!("🔀 Routing to handle_command_direct");
 
     let mut direct_timing = TimingCollector::new(ProcessingMode::Direct);
@@ -1154,27 +1171,38 @@ fn handle_command_via_daemon_with_fallback(opts: &AkaOpts) -> Result<i32> {
     result
 }
 
-fn handle_daemon_query_response(
-    response: DaemonResponse,
-    timing: &mut TimingCollector,
-) -> Result<i32> {
+fn handle_daemon_query_response(response: DaemonResponse, timing: &mut TimingCollector) -> Result<i32> {
     match response {
         DaemonResponse::Success { data } => {
             debug!("✅ Daemon query successful");
-            println!("{}", data);
+            println!("{data}");
             timing.end_processing();
             debug!("🎯 === DAEMON-ONLY COMPLETE (SUCCESS) ===");
             Ok(0)
-        },
+        }
         DaemonResponse::Error { message } => {
-            warn!("❌ Daemon returned error: {}", message);
-            eprintln!("Daemon error: {}", message);
+            warn!("❌ Daemon returned error: {message}");
+            eprintln!("Daemon error: {message}");
             timing.end_processing();
             debug!("🎯 === DAEMON-ONLY COMPLETE (DAEMON ERROR) ===");
             Ok(1)
-        },
+        }
+        DaemonResponse::VersionMismatch {
+            daemon_version,
+            client_version,
+            message,
+        } => {
+            info!("🔄 Version mismatch detected");
+            info!("   Daemon: {daemon_version} → Client: {client_version}");
+            info!("   {message}");
+            debug!("Daemon is restarting, fallback will handle retry");
+            timing.end_processing();
+            debug!("🎯 === DAEMON-ONLY COMPLETE (VERSION MISMATCH) ===");
+            // Return error to trigger fallback to direct mode
+            Err(eyre::eyre!("Daemon version mismatch - daemon restarting"))
+        }
         _ => {
-            warn!("❌ Daemon returned unexpected response: {:?}", response);
+            warn!("❌ Daemon returned unexpected response: {response:?}");
             eprintln!("Unexpected daemon response");
             timing.end_processing();
             debug!("🎯 === DAEMON-ONLY COMPLETE (UNEXPECTED RESPONSE) ===");
@@ -1183,23 +1211,33 @@ fn handle_daemon_query_response(
     }
 }
 
-fn handle_daemon_list_response(
-    response: DaemonResponse,
-    timing: &mut TimingCollector,
-) -> Result<i32> {
+fn handle_daemon_list_response(response: DaemonResponse, timing: &mut TimingCollector) -> Result<i32> {
     match response {
         DaemonResponse::Success { data } => {
             debug!("✅ Daemon list successful");
-            println!("{}", data);
+            println!("{data}");
             timing.end_processing();
             Ok(0)
-        },
+        }
         DaemonResponse::Error { message } => {
-            warn!("❌ Daemon returned error: {}", message);
-            eprintln!("Daemon error: {}", message);
+            warn!("❌ Daemon returned error: {message}");
+            eprintln!("Daemon error: {message}");
             timing.end_processing();
             Ok(1)
-        },
+        }
+        DaemonResponse::VersionMismatch {
+            daemon_version,
+            client_version,
+            message,
+        } => {
+            info!("🔄 Version mismatch detected");
+            info!("   Daemon: {daemon_version} → Client: {client_version}");
+            info!("   {message}");
+            debug!("Daemon is restarting, fallback will handle retry");
+            timing.end_processing();
+            // Return error to trigger fallback to direct mode
+            Err(eyre::eyre!("Daemon version mismatch - daemon restarting"))
+        }
         _ => {
             warn!("❌ Daemon returned unexpected response");
             eprintln!("Unexpected daemon response");
@@ -1217,11 +1255,12 @@ fn handle_command_via_daemon_only_timed(opts: &AkaOpts, timing: &mut TimingColle
     timing.start_processing();
 
     if let Some(ref command) = &opts.command {
-        debug!("🔍 Processing command: {:?}", command);
+        debug!("🔍 Processing command: {command:?}");
         match command {
             Command::Query(query_opts) => {
                 debug!("📤 Preparing daemon query request");
                 let request = DaemonRequest::Query {
+                    version: CLI_VERSION.to_string(),
                     cmdline: query_opts.cmdline.clone(),
                     eol: opts.eol,
                     config: opts.config.clone(),
@@ -1231,7 +1270,7 @@ fn handle_command_via_daemon_only_timed(opts: &AkaOpts, timing: &mut TimingColle
                 match DaemonClient::send_request_timed(request, timing) {
                     Ok(response) => handle_daemon_query_response(response, timing),
                     Err(e) => {
-                        warn!("❌ Daemon request failed: {}", e);
+                        warn!("❌ Daemon request failed: {e}");
                         debug!("🔄 Daemon communication failed, will fallback to direct mode");
                         timing.end_processing();
                         debug!("🎯 === DAEMON-ONLY COMPLETE (COMMUNICATION ERROR) ===");
@@ -1241,6 +1280,7 @@ fn handle_command_via_daemon_only_timed(opts: &AkaOpts, timing: &mut TimingColle
             }
             Command::List(list_opts) => {
                 let request = DaemonRequest::List {
+                    version: CLI_VERSION.to_string(),
                     global: list_opts.global,
                     patterns: list_opts.patterns.clone(),
                     config: opts.config.clone(),
@@ -1249,7 +1289,7 @@ fn handle_command_via_daemon_only_timed(opts: &AkaOpts, timing: &mut TimingColle
                 match DaemonClient::send_request_timed(request, timing) {
                     Ok(response) => handle_daemon_list_response(response, timing),
                     Err(e) => {
-                        warn!("❌ Daemon request failed: {}", e);
+                        warn!("❌ Daemon request failed: {e}");
                         debug!("🔄 Daemon communication failed, will fallback to direct mode");
                         timing.end_processing();
                         Ok(1)
@@ -1259,6 +1299,7 @@ fn handle_command_via_daemon_only_timed(opts: &AkaOpts, timing: &mut TimingColle
             Command::Freq(freq_opts) => {
                 debug!("📤 Preparing daemon frequency request");
                 let request = DaemonRequest::Freq {
+                    version: CLI_VERSION.to_string(),
                     all: freq_opts.all,
                     config: opts.config.clone(),
                 };
@@ -1266,7 +1307,7 @@ fn handle_command_via_daemon_only_timed(opts: &AkaOpts, timing: &mut TimingColle
                 match DaemonClient::send_request_timed(request, timing) {
                     Ok(response) => handle_daemon_query_response(response, timing),
                     Err(e) => {
-                        warn!("❌ Daemon request failed: {}", e);
+                        warn!("❌ Daemon request failed: {e}");
                         debug!("🔄 Daemon communication failed, will fallback to direct mode");
                         timing.end_processing();
                         Ok(1)
@@ -1276,6 +1317,7 @@ fn handle_command_via_daemon_only_timed(opts: &AkaOpts, timing: &mut TimingColle
             Command::CompleteAliases => {
                 debug!("📤 Preparing daemon complete aliases request");
                 let request = DaemonRequest::CompleteAliases {
+                    version: CLI_VERSION.to_string(),
                     config: opts.config.clone(),
                 };
                 debug!("📤 Sending daemon complete aliases request");
@@ -1283,7 +1325,7 @@ fn handle_command_via_daemon_only_timed(opts: &AkaOpts, timing: &mut TimingColle
                 match DaemonClient::send_request_timed(request, timing) {
                     Ok(response) => handle_daemon_query_response(response, timing),
                     Err(e) => {
-                        warn!("❌ Daemon request failed: {}", e);
+                        warn!("❌ Daemon request failed: {e}");
                         debug!("🔄 Daemon communication failed, will fallback to direct mode");
                         timing.end_processing();
                         debug!("🎯 === DAEMON-ONLY COMPLETE (COMMUNICATION ERROR) ===");
@@ -1311,7 +1353,7 @@ fn handle_command_direct_timed(opts: &AkaOpts, timing: &mut TimingCollector) -> 
     timing.start_config_load();
 
     // Get home directory - respect HOME environment variable for tests
-    let home_dir = match std::env::var("HOME").ok().map(PathBuf::from).or_else(|| dirs::home_dir()) {
+    let home_dir = match std::env::var("HOME").ok().map(PathBuf::from).or_else(dirs::home_dir) {
         Some(dir) => dir,
         None => {
             warn!("❌ Cannot determine home directory");
@@ -1327,9 +1369,9 @@ fn handle_command_direct_timed(opts: &AkaOpts, timing: &mut TimingCollector) -> 
         Ok(aka) => {
             debug!("✅ AKA instance created successfully");
             aka
-        },
+        }
         Err(e) => {
-            warn!("❌ Failed to create AKA instance: {}", e);
+            warn!("❌ Failed to create AKA instance: {e}");
             return Err(e);
         }
     };
@@ -1338,20 +1380,20 @@ fn handle_command_direct_timed(opts: &AkaOpts, timing: &mut TimingCollector) -> 
     timing.start_processing();
 
     if let Some(ref command) = &opts.command {
-        debug!("🔍 Processing command: {:?}", command);
+        debug!("🔍 Processing command: {command:?}");
         match command {
             Command::Query(query_opts) => {
                 debug!("📤 Processing query: {}", query_opts.cmdline);
                 match aka.replace_with_mode(&query_opts.cmdline, ProcessingMode::Direct) {
                     Ok(result) => {
                         debug!("✅ Query processed successfully");
-                        println!("{}", result);
+                        println!("{result}");
                         timing.end_processing();
                         Ok(0)
-                    },
+                    }
                     Err(e) => {
-                        warn!("❌ Query processing failed: {}", e);
-                        eprintln!("Error: {}", e);
+                        warn!("❌ Query processing failed: {e}");
+                        eprintln!("Error: {e}");
                         timing.end_processing();
                         Ok(1)
                     }
@@ -1368,7 +1410,7 @@ fn handle_command_direct_timed(opts: &AkaOpts, timing: &mut TimingCollector) -> 
                     &list_opts.patterns,
                 );
 
-                println!("{}", output);
+                println!("{output}");
 
                 debug!("✅ Listed aliases");
                 timing.end_processing();
@@ -1382,10 +1424,10 @@ fn handle_command_direct_timed(opts: &AkaOpts, timing: &mut TimingCollector) -> 
                     true, // show_counts
                     freq_opts.all,
                     false, // global_only (freq doesn't filter by global)
-                    &[], // patterns (freq doesn't support patterns)
+                    &[],   // patterns (freq doesn't support patterns)
                 );
 
-                println!("{}", output);
+                println!("{output}");
 
                 debug!("✅ Showed frequency for aliases");
                 timing.end_processing();
@@ -1395,7 +1437,7 @@ fn handle_command_direct_timed(opts: &AkaOpts, timing: &mut TimingCollector) -> 
                 debug!("📤 Processing complete aliases request");
                 let alias_names = aka_lib::get_alias_names_for_completion(&aka);
                 for name in alias_names {
-                    println!("{}", name);
+                    println!("{name}");
                 }
                 debug!("✅ Complete aliases processed successfully");
                 timing.end_processing();
@@ -1441,7 +1483,7 @@ mod tests {
         // Should either succeed or fail gracefully
         match result {
             Ok(path) => assert!(path.to_string_lossy().contains("aka")),
-            Err(_) => {}, // Acceptable in test environment
+            Err(_) => {} // Acceptable in test environment
         }
     }
 
@@ -1453,6 +1495,7 @@ mod tests {
         assert!(serialized.is_ok());
 
         let query_request = DaemonRequest::Query {
+            version: "v0.5.0".to_string(),
             cmdline: "test".to_string(),
             eol: false,
             config: None,
@@ -1486,29 +1529,25 @@ fn main() {
         }
     };
     if let Err(e) = setup_logging(&home_dir) {
-        eprintln!("Warning: Failed to set up logging: {}", e);
+        eprintln!("Warning: Failed to set up logging: {e}");
     }
 
     // Route daemon commands vs regular commands
     let result = match &opts.command {
-        Some(Command::Daemon(daemon_opts)) => {
-            match handle_daemon_command(daemon_opts) {
-                Ok(_) => 0,
-                Err(e) => {
-                    eprintln!("Error: {}", e);
-                    1
-                }
+        Some(Command::Daemon(daemon_opts)) => match handle_daemon_command(daemon_opts) {
+            Ok(_) => 0,
+            Err(e) => {
+                eprintln!("Error: {e}");
+                1
             }
-        }
-        _ => {
-            match handle_regular_command(&opts) {
-                Ok(code) => code,
-                Err(e) => {
-                    eprintln!("Error: {}", e);
-                    1
-                }
+        },
+        _ => match handle_regular_command(&opts) {
+            Ok(code) => code,
+            Err(e) => {
+                eprintln!("Error: {e}");
+                1
             }
-        }
+        },
     };
 
     exit(result);

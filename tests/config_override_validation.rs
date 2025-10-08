@@ -1,6 +1,6 @@
+use aka_lib::AKA;
 use std::fs;
 use tempfile::TempDir;
-use aka_lib::AKA;
 
 /// Test that AKA::new respects custom config paths and doesn't use user's cache
 #[test]

@@ -1,7 +1,6 @@
 use aka_lib::*;
-use tempfile::TempDir;
 use std::fs;
-
+use tempfile::TempDir;
 
 /// Test that simulates exactly what happens when a user types commands
 /// This tests the critical difference between space-expansion and enter-expansion
@@ -73,7 +72,9 @@ aliases:
     // Test 3: User typing "echo_all hello" and pressing space (mid-typing)
     println!("\n=== TEST 3: User types 'echo_all hello' and presses SPACE ===");
     let mut aka_space = AKA::new(false, home_dir.clone(), config_path.clone()).expect("Failed to create AKA instance");
-    let result = aka_space.replace("echo_all hello").expect("Should process echo_all hello");
+    let result = aka_space
+        .replace("echo_all hello")
+        .expect("Should process echo_all hello");
     println!("Input: 'echo_all hello' (space pressed, eol=false)");
     println!("Output: '{}'", result);
     // Variadic aliases should NOT expand on space because user might still be typing
@@ -82,7 +83,9 @@ aliases:
     // Test 4: User typing "echo_all hello" and pressing enter (command execution)
     println!("\n=== TEST 4: User types 'echo_all hello' and presses ENTER ===");
     let mut aka_enter = AKA::new(true, home_dir.clone(), config_path.clone()).expect("Failed to create AKA instance");
-    let result = aka_enter.replace("echo_all hello").expect("Should process echo_all hello");
+    let result = aka_enter
+        .replace("echo_all hello")
+        .expect("Should process echo_all hello");
     println!("Input: 'echo_all hello' (enter pressed, eol=true)");
     println!("Output: '{}'", result);
     assert_eq!(result, "echo hello ", "Variadic alias should expand on enter");
@@ -90,7 +93,9 @@ aliases:
     // Test 5: User typing "echo_all hello world" and pressing space (mid-typing)
     println!("\n=== TEST 5: User types 'echo_all hello world' and presses SPACE ===");
     let mut aka_space = AKA::new(false, home_dir.clone(), config_path.clone()).expect("Failed to create AKA instance");
-    let result = aka_space.replace("echo_all hello world").expect("Should process echo_all hello world");
+    let result = aka_space
+        .replace("echo_all hello world")
+        .expect("Should process echo_all hello world");
     println!("Input: 'echo_all hello world' (space pressed, eol=false)");
     println!("Output: '{}'", result);
     assert_eq!(result, "", "Variadic alias should NOT expand on space (still typing)");
@@ -98,7 +103,9 @@ aliases:
     // Test 6: User typing "echo_all hello world" and pressing enter (command execution)
     println!("\n=== TEST 6: User types 'echo_all hello world' and presses ENTER ===");
     let mut aka_enter = AKA::new(true, home_dir.clone(), config_path.clone()).expect("Failed to create AKA instance");
-    let result = aka_enter.replace("echo_all hello world").expect("Should process echo_all hello world");
+    let result = aka_enter
+        .replace("echo_all hello world")
+        .expect("Should process echo_all hello world");
     println!("Input: 'echo_all hello world' (enter pressed, eol=true)");
     println!("Output: '{}'", result);
     assert_eq!(result, "echo hello world ", "Variadic alias should expand on enter");
@@ -125,7 +132,10 @@ aliases:
     let result = aka_space.replace("gc").expect("Should process gc");
     println!("Input: 'gc' (space pressed, eol=false)");
     println!("Output: '{}'", result);
-    assert_eq!(result, "git commit -m\"", "No-space alias should expand without trailing space");
+    assert_eq!(
+        result, "git commit -m\"",
+        "No-space alias should expand without trailing space"
+    );
 
     // Test 10: User typing "gc" and pressing enter (command execution) - no space alias
     println!("\n=== TEST 10: User types 'gc' and presses ENTER (no space alias) ===");
@@ -133,7 +143,10 @@ aliases:
     let result = aka_enter.replace("gc").expect("Should process gc");
     println!("Input: 'gc' (enter pressed, eol=true)");
     println!("Output: '{}'", result);
-    assert_eq!(result, "git commit -m\"", "No-space alias should expand without trailing space");
+    assert_eq!(
+        result, "git commit -m\"",
+        "No-space alias should expand without trailing space"
+    );
 }
 
 /// Test progressive typing simulation - like a user typing character by character
@@ -193,12 +206,14 @@ aliases:
         println!("\nStep {}: User typed '{}'", i + 1, input);
 
         // Test with space press (eol=false)
-        let mut aka_space = AKA::new(false, home_dir.clone(), config_path.clone()).expect("Failed to create AKA instance");
+        let mut aka_space =
+            AKA::new(false, home_dir.clone(), config_path.clone()).expect("Failed to create AKA instance");
         let result_space = aka_space.replace(input).expect("Should process input");
         println!("  Space press (eol=false): '{}'", result_space);
 
         // Test with enter press (eol=true)
-        let mut aka_enter = AKA::new(true, home_dir.clone(), config_path.clone()).expect("Failed to create AKA instance");
+        let mut aka_enter =
+            AKA::new(true, home_dir.clone(), config_path.clone()).expect("Failed to create AKA instance");
         let result_enter = aka_enter.replace(input).expect("Should process input");
         println!("  Enter press (eol=true): '{}'", result_enter);
 
@@ -254,18 +269,28 @@ aliases:
         println!("\nUser types: '{}'", input);
 
         // Test with space press (eol=false)
-        let mut aka_space = AKA::new(false, home_dir.clone(), config_path.clone()).expect("Failed to create AKA instance");
+        let mut aka_space =
+            AKA::new(false, home_dir.clone(), config_path.clone()).expect("Failed to create AKA instance");
         let result_space = aka_space.replace(input).expect("Should process input");
         println!("  Space press result: '{}'", result_space);
 
         // Test with enter press (eol=true)
-        let mut aka_enter = AKA::new(true, home_dir.clone(), config_path.clone()).expect("Failed to create AKA instance");
+        let mut aka_enter =
+            AKA::new(true, home_dir.clone(), config_path.clone()).expect("Failed to create AKA instance");
         let result_enter = aka_enter.replace(input).expect("Should process input");
         println!("  Enter press result: '{}'", result_enter);
 
         // Both should be the same for sudo commands (no variadic aliases involved)
-        assert_eq!(result_space, expected, "Space result should match expected for '{}'", input);
-        assert_eq!(result_enter, expected, "Enter result should match expected for '{}'", input);
+        assert_eq!(
+            result_space, expected,
+            "Space result should match expected for '{}'",
+            input
+        );
+        assert_eq!(
+            result_enter, expected,
+            "Enter result should match expected for '{}'",
+            input
+        );
     }
 }
 
@@ -308,11 +333,36 @@ aliases:
 
     let test_cases = vec![
         // (input, expected_space, expected_enter, description)
-        ("ls", "eza ", "eza ", "Simple alias - should expand on both space and enter"),
-        ("ls -la", "eza -la ", "eza -la ", "Simple alias with args - should expand on both"),
-        ("greet World", "echo Hello World ", "echo Hello World ", "Positional alias - should expand on both"),
-        ("echo_all hello", "", "echo hello ", "Variadic alias - should only expand on enter"),
-        ("echo_all hello world", "", "echo hello world ", "Variadic alias with multiple args - should only expand on enter"),
+        (
+            "ls",
+            "eza ",
+            "eza ",
+            "Simple alias - should expand on both space and enter",
+        ),
+        (
+            "ls -la",
+            "eza -la ",
+            "eza -la ",
+            "Simple alias with args - should expand on both",
+        ),
+        (
+            "greet World",
+            "echo Hello World ",
+            "echo Hello World ",
+            "Positional alias - should expand on both",
+        ),
+        (
+            "echo_all hello",
+            "",
+            "echo hello ",
+            "Variadic alias - should only expand on enter",
+        ),
+        (
+            "echo_all hello world",
+            "",
+            "echo hello world ",
+            "Variadic alias with multiple args - should only expand on enter",
+        ),
     ];
 
     for (input, expected_space, expected_enter, description) in test_cases {
@@ -320,13 +370,15 @@ aliases:
         println!("Input: '{}'", input);
 
         // Test with space press (eol=false)
-        let mut aka_space = AKA::new(false, home_dir.clone(), config_path.clone()).expect("Failed to create AKA instance");
+        let mut aka_space =
+            AKA::new(false, home_dir.clone(), config_path.clone()).expect("Failed to create AKA instance");
         let result_space = aka_space.replace(input).expect("Should process input");
         println!("  Space press: '{}'", result_space);
         assert_eq!(result_space, expected_space, "Space result mismatch for '{}'", input);
 
         // Test with enter press (eol=true)
-        let mut aka_enter = AKA::new(true, home_dir.clone(), config_path.clone()).expect("Failed to create AKA instance");
+        let mut aka_enter =
+            AKA::new(true, home_dir.clone(), config_path.clone()).expect("Failed to create AKA instance");
         let result_enter = aka_enter.replace(input).expect("Should process input");
         println!("  Enter press: '{}'", result_enter);
         assert_eq!(result_enter, expected_enter, "Enter result mismatch for '{}'", input);
@@ -372,12 +424,14 @@ aliases:
         println!("\nUser types: '{}'", input);
 
         // Test with space press (eol=false) - what happens when user presses space
-        let mut aka_space = AKA::new(false, home_dir.clone(), config_path.clone()).expect("Failed to create AKA instance");
+        let mut aka_space =
+            AKA::new(false, home_dir.clone(), config_path.clone()).expect("Failed to create AKA instance");
         let result_space = aka_space.replace(input).expect("Should process input");
         println!("  Space press (mid-typing): '{}'", result_space);
 
         // Test with enter press (eol=true) - what happens when user presses enter
-        let mut aka_enter = AKA::new(true, home_dir.clone(), config_path.clone()).expect("Failed to create AKA instance");
+        let mut aka_enter =
+            AKA::new(true, home_dir.clone(), config_path.clone()).expect("Failed to create AKA instance");
         let result_enter = aka_enter.replace(input).expect("Should process input");
         println!("  Enter press (execute): '{}'", result_enter);
 
@@ -400,13 +454,19 @@ aliases:
                 assert!(result_space.contains("sudo"), "Should contain sudo");
                 assert!(result_space.contains("rkvr"), "Should contain rkvr");
                 assert!(result_space.contains("rmrf"), "Should contain rmrf");
-                assert_eq!(result_space, result_enter, "Sudo results should be same for space/enter");
+                assert_eq!(
+                    result_space, result_enter,
+                    "Sudo results should be same for space/enter"
+                );
             }
             "sudo rkvr rmrf" => {
                 // Direct rkvr command - should wrap with $(which)
                 assert!(result_space.contains("sudo"), "Should contain sudo");
                 assert!(result_space.contains("$(which rkvr)"), "Should wrap with $(which)");
-                assert_eq!(result_space, result_enter, "Sudo results should be same for space/enter");
+                assert_eq!(
+                    result_space, result_enter,
+                    "Sudo results should be same for space/enter"
+                );
             }
             _ => {
                 // For other cases, just ensure no crashes

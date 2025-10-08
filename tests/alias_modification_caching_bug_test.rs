@@ -9,12 +9,11 @@
 ///
 /// The root cause is in src/lib.rs merge_cache_with_config() which only preserves
 /// the count but doesn't validate that the value/properties match.
-
-use aka_lib::{AKA, sync_cache_with_config_path, AliasCache, merge_cache_with_config_path, hash_config_file};
-use std::fs;
-use std::collections::HashMap;
-use tempfile::TempDir;
+use aka_lib::{hash_config_file, merge_cache_with_config_path, sync_cache_with_config_path, AliasCache, AKA};
 use eyre::Result;
+use std::collections::HashMap;
+use std::fs;
+use tempfile::TempDir;
 
 #[test]
 fn test_adding_alias_to_existing_entry() -> Result<()> {
@@ -41,7 +40,10 @@ aliases:
     assert_eq!(result.trim(), "ssh desk.lan");
 
     eprintln!("\n=== STEP 2: Used 'home' alias once ===");
-    eprintln!("AKA.spec.aliases keys: {:?}", aka.spec.aliases.keys().collect::<Vec<_>>());
+    eprintln!(
+        "AKA.spec.aliases keys: {:?}",
+        aka.spec.aliases.keys().collect::<Vec<_>>()
+    );
     eprintln!("home count in spec: {}", aka.spec.aliases.get("home").unwrap().count);
 
     // Sync cache to persist the count
@@ -66,12 +68,24 @@ aliases:
     let aka_reloaded = AKA::new(true, home_dir.clone(), config_path.clone())?;
 
     eprintln!("\n=== STEP 5: Reloaded AKA ===");
-    eprintln!("AKA.spec.aliases keys: {:?}", aka_reloaded.spec.aliases.keys().collect::<Vec<_>>());
-    eprintln!("home count in spec: {}", aka_reloaded.spec.aliases.get("home").unwrap().count);
-    eprintln!("desk count in spec: {}", aka_reloaded.spec.aliases.get("desk").unwrap().count);
+    eprintln!(
+        "AKA.spec.aliases keys: {:?}",
+        aka_reloaded.spec.aliases.keys().collect::<Vec<_>>()
+    );
+    eprintln!(
+        "home count in spec: {}",
+        aka_reloaded.spec.aliases.get("home").unwrap().count
+    );
+    eprintln!(
+        "desk count in spec: {}",
+        aka_reloaded.spec.aliases.get("desk").unwrap().count
+    );
 
     // Verify the alias exists and works (but don't use it to avoid incrementing count)
-    assert!(aka_reloaded.spec.aliases.contains_key("desk"), "desk should exist in spec");
+    assert!(
+        aka_reloaded.spec.aliases.contains_key("desk"),
+        "desk should exist in spec"
+    );
     assert_eq!(aka_reloaded.spec.aliases.get("desk").unwrap().value, "ssh desk.lan");
 
     // Step 4: Sync cache again (without using the alias)
@@ -79,23 +93,42 @@ aliases:
 
     eprintln!("\n=== STEP 6: Synced cache after reload ===");
     eprintln!("Cache keys: {:?}", cache_reloaded.aliases.keys().collect::<Vec<_>>());
-    eprintln!("home count in cache: {}", cache_reloaded.aliases.get("home").unwrap().count);
-    eprintln!("desk count in cache: {}", cache_reloaded.aliases.get("desk").unwrap().count);
+    eprintln!(
+        "home count in cache: {}",
+        cache_reloaded.aliases.get("home").unwrap().count
+    );
+    eprintln!(
+        "desk count in cache: {}",
+        cache_reloaded.aliases.get("desk").unwrap().count
+    );
 
     // Both "home" and "desk" should exist now
-    assert!(cache_reloaded.aliases.get("home").is_some(), "home should exist in cache");
-    assert!(cache_reloaded.aliases.get("desk").is_some(), "desk should exist in cache");
+    assert!(
+        cache_reloaded.aliases.get("home").is_some(),
+        "home should exist in cache"
+    );
+    assert!(
+        cache_reloaded.aliases.get("desk").is_some(),
+        "desk should exist in cache"
+    );
 
     // Both should have the same value
     assert_eq!(cache_reloaded.aliases.get("home").unwrap().value, "ssh desk.lan");
     assert_eq!(cache_reloaded.aliases.get("desk").unwrap().value, "ssh desk.lan");
 
     // "home" should preserve its count
-    assert_eq!(cache_reloaded.aliases.get("home").unwrap().count, 1, "home should preserve count");
+    assert_eq!(
+        cache_reloaded.aliases.get("home").unwrap().count,
+        1,
+        "home should preserve count"
+    );
 
     // "desk" is new, so count MUST be 0
-    assert_eq!(cache_reloaded.aliases.get("desk").unwrap().count, 0,
-               "desk is new and should start with count=0");
+    assert_eq!(
+        cache_reloaded.aliases.get("desk").unwrap().count,
+        0,
+        "desk is new and should start with count=0"
+    );
 
     Ok(())
 }
@@ -143,8 +176,11 @@ aliases:
 
     // BUG: "lappy" should have the NEW value but might have cached old value
     let result_lappy = aka_reloaded.replace_with_mode("lappy", aka_lib::ProcessingMode::Direct)?;
-    assert_eq!(result_lappy.trim(), "ssh ltl-7007.lan",
-               "lappy should resolve to NEW value, not old cached value");
+    assert_eq!(
+        result_lappy.trim(),
+        "ssh ltl-7007.lan",
+        "lappy should resolve to NEW value, not old cached value"
+    );
 
     // Step 4: Sync cache again
     let cache_reloaded = sync_cache_with_config_path(&home_dir, &config_path)?;
@@ -152,12 +188,16 @@ aliases:
     let lappy_reloaded = cache_reloaded.aliases.get("lappy").unwrap();
 
     // BUG: The value should be updated
-    assert_eq!(lappy_reloaded.value, "ssh ltl-7007.lan",
-               "lappy value should be updated to ssh ltl-7007.lan");
+    assert_eq!(
+        lappy_reloaded.value, "ssh ltl-7007.lan",
+        "lappy value should be updated to ssh ltl-7007.lan"
+    );
 
     // The properties should be updated too
-    assert_eq!(lappy_reloaded.global, false,
-               "lappy global property should be updated to false");
+    assert_eq!(
+        lappy_reloaded.global, false,
+        "lappy global property should be updated to false"
+    );
 
     // The count should be RESET because it's a different alias now
     // OR at minimum, we should detect the value changed and invalidate the count
@@ -277,8 +317,11 @@ aliases:
     assert_eq!(result_work.trim(), "ssh ltl-7007.lan", "work should work");
 
     let result_lappy = aka_reloaded.replace_with_mode("lappy", aka_lib::ProcessingMode::Direct)?;
-    assert_eq!(result_lappy.trim(), "ssh ltl-7007.lan",
-               "lappy should have NEW value, not old cached value");
+    assert_eq!(
+        result_lappy.trim(),
+        "ssh ltl-7007.lan",
+        "lappy should have NEW value, not old cached value"
+    );
 
     // Verify cache is correct
     let cache_reloaded = sync_cache_with_config_path(&home_dir, &config_path)?;
@@ -317,13 +360,16 @@ aliases:
     // Create a cache with the old value
     let old_hash = hash_config_file(&config_path)?;
     let mut old_aliases = HashMap::new();
-    old_aliases.insert("lappy".to_string(), aka_lib::AliasType {
-        name: "lappy".to_string(),
-        value: "ltl-7007".to_string(),
-        space: true,
-        global: true,
-        count: 4,
-    });
+    old_aliases.insert(
+        "lappy".to_string(),
+        aka_lib::AliasType {
+            name: "lappy".to_string(),
+            value: "ltl-7007".to_string(),
+            space: true,
+            global: true,
+            count: 4,
+        },
+    );
     let old_cache = AliasCache {
         hash: old_hash.clone(),
         aliases: old_aliases,
@@ -342,15 +388,19 @@ aliases:
 
     // The merged cache MUST have the NEW value
     let lappy = merged_cache.aliases.get("lappy").unwrap();
-    assert_eq!(lappy.value, "ssh ltl-7007.lan",
-               "Cache merge must update value when it changes in config");
+    assert_eq!(
+        lappy.value, "ssh ltl-7007.lan",
+        "Cache merge must update value when it changes in config"
+    );
 
     // The count should be preserved
     assert_eq!(lappy.count, 4, "Count should be preserved");
 
     // The global property should be updated
-    assert_eq!(lappy.global, false,
-               "Cache merge must update properties when they change in config");
+    assert_eq!(
+        lappy.global, false,
+        "Cache merge must update properties when they change in config"
+    );
 
     Ok(())
 }
@@ -375,13 +425,16 @@ aliases:
     let old_hash = hash_config_file(&config_path)?;
 
     let mut old_aliases = HashMap::new();
-    old_aliases.insert("home".to_string(), aka_lib::AliasType {
-        name: "home".to_string(),
-        value: "ssh desk.lan".to_string(),
-        space: true,
-        global: false,
-        count: 5,
-    });
+    old_aliases.insert(
+        "home".to_string(),
+        aka_lib::AliasType {
+            name: "home".to_string(),
+            value: "ssh desk.lan".to_string(),
+            space: true,
+            global: false,
+            count: 5,
+        },
+    );
     let old_cache = AliasCache {
         hash: old_hash,
         aliases: old_aliases,
@@ -399,23 +452,26 @@ aliases:
     let merged_cache = merge_cache_with_config_path(old_cache, new_hash, &config_path)?;
 
     // Both "home" and "desk" MUST be in the cache
-    assert!(merged_cache.aliases.contains_key("home"),
-            "home must be in cache");
-    assert!(merged_cache.aliases.contains_key("desk"),
-            "desk must be in cache");
+    assert!(merged_cache.aliases.contains_key("home"), "home must be in cache");
+    assert!(merged_cache.aliases.contains_key("desk"), "desk must be in cache");
 
     // Both should have the same value
     assert_eq!(merged_cache.aliases.get("home").unwrap().value, "ssh desk.lan");
     assert_eq!(merged_cache.aliases.get("desk").unwrap().value, "ssh desk.lan");
 
     // "home" should preserve its count
-    assert_eq!(merged_cache.aliases.get("home").unwrap().count, 5,
-               "home should preserve its count");
+    assert_eq!(
+        merged_cache.aliases.get("home").unwrap().count,
+        5,
+        "home should preserve its count"
+    );
 
     // "desk" is NEW, should have count=0
-    assert_eq!(merged_cache.aliases.get("desk").unwrap().count, 0,
-               "desk is new and must start with count=0");
+    assert_eq!(
+        merged_cache.aliases.get("desk").unwrap().count,
+        0,
+        "desk is new and must start with count=0"
+    );
 
     Ok(())
 }
-

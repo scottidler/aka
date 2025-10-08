@@ -133,11 +133,18 @@ aliases:
 
     // Set environment variable to use our test config
     let output = Command::new("cargo")
-        .args(&["run", "-q", "--", "-c", config_file.to_str().unwrap(), "__complete_aliases"])
+        .args(&[
+            "run",
+            "-q",
+            "--",
+            "-c",
+            config_file.to_str().unwrap(),
+            "__complete_aliases",
+        ])
         .env("HOME", home_dir.to_str().unwrap())
         .env("AKA_LOG_FILE", "/tmp/aka-test-logs/aka.log")
         .env("AKA_CACHE_DIR", "/tmp/aka-test-cache")
-        .env("XDG_RUNTIME_DIR", "/tmp/aka-test-runtime")  // Isolate daemon socket
+        .env("XDG_RUNTIME_DIR", "/tmp/aka-test-runtime") // Isolate daemon socket
         .output()
         .expect("Failed to execute command");
 
@@ -177,11 +184,18 @@ aliases:
 
     // Set environment variable to use our test config
     let output = Command::new("cargo")
-        .args(&["run", "-q", "--", "-c", config_file.to_str().unwrap(), "__complete_aliases"])
+        .args(&[
+            "run",
+            "-q",
+            "--",
+            "-c",
+            config_file.to_str().unwrap(),
+            "__complete_aliases",
+        ])
         .env("HOME", home_dir.to_str().unwrap())
         .env("AKA_LOG_FILE", "/tmp/aka-test-logs/aka.log")
         .env("AKA_CACHE_DIR", "/tmp/aka-test-cache")
-        .env("XDG_RUNTIME_DIR", "/tmp/aka-test-runtime")  // Isolate daemon socket
+        .env("XDG_RUNTIME_DIR", "/tmp/aka-test-runtime") // Isolate daemon socket
         .output()
         .expect("Failed to execute command");
 
@@ -219,11 +233,18 @@ aliases:
 
     // Set environment variable to use our test config
     let output = Command::new("cargo")
-        .args(&["run", "-q", "--", "-c", config_file.to_str().unwrap(), "__complete_aliases"])
+        .args(&[
+            "run",
+            "-q",
+            "--",
+            "-c",
+            config_file.to_str().unwrap(),
+            "__complete_aliases",
+        ])
         .env("HOME", home_dir.to_str().unwrap())
         .env("AKA_LOG_FILE", "/tmp/aka-test-logs/aka.log")
         .env("AKA_CACHE_DIR", "/tmp/aka-test-cache")
-        .env("XDG_RUNTIME_DIR", "/tmp/aka-test-runtime")  // Isolate daemon socket
+        .env("XDG_RUNTIME_DIR", "/tmp/aka-test-runtime") // Isolate daemon socket
         .output()
         .expect("Failed to execute command");
 
@@ -242,7 +263,10 @@ mod daemon_tests {
     /// Test that CompleteAliases request can be serialized/deserialized
     #[test]
     fn test_complete_aliases_protocol_serialization() {
-        let request = DaemonRequest::CompleteAliases { config: None };
+        let request = DaemonRequest::CompleteAliases {
+            version: "v0.5.0".to_string(),
+            config: None,
+        };
 
         // Test serialization
         let serialized = serde_json::to_string(&request).expect("Should serialize");
@@ -251,7 +275,7 @@ mod daemon_tests {
         // Test deserialization
         let deserialized: DaemonRequest = serde_json::from_str(&serialized).expect("Should deserialize");
         match deserialized {
-            DaemonRequest::CompleteAliases { config: _ } => {}, // Success
+            DaemonRequest::CompleteAliases { .. } => {} // Success
             _ => panic!("Wrong variant deserialized"),
         }
     }
@@ -259,10 +283,14 @@ mod daemon_tests {
     /// Test the protocol message format
     #[test]
     fn test_complete_aliases_protocol_format() {
-        let request = DaemonRequest::CompleteAliases { config: None };
+        let request = DaemonRequest::CompleteAliases {
+            version: "v0.5.0".to_string(),
+            config: None,
+        };
         let json = serde_json::to_string(&request).expect("Should serialize");
 
-        // Should match the expected JSON format
-        assert_eq!(json, r#"{"type":"CompleteAliases","config":null}"#);
+        // Should contain the type tag and version field
+        assert!(json.contains("\"type\":\"CompleteAliases\""));
+        assert!(json.contains("\"version\":\"v0.5.0\""));
     }
 }

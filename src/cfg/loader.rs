@@ -1,10 +1,9 @@
 use eyre::{Error, Result, WrapErr};
-use std::fs;
-use std::path::PathBuf;
 use std::collections::HashMap;
+use std::fs;
 
-use super::spec::Spec;
 use super::alias::Alias;
+use super::spec::Spec;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Loader {}
@@ -21,9 +20,9 @@ impl Loader {
     ///
     /// Will return `Err` if `filename` does not exist, the user does not have permission to read it,
     /// or the configuration contains validation errors.
-    pub fn load(&self, filename: &PathBuf) -> Result<Spec, Error> {
-        use std::time::Instant;
+    pub fn load(&self, filename: &std::path::Path) -> Result<Spec, Error> {
         use log::debug;
+        use std::time::Instant;
 
         let start_total = Instant::now();
 
@@ -37,7 +36,8 @@ impl Loader {
 
         // Time YAML deserialization
         let start_yaml = Instant::now();
-        let mut spec: Spec = serde_yaml::from_str(&content).context(format!("Can't parse YAML from file={filename:?}"))?;
+        let mut spec: Spec =
+            serde_yaml::from_str(&content).context(format!("Can't parse YAML from file={filename:?}"))?;
         let yaml_duration = start_yaml.elapsed();
 
         // Time validation
@@ -67,15 +67,14 @@ impl Loader {
     }
 
     /// Validate file accessibility and permissions
-    fn validate_file_accessibility(&self, config_path: &PathBuf) -> Result<()> {
+    fn validate_file_accessibility(&self, config_path: &std::path::Path) -> Result<()> {
         // Check if file exists
         if !config_path.exists() {
             return Err(eyre::eyre!("Config file does not exist: {:?}", config_path));
         }
 
         // Check if it's a regular file
-        let metadata = fs::metadata(config_path)
-            .context(format!("Failed to get metadata for {:?}", config_path))?;
+        let metadata = fs::metadata(config_path).context(format!("Failed to get metadata for {config_path:?}"))?;
 
         if !metadata.is_file() {
             return Err(eyre::eyre!("Config path is not a regular file: {:?}", config_path));
@@ -84,15 +83,19 @@ impl Loader {
         // Check file size (reasonable limit)
         const MAX_CONFIG_SIZE: u64 = 10 * 1024 * 1024; // 10MB
         if metadata.len() > MAX_CONFIG_SIZE {
-            return Err(eyre::eyre!("Config file too large: {:?} ({} bytes, max {} bytes)",
-                config_path, metadata.len(), MAX_CONFIG_SIZE));
+            return Err(eyre::eyre!(
+                "Config file too large: {:?} ({} bytes, max {} bytes)",
+                config_path,
+                metadata.len(),
+                MAX_CONFIG_SIZE
+            ));
         }
 
         Ok(())
     }
 
     /// Comprehensive configuration validation with enhanced error context
-    fn validate_config(&self, spec: &Spec, config_path: &PathBuf) -> Result<()> {
+    fn validate_config(&self, spec: &Spec, config_path: &std::path::Path) -> Result<()> {
         // Validate aliases
         self.validate_aliases(&spec.aliases, config_path)?;
 
@@ -106,11 +109,13 @@ impl Loader {
     }
 
     /// Validate alias definitions
-    fn validate_aliases(&self, aliases: &HashMap<String, Alias>, config_path: &PathBuf) -> Result<()> {
+    fn validate_aliases(&self, aliases: &HashMap<String, Alias>, config_path: &std::path::Path) -> Result<()> {
         let mut errors = Vec::new();
 
         if aliases.is_empty() {
-            errors.push(format!("No aliases defined in {:?}. Add at least one alias to make the configuration useful.", config_path));
+            errors.push(format!(
+                "No aliases defined in {config_path:?}. Add at least one alias to make the configuration useful."
+            ));
         }
 
         for (name, alias) in aliases {
@@ -121,16 +126,22 @@ impl Loader {
             }
 
             if name.contains(' ') {
-                errors.push(format!("Alias name '{}' contains spaces. Use underscores or hyphens instead.", name));
+                errors.push(format!(
+                    "Alias name '{name}' contains spaces. Use underscores or hyphens instead."
+                ));
             }
 
             if name.starts_with('-') {
-                errors.push(format!("Alias name '{}' starts with hyphen. This may conflict with command flags.", name));
+                errors.push(format!(
+                    "Alias name '{name}' starts with hyphen. This may conflict with command flags."
+                ));
             }
 
             // Validate alias value
             if alias.value.is_empty() {
-                errors.push(format!("Alias '{}' has empty value. Provide a command or value for the alias.", name));
+                errors.push(format!(
+                    "Alias '{name}' has empty value. Provide a command or value for the alias."
+                ));
             }
 
             // Note: Users should have full control over their aliases
@@ -147,7 +158,11 @@ impl Loader {
     }
 
     /// Validate lookup definitions
-    fn validate_lookups(&self, lookups: &HashMap<String, HashMap<String, String>>, _config_path: &PathBuf) -> Result<()> {
+    fn validate_lookups(
+        &self,
+        lookups: &HashMap<String, HashMap<String, String>>,
+        _config_path: &std::path::Path,
+    ) -> Result<()> {
         let mut errors = Vec::new();
 
         for (lookup_name, lookup_map) in lookups {
@@ -157,16 +172,22 @@ impl Loader {
             }
 
             if lookup_map.is_empty() {
-                errors.push(format!("Lookup '{}' is empty. Add key-value pairs or remove it.", lookup_name));
+                errors.push(format!(
+                    "Lookup '{lookup_name}' is empty. Add key-value pairs or remove it."
+                ));
             }
 
             for (key, value) in lookup_map {
                 if key.is_empty() {
-                    errors.push(format!("Empty key in lookup '{}'. Lookup keys must be non-empty.", lookup_name));
+                    errors.push(format!(
+                        "Empty key in lookup '{lookup_name}'. Lookup keys must be non-empty."
+                    ));
                 }
 
                 if value.is_empty() {
-                    errors.push(format!("Empty value for key '{}' in lookup '{}'. Lookup values must be non-empty.", key, lookup_name));
+                    errors.push(format!(
+                        "Empty value for key '{key}' in lookup '{lookup_name}'. Lookup values must be non-empty."
+                    ));
                 }
             }
         }
@@ -179,7 +200,7 @@ impl Loader {
     }
 
     /// Validate cross-references between aliases and lookups
-    fn validate_cross_references(&self, spec: &Spec, _config_path: &PathBuf) -> Result<()> {
+    fn validate_cross_references(&self, spec: &Spec, _config_path: &std::path::Path) -> Result<()> {
         let mut errors = Vec::new();
 
         // Check for lookup references in aliases
@@ -190,7 +211,9 @@ impl Loader {
 
                 for lookup_ref in lookup_refs {
                     if !spec.lookups.contains_key(&lookup_ref) {
-                        errors.push(format!("Alias '{}' references undefined lookup '{}'. Define the lookup or fix the reference.", alias_name, lookup_ref));
+                        errors.push(format!(
+                            "Alias '{alias_name}' references undefined lookup '{lookup_ref}'. Define the lookup or fix the reference."
+                        ));
                     }
                 }
             }
@@ -212,10 +235,10 @@ impl Loader {
         let mut references = Vec::new();
 
         // Look for patterns like "lookup:name[key]"
-        let mut chars = value.chars().peekable();
+        let chars = value.chars().peekable();
         let mut current_pos = 0;
 
-        while let Some(ch) = chars.next() {
+        for ch in chars {
             if ch == 'l' && value[current_pos..].starts_with("lookup:") {
                 // Found a lookup reference
                 let start = current_pos + 7; // Skip "lookup:"
@@ -246,6 +269,7 @@ mod tests {
     use super::*;
     use std::collections::HashMap;
     use std::io::Write;
+    use std::path::PathBuf;
     use tempfile::NamedTempFile;
 
     use crate::Alias;

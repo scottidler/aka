@@ -1,6 +1,6 @@
+use aka_lib::{get_config_path, get_config_path_with_override, ConfigLoader, ProcessingMode, AKA};
 use std::fs;
 use tempfile::TempDir;
-use aka_lib::{get_config_path, get_config_path_with_override, AKA, ConfigLoader, ProcessingMode};
 
 /// Test that config path resolution is consistent between daemon and direct mode
 #[test]
@@ -26,8 +26,8 @@ aliases:
     assert_eq!(resolved_path, config_file);
 
     // Test config path with no override
-    let resolved_path_no_override = get_config_path_with_override(&home_dir, &None)
-        .expect("Failed to resolve config path with no override");
+    let resolved_path_no_override =
+        get_config_path_with_override(&home_dir, &None).expect("Failed to resolve config path with no override");
     assert_eq!(resolved_path_no_override, config_file);
 
     // Test config path with override
@@ -225,12 +225,14 @@ aliases:
     fs::write(&config_file, test_config).expect("Failed to write config file");
 
     // Test direct mode initialization
-    let aka_direct = AKA::new(false, home_dir.clone(), config_file.clone()).expect("Failed to create AKA for direct mode");
+    let aka_direct =
+        AKA::new(false, home_dir.clone(), config_file.clone()).expect("Failed to create AKA for direct mode");
     assert_eq!(aka_direct.spec.aliases.len(), 2);
     assert!(!aka_direct.eol);
 
     // Test daemon mode initialization (simulated)
-    let aka_daemon = AKA::new(false, home_dir.clone(), config_file.clone()).expect("Failed to create AKA for daemon mode");
+    let aka_daemon =
+        AKA::new(false, home_dir.clone(), config_file.clone()).expect("Failed to create AKA for daemon mode");
     assert_eq!(aka_daemon.spec.aliases.len(), 2);
     assert!(!aka_daemon.eol);
 
@@ -239,7 +241,11 @@ aliases:
 
     // Both should have the same aliases
     for (name, alias) in &aka_direct.spec.aliases {
-        let daemon_alias = aka_daemon.spec.aliases.get(name).expect("Alias should exist in daemon mode");
+        let daemon_alias = aka_daemon
+            .spec
+            .aliases
+            .get(name)
+            .expect("Alias should exist in daemon mode");
         assert_eq!(alias.value, daemon_alias.value);
         assert_eq!(alias.global, daemon_alias.global);
     }
@@ -273,30 +279,30 @@ lookups:
 
     // Test both EOL modes
     for eol in [true, false] {
-        let mut aka_direct = AKA::new(eol, home_dir.clone(), config_file.clone()).expect("Failed to create AKA for direct mode");
-        let mut aka_daemon = AKA::new(eol, home_dir.clone(), config_file.clone()).expect("Failed to create AKA for daemon mode");
+        let mut aka_direct =
+            AKA::new(eol, home_dir.clone(), config_file.clone()).expect("Failed to create AKA for direct mode");
+        let mut aka_daemon =
+            AKA::new(eol, home_dir.clone(), config_file.clone()).expect("Failed to create AKA for daemon mode");
 
         // Test alias processing
-        let test_cases = vec![
-            "test-alias",
-            "global-alias",
-            "sudo test-alias",
-            "test-alias arg1 arg2",
-        ];
+        let test_cases = vec!["test-alias", "global-alias", "sudo test-alias", "test-alias arg1 arg2"];
 
         for test_case in test_cases {
-            let direct_result = aka_direct.replace_with_mode(test_case, ProcessingMode::Direct)
+            let direct_result = aka_direct
+                .replace_with_mode(test_case, ProcessingMode::Direct)
                 .expect("Direct mode should work");
-            let daemon_result = aka_daemon.replace_with_mode(test_case, ProcessingMode::Daemon)
+            let daemon_result = aka_daemon
+                .replace_with_mode(test_case, ProcessingMode::Daemon)
                 .expect("Daemon mode should work");
 
-            assert_eq!(direct_result, daemon_result,
-                "Results should be identical for '{}' with eol={}", test_case, eol);
+            assert_eq!(
+                direct_result, daemon_result,
+                "Results should be identical for '{}' with eol={}",
+                test_case, eol
+            );
         }
     }
 }
-
-
 
 /// Test that apparent circular references are allowed (common pattern: ls -> ls --color=auto)
 #[test]
@@ -320,7 +326,10 @@ aliases:
     let loader = ConfigLoader::new();
     let result = loader.load(&config_file);
     // Should succeed - aliases that reference their base command are common and valid
-    assert!(result.is_ok(), "Aliases referencing their base command should be allowed");
+    assert!(
+        result.is_ok(),
+        "Aliases referencing their base command should be allowed"
+    );
 
     let spec = result.unwrap();
     assert_eq!(spec.aliases.len(), 2);

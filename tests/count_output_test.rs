@@ -41,8 +41,11 @@ aliases:
     assert!(result.stdout.contains("test3 -> echo test3"));
 
     // Check that the last line is the count line
-    assert!(lines[lines.len()-1].starts_with("count: "), "Last line should be count line");
-    assert!(lines[lines.len()-1].contains("3"), "Count should be 3 for 3 aliases");
+    assert!(
+        lines[lines.len() - 1].starts_with("count: "),
+        "Last line should be count line"
+    );
+    assert!(lines[lines.len() - 1].contains("3"), "Count should be 3 for 3 aliases");
 }
 
 #[test]
@@ -78,8 +81,11 @@ aliases:
     assert!(result.stdout.contains("freq2"));
 
     // Check that the last line is the count line
-    assert!(lines[lines.len()-1].starts_with("count: "), "Last line should be count line");
-    assert!(lines[lines.len()-1].contains("2"), "Count should be 2 for 2 aliases");
+    assert!(
+        lines[lines.len() - 1].starts_with("count: "),
+        "Last line should be count line"
+    );
+    assert!(lines[lines.len() - 1].contains("2"), "Count should be 2 for 2 aliases");
 }
 
 #[test]
@@ -121,8 +127,14 @@ aliases:
     let freq_count_line = freq_lines.last().unwrap();
 
     // Both should start with "count: " and contain "2"
-    assert!(ls_count_line.starts_with("count: "), "ls count line should start with 'count: '");
-    assert!(freq_count_line.starts_with("count: "), "freq count line should start with 'count: '");
+    assert!(
+        ls_count_line.starts_with("count: "),
+        "ls count line should start with 'count: '"
+    );
+    assert!(
+        freq_count_line.starts_with("count: "),
+        "freq count line should start with 'count: '"
+    );
     assert!(ls_count_line.contains("2"), "ls count should be 2");
     assert!(freq_count_line.contains("2"), "freq count should be 2");
 }

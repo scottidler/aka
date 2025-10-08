@@ -27,16 +27,15 @@ pub fn ensure_aka_binary_built() {
         .expect("Failed to build aka binary");
 
     if !output.status.success() {
-        panic!("Failed to build aka binary: {}", String::from_utf8_lossy(&output.stderr));
+        panic!(
+            "Failed to build aka binary: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
     }
 }
 
 /// Run an aka command with flexible environment configuration
-pub fn run_aka_command(
-    args: &[&str],
-    temp_dir: Option<&TempDir>,
-    config_file: Option<&Path>
-) -> AkaCommandResult {
+pub fn run_aka_command(args: &[&str], temp_dir: Option<&TempDir>, config_file: Option<&Path>) -> AkaCommandResult {
     let aka_binary = get_aka_binary_path();
     let mut cmd = Command::new(&aka_binary);
 

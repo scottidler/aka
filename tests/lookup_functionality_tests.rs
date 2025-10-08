@@ -1,8 +1,8 @@
+use aka_lib::{cfg::loader::Loader, AKA};
 use eyre::Result;
 use std::collections::HashMap;
-use tempfile::NamedTempFile;
 use std::io::Write;
-use aka_lib::{AKA, cfg::{loader::Loader}};
+use tempfile::NamedTempFile;
 
 /// Test that pipe-separated lookup keys are properly expanded
 #[test]
@@ -125,8 +125,12 @@ lookups:
     assert_eq!(result, "aws eks --region us-east-1 update-kubeconfig ");
 
     // Test multiple lookups in same command
-    let result = aka.replace("aws --profile lookup:account[prod] eks --region lookup:region[prod] update-kubeconfig")?;
-    assert_eq!(result, "aws --profile 123456789 eks --region us-east-1 update-kubeconfig ");
+    let result =
+        aka.replace("aws --profile lookup:account[prod] eks --region lookup:region[prod] update-kubeconfig")?;
+    assert_eq!(
+        result,
+        "aws --profile 123456789 eks --region us-east-1 update-kubeconfig "
+    );
 
     // Test the original failing case
     let result = aka.replace("aws eks --region lookup:region[test] update-kubeconfig --name test --alias test --role-arn arn:aws:iam::878256633362:role/eks-test-admin")?;
@@ -158,30 +162,50 @@ lookups:
     let result = aka.replace("aws --region lookup:region[unknown] update-kubeconfig")?;
     // The result might be empty or contain the original text - both are acceptable for unknown lookups
     if !result.is_empty() {
-        assert!(result.contains("lookup:region[unknown]"), "Unknown lookup should remain unchanged: {}", result);
+        assert!(
+            result.contains("lookup:region[unknown]"),
+            "Unknown lookup should remain unchanged: {}",
+            result
+        );
     }
 
     // Test unknown lookup table - should remain unchanged
     let result = aka.replace("aws --region lookup:unknown[test] update-kubeconfig")?;
     if !result.is_empty() {
-        assert!(result.contains("lookup:unknown[test]"), "Unknown lookup table should remain unchanged: {}", result);
+        assert!(
+            result.contains("lookup:unknown[test]"),
+            "Unknown lookup table should remain unchanged: {}",
+            result
+        );
     }
 
     // Test unknown lookup table - should remain unchanged
     let result = aka.replace("aws --region lookup:nonexistent[test] update-kubeconfig")?;
     if !result.is_empty() {
-        assert!(result.contains("lookup:nonexistent[test]"), "Nonexistent lookup should remain unchanged: {}", result);
+        assert!(
+            result.contains("lookup:nonexistent[test]"),
+            "Nonexistent lookup should remain unchanged: {}",
+            result
+        );
     }
 
     // Test malformed lookup syntax - should remain unchanged
     let result = aka.replace("aws --region lookup:region test update-kubeconfig")?;
     if !result.is_empty() {
-        assert!(result.contains("lookup:region"), "Malformed lookup should remain unchanged: {}", result);
+        assert!(
+            result.contains("lookup:region"),
+            "Malformed lookup should remain unchanged: {}",
+            result
+        );
     }
 
     let result = aka.replace("aws --region lookup:region[test update-kubeconfig")?;
     if !result.is_empty() {
-        assert!(result.contains("lookup:region[test"), "Malformed lookup should remain unchanged: {}", result);
+        assert!(
+            result.contains("lookup:region[test"),
+            "Malformed lookup should remain unchanged: {}",
+            result
+        );
     }
 
     Ok(())
@@ -211,8 +235,16 @@ lookups:
     let result = aka.replace(original_failing_command)?;
 
     // If expansion is working, lookup:region[test] should be replaced with us-west-2
-    assert!(result.contains("us-west-2"), "lookup:region[test] should be replaced with us-west-2, but got: {}", result);
-    assert!(!result.contains("lookup:region[test]"), "lookup:region[test] should be replaced, not left as-is: {}", result);
+    assert!(
+        result.contains("us-west-2"),
+        "lookup:region[test] should be replaced with us-west-2, but got: {}",
+        result
+    );
+    assert!(
+        !result.contains("lookup:region[test]"),
+        "lookup:region[test] should be replaced, not left as-is: {}",
+        result
+    );
 
     // Test all the expanded keys work
     assert_eq!(aka.replace("lookup:region[prod]")?, "us-east-1 ");
@@ -224,10 +256,14 @@ lookups:
 
     // Test that the original pipe-separated keys are NOT present in the final HashMap
     // This ensures the expansion actually happened
-    assert!(!aka.spec.lookups["region"].contains_key("prod|apps"),
-        "Original pipe-separated key 'prod|apps' should be expanded and removed");
-    assert!(!aka.spec.lookups["region"].contains_key("staging|test|dev|ops"),
-        "Original pipe-separated key 'staging|test|dev|ops' should be expanded and removed");
+    assert!(
+        !aka.spec.lookups["region"].contains_key("prod|apps"),
+        "Original pipe-separated key 'prod|apps' should be expanded and removed"
+    );
+    assert!(
+        !aka.spec.lookups["region"].contains_key("staging|test|dev|ops"),
+        "Original pipe-separated key 'staging|test|dev|ops' should be expanded and removed"
+    );
 
     Ok(())
 }

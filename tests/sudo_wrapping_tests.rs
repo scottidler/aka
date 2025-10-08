@@ -1,6 +1,6 @@
 use aka_lib::*;
-use tempfile::TempDir;
 use std::fs;
+use tempfile::TempDir;
 
 #[test]
 fn test_sudo_wrapping_scenarios() {
@@ -29,7 +29,12 @@ aliases:
 "#;
     fs::write(&config_file, test_config).expect("Failed to write config");
 
-    let mut aka = AKA::new(false, home_dir.clone(), get_config_path(&home_dir).expect("Failed to get config path")).expect("Failed to create AKA");
+    let mut aka = AKA::new(
+        false,
+        home_dir.clone(),
+        get_config_path(&home_dir).expect("Failed to get config path"),
+    )
+    .expect("Failed to create AKA");
 
     // Test cases
     let test_cases = vec![
@@ -46,13 +51,21 @@ aliases:
         let result = aka.replace(input).expect("Should process command");
 
         if should_not_double_wrap {
-            assert!(!result.contains("$(which $(which"),
-                   "Should not double-wrap {}: '{}'", description, result);
+            assert!(
+                !result.contains("$(which $(which"),
+                "Should not double-wrap {}: '{}'",
+                description,
+                result
+            );
         }
 
         // Should always contain sudo
-        assert!(result.contains("sudo"),
-               "Should contain sudo for {}: '{}'", description, result);
+        assert!(
+            result.contains("sudo"),
+            "Should contain sudo for {}: '{}'",
+            description,
+            result
+        );
 
         println!("✅ {} -> {}", input, result);
     }
@@ -77,7 +90,12 @@ aliases:
 "#;
     fs::write(&config_file, test_config).expect("Failed to write config");
 
-    let mut aka = AKA::new(false, home_dir.clone(), get_config_path(&home_dir).expect("Failed to get config path")).expect("Failed to create AKA");
+    let mut aka = AKA::new(
+        false,
+        home_dir.clone(),
+        get_config_path(&home_dir).expect("Failed to get config path"),
+    )
+    .expect("Failed to create AKA");
 
     // First application
     let result1 = aka.replace("sudo ls").expect("First application should work");
@@ -88,19 +106,31 @@ aliases:
     println!("Second application: {} -> {}", result1.trim(), result2);
 
     // Should not double-wrap or add multiple sudos
-    assert!(!result2.contains("$(which $(which"),
-           "Should not double-wrap: '{}'", result2);
-    assert!(!result2.contains("sudo sudo"),
-           "Should not have multiple sudos: '{}'", result2);
+    assert!(
+        !result2.contains("$(which $(which"),
+        "Should not double-wrap: '{}'",
+        result2
+    );
+    assert!(
+        !result2.contains("sudo sudo"),
+        "Should not have multiple sudos: '{}'",
+        result2
+    );
 
     // Third application should also be idempotent
     let result3 = aka.replace(&result2.trim()).expect("Third application should work");
     println!("Third application: {} -> {}", result2.trim(), result3);
 
-    assert!(!result3.contains("$(which $(which $(which"),
-           "Should not triple-wrap: '{}'", result3);
-    assert!(!result3.contains("sudo sudo sudo"),
-           "Should not have triple sudos: '{}'", result3);
+    assert!(
+        !result3.contains("$(which $(which $(which"),
+        "Should not triple-wrap: '{}'",
+        result3
+    );
+    assert!(
+        !result3.contains("sudo sudo sudo"),
+        "Should not have triple sudos: '{}'",
+        result3
+    );
 }
 
 #[test]
@@ -122,7 +152,12 @@ aliases:
 "#;
     fs::write(&config_file, test_config).expect("Failed to write config");
 
-    let mut aka = AKA::new(false, home_dir.clone(), get_config_path(&home_dir).expect("Failed to get config path")).expect("Failed to create AKA");
+    let mut aka = AKA::new(
+        false,
+        home_dir.clone(),
+        get_config_path(&home_dir).expect("Failed to get config path"),
+    )
+    .expect("Failed to create AKA");
 
     // Complex commands that should not be wrapped
     let complex_commands = vec![
@@ -139,16 +174,24 @@ aliases:
         let result = aka.replace(input).expect("Should handle complex command");
 
         // Should not wrap the complex part
-        assert!(!result.contains("$(which ls -la"),
-               "Should not wrap complex command: '{}'", result);
-        assert!(!result.contains("$(which cat file.txt"),
-               "Should not wrap complex command: '{}'", result);
-        assert!(!result.contains("$(which grep pattern"),
-               "Should not wrap complex command: '{}'", result);
+        assert!(
+            !result.contains("$(which ls -la"),
+            "Should not wrap complex command: '{}'",
+            result
+        );
+        assert!(
+            !result.contains("$(which cat file.txt"),
+            "Should not wrap complex command: '{}'",
+            result
+        );
+        assert!(
+            !result.contains("$(which grep pattern"),
+            "Should not wrap complex command: '{}'",
+            result
+        );
 
         // Should contain sudo
-        assert!(result.contains("sudo"),
-               "Should contain sudo: '{}'", result);
+        assert!(result.contains("sudo"), "Should contain sudo: '{}'", result);
 
         println!("✅ Complex command: {} -> {}", input, result);
     }
@@ -173,7 +216,12 @@ aliases:
 "#;
     fs::write(&config_file, test_config).expect("Failed to write config");
 
-    let mut aka = AKA::new(false, home_dir.clone(), get_config_path(&home_dir).expect("Failed to get config path")).expect("Failed to create AKA");
+    let mut aka = AKA::new(
+        false,
+        home_dir.clone(),
+        get_config_path(&home_dir).expect("Failed to get config path"),
+    )
+    .expect("Failed to create AKA");
 
     // Test with commands that definitely don't exist
     let nonexistent_commands = vec![
@@ -186,16 +234,24 @@ aliases:
         let result = aka.replace(input).expect("Should handle nonexistent command");
 
         // Should not wrap commands that don't exist for the user
-        assert!(!result.contains("$(which nonexistent"),
-               "Should not wrap nonexistent command: '{}'", result);
-        assert!(!result.contains("$(which fake_binary"),
-               "Should not wrap nonexistent command: '{}'", result);
-        assert!(!result.contains("$(which this_command"),
-               "Should not wrap nonexistent command: '{}'", result);
+        assert!(
+            !result.contains("$(which nonexistent"),
+            "Should not wrap nonexistent command: '{}'",
+            result
+        );
+        assert!(
+            !result.contains("$(which fake_binary"),
+            "Should not wrap nonexistent command: '{}'",
+            result
+        );
+        assert!(
+            !result.contains("$(which this_command"),
+            "Should not wrap nonexistent command: '{}'",
+            result
+        );
 
         // Should still contain sudo
-        assert!(result.contains("sudo"),
-               "Should contain sudo: '{}'", result);
+        assert!(result.contains("sudo"), "Should contain sudo: '{}'", result);
 
         println!("✅ Nonexistent command: {} -> {}", input, result);
     }
@@ -220,12 +276,17 @@ aliases:
 "#;
     fs::write(&config_file, test_config).expect("Failed to write config");
 
-    let mut aka = AKA::new(false, home_dir.clone(), get_config_path(&home_dir).expect("Failed to get config path")).expect("Failed to create AKA");
+    let mut aka = AKA::new(
+        false,
+        home_dir.clone(),
+        get_config_path(&home_dir).expect("Failed to get config path"),
+    )
+    .expect("Failed to create AKA");
 
     // Edge cases
     let edge_cases = vec![
         ("sudo", "sudo "),  // Just sudo
-        ("sudo ", "sudo "),  // Sudo with space
+        ("sudo ", "sudo "), // Sudo with space
     ];
 
     for (input, expected) in edge_cases {
@@ -233,8 +294,11 @@ aliases:
         assert_eq!(result, expected, "Edge case '{}' failed", input);
 
         // Should not create malformed commands
-        assert!(!result.contains("$(which $(which"),
-               "Should not create malformed wrapping: '{}'", result);
+        assert!(
+            !result.contains("$(which $(which"),
+            "Should not create malformed wrapping: '{}'",
+            result
+        );
 
         println!("✅ Edge case: {} -> {}", input, result);
     }
@@ -267,7 +331,12 @@ aliases:
 "#;
     fs::write(&config_file, test_config).expect("Failed to write config");
 
-    let mut aka = AKA::new(false, home_dir.clone(), get_config_path(&home_dir).expect("Failed to get config path")).expect("Failed to create AKA");
+    let mut aka = AKA::new(
+        false,
+        home_dir.clone(),
+        get_config_path(&home_dir).expect("Failed to get config path"),
+    )
+    .expect("Failed to create AKA");
 
     // Test that alias expansion still works with sudo
     let test_cases = vec![
@@ -280,18 +349,24 @@ aliases:
         let result = aka.replace(input).expect("Should expand alias");
 
         // Should contain sudo and the expanded alias
-        assert!(result.contains("sudo"),
-               "Should contain sudo: '{}'", result);
+        assert!(result.contains("sudo"), "Should contain sudo: '{}'", result);
         // Note: the alias might be wrapped with $(which) so we check for individual parts
         let alias_parts: Vec<&str> = expected_alias.split_whitespace().collect();
         for part in alias_parts {
-            assert!(result.contains(part),
-                   "Should contain alias part '{}': '{}'", part, result);
+            assert!(
+                result.contains(part),
+                "Should contain alias part '{}': '{}'",
+                part,
+                result
+            );
         }
 
         // Should not double-wrap
-        assert!(!result.contains("$(which $(which"),
-               "Should not double-wrap: '{}'", result);
+        assert!(
+            !result.contains("$(which $(which"),
+            "Should not double-wrap: '{}'",
+            result
+        );
 
         println!("✅ Alias expansion: {} -> {}", input, result);
     }
@@ -316,24 +391,32 @@ aliases:
 "#;
     fs::write(&config_file, test_config).expect("Failed to write config");
 
-    let mut aka = AKA::new(false, home_dir.clone(), get_config_path(&home_dir).expect("Failed to get config path")).expect("Failed to create AKA");
+    let mut aka = AKA::new(
+        false,
+        home_dir.clone(),
+        get_config_path(&home_dir).expect("Failed to get config path"),
+    )
+    .expect("Failed to create AKA");
 
     // Test that arguments are preserved
     let result = aka.replace("sudo ls -la --color").expect("Should preserve arguments");
 
     // Should contain sudo, the expanded alias, and the arguments
-    assert!(result.contains("sudo"),
-           "Should contain sudo: '{}'", result);
-    assert!(result.contains("eza"),
-           "Should contain expanded alias: '{}'", result);
-    assert!(result.contains("-la"),
-           "Should contain first argument: '{}'", result);
-    assert!(result.contains("--color"),
-           "Should contain second argument: '{}'", result);
+    assert!(result.contains("sudo"), "Should contain sudo: '{}'", result);
+    assert!(result.contains("eza"), "Should contain expanded alias: '{}'", result);
+    assert!(result.contains("-la"), "Should contain first argument: '{}'", result);
+    assert!(
+        result.contains("--color"),
+        "Should contain second argument: '{}'",
+        result
+    );
 
     // Should not double-wrap
-    assert!(!result.contains("$(which $(which"),
-           "Should not double-wrap: '{}'", result);
+    assert!(
+        !result.contains("$(which $(which"),
+        "Should not double-wrap: '{}'",
+        result
+    );
 
     println!("✅ Arguments preserved: sudo ls -la --color -> {}", result);
 }
@@ -357,7 +440,12 @@ aliases:
 "#;
     fs::write(&config_file, test_config).expect("Failed to write config");
 
-    let mut aka = AKA::new(false, home_dir.clone(), get_config_path(&home_dir).expect("Failed to get config path")).expect("Failed to create AKA");
+    let mut aka = AKA::new(
+        false,
+        home_dir.clone(),
+        get_config_path(&home_dir).expect("Failed to get config path"),
+    )
+    .expect("Failed to create AKA");
 
     // Test that repeated applications are consistent
     let input = "sudo ls";
@@ -370,10 +458,18 @@ aliases:
         let which_count = result.matches("$(which").count();
         let sudo_count = result.matches("sudo").count();
 
-        assert!(which_count <= 1,
-               "Should not accumulate $(which) wrappers (iteration {}): '{}'", i, result);
-        assert!(sudo_count <= 1,
-               "Should not accumulate sudo commands (iteration {}): '{}'", i, result);
+        assert!(
+            which_count <= 1,
+            "Should not accumulate $(which) wrappers (iteration {}): '{}'",
+            i,
+            result
+        );
+        assert!(
+            sudo_count <= 1,
+            "Should not accumulate sudo commands (iteration {}): '{}'",
+            i,
+            result
+        );
 
         current = result.trim().to_string();
         println!("Iteration {}: {}", i, current);

@@ -1,13 +1,13 @@
+use std::fs;
+use std::path::PathBuf;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Barrier};
 use std::thread;
 use std::time::{Duration, Instant};
-use std::fs;
-use std::path::PathBuf;
 use tempfile::TempDir;
-use std::sync::atomic::{AtomicUsize, Ordering};
 
 // Import the actual daemon types
-use aka_lib::{AKA, hash_config_file, get_config_path};
+use aka_lib::{get_config_path, hash_config_file, AKA};
 
 #[cfg(test)]
 mod actual_daemon_race_conditions {
@@ -57,7 +57,12 @@ aliases:
         let (_temp_dir, config_path, home_dir) = setup_test_environment("actual_race_condition");
 
         // Load initial config exactly like the real daemon
-        let initial_aka = AKA::new(false, home_dir.clone(), get_config_path(&home_dir).expect("Failed to get config path")).expect("Failed to load initial config");
+        let initial_aka = AKA::new(
+            false,
+            home_dir.clone(),
+            get_config_path(&home_dir).expect("Failed to get config path"),
+        )
+        .expect("Failed to load initial config");
         let initial_hash = hash_config_file(&config_path).expect("Failed to hash config");
 
         // Use the ACTUAL daemon structure - separate Arc<RwLock<T>> instances
@@ -88,17 +93,24 @@ aliases:
 
             // ACTUAL daemon reload logic - this is the problematic code!
             let new_hash = hash_config_file(&config_path_reload).expect("Failed to hash updated config");
-            let new_aka = AKA::new(false, home_dir_reload.clone(), get_config_path(&home_dir_reload).expect("Failed to get config path")).expect("Failed to load updated config");
+            let new_aka = AKA::new(
+                false,
+                home_dir_reload.clone(),
+                get_config_path(&home_dir_reload).expect("Failed to get config path"),
+            )
+            .expect("Failed to load updated config");
 
             // NEW: Test the FIXED daemon reload logic - atomic updates
             // Update stored config and hash atomically (hold both locks simultaneously)
             {
                 let mut aka_guard = aka_reload.write().expect("Failed to acquire write lock on AKA");
-                let mut hash_guard = config_hash_reload.write().expect("Failed to acquire write lock on config hash");
+                let mut hash_guard = config_hash_reload
+                    .write()
+                    .expect("Failed to acquire write lock on config hash");
 
                 *aka_guard = new_aka;
                 *hash_guard = new_hash.clone();
-            }  // ✅ Both locks released together - no race window
+            } // ✅ Both locks released together - no race window
         });
 
         // Query thread 1 - simulates client queries during reload
@@ -120,7 +132,9 @@ aliases:
                 };
 
                 let stored_hash = {
-                    let hash_guard = config_hash_query1.read().expect("Failed to acquire read lock on config hash");
+                    let hash_guard = config_hash_query1
+                        .read()
+                        .expect("Failed to acquire read lock on config hash");
                     hash_guard.clone()
                 };
 
@@ -136,9 +150,10 @@ aliases:
                             if stored_hash != current_file_hash {
                                 // RACE CONDITION DETECTED!
                                 race_conditions_query1.fetch_add(1, Ordering::Relaxed);
-                                inconsistent_reads_query1.lock().unwrap().push(
-                                    format!("Thread1-Iter{}: New config (3 aliases) but old hash stored", i)
-                                );
+                                inconsistent_reads_query1
+                                    .lock()
+                                    .unwrap()
+                                    .push(format!("Thread1-Iter{}: New config (3 aliases) but old hash stored", i));
                             }
                         }
                     }
@@ -168,7 +183,9 @@ aliases:
                 };
 
                 let current_hash = {
-                    let hash_guard = config_hash_query2.read().expect("Failed to acquire read lock on config hash");
+                    let hash_guard = config_hash_query2
+                        .read()
+                        .expect("Failed to acquire read lock on config hash");
                     hash_guard.clone()
                 };
 
@@ -183,9 +200,10 @@ aliases:
                             // But we still have old config (2 aliases)
                             // This means the reload updated hash but not config yet
                             race_conditions_query2.fetch_add(1, Ordering::Relaxed);
-                            inconsistent_reads_query2.lock().unwrap().push(
-                                format!("Thread2-Iter{}: Hash updated but config not yet (shows synced but has old config)", i)
-                            );
+                            inconsistent_reads_query2.lock().unwrap().push(format!(
+                                "Thread2-Iter{}: Hash updated but config not yet (shows synced but has old config)",
+                                i
+                            ));
                         }
                     } else if sync_status == "stale" {
                         // File hash doesn't match stored hash
@@ -193,9 +211,10 @@ aliases:
                             // But we have new config (3 aliases)
                             // This means the reload updated config but not hash yet
                             race_conditions_query2.fetch_add(1, Ordering::Relaxed);
-                            inconsistent_reads_query2.lock().unwrap().push(
-                                format!("Thread2-Iter{}: Config updated but hash not yet (shows stale but has new config)", i)
-                            );
+                            inconsistent_reads_query2.lock().unwrap().push(format!(
+                                "Thread2-Iter{}: Config updated but hash not yet (shows stale but has new config)",
+                                i
+                            ));
                         }
                     }
                 }
@@ -221,7 +240,10 @@ aliases:
         }
 
         // After the fix, we should see a dramatic reduction in race conditions
-        println!("✅ MAJOR IMPROVEMENT - Race conditions reduced from 23+ to {}", total_race_conditions);
+        println!(
+            "✅ MAJOR IMPROVEMENT - Race conditions reduced from 23+ to {}",
+            total_race_conditions
+        );
 
         if total_race_conditions <= 1 {
             println!("✅ MAIN RACE CONDITION FIXED - Atomic update fix was successful!");
@@ -248,7 +270,12 @@ aliases:
         let (_temp_dir, config_path, home_dir) = setup_test_environment("concurrent_reload_race");
 
         // Setup like real daemon
-        let initial_aka = AKA::new(false, home_dir.clone(), get_config_path(&home_dir).expect("Failed to get config path")).expect("Failed to load initial config");
+        let initial_aka = AKA::new(
+            false,
+            home_dir.clone(),
+            get_config_path(&home_dir).expect("Failed to get config path"),
+        )
+        .expect("Failed to load initial config");
         let initial_hash = hash_config_file(&config_path).expect("Failed to hash config");
 
         let aka = Arc::new(std::sync::RwLock::new(initial_aka));
@@ -282,18 +309,22 @@ aliases:
                 // Multiple reloads can happen concurrently
 
                 // Update config file with thread-specific content
-                let thread_config = format!(r#"
+                let thread_config = format!(
+                    r#"
 lookups: {{}}
 aliases:
   test-alias-thread-{}:
     value: echo "thread {} update"
     global: true
-"#, thread_id, thread_id);
+"#,
+                    thread_id, thread_id
+                );
 
                 if let Err(e) = fs::write(&config_path_clone, &thread_config) {
-                    reload_conflicts_clone.lock().unwrap().push(
-                        format!("Thread {} failed to write config: {}", thread_id, e)
-                    );
+                    reload_conflicts_clone
+                        .lock()
+                        .unwrap()
+                        .push(format!("Thread {} failed to write config: {}", thread_id, e));
                     return;
                 }
 
@@ -308,7 +339,11 @@ aliases:
                                 // Simulate config loading time
                                 thread::sleep(Duration::from_millis(5));
 
-                                match AKA::new(false, home_dir_clone.clone(), get_config_path(&home_dir_clone).expect("Failed to get config path")) {
+                                match AKA::new(
+                                    false,
+                                    home_dir_clone.clone(),
+                                    get_config_path(&home_dir_clone).expect("Failed to get config path"),
+                                ) {
                                     Ok(new_aka) => {
                                         *aka_guard = new_aka;
 
@@ -319,30 +354,34 @@ aliases:
                                                 println!("Thread {} completed reload successfully", thread_id);
                                             }
                                             Err(_) => {
-                                                reload_conflicts_clone.lock().unwrap().push(
-                                                    format!("Thread {} failed to acquire hash lock", thread_id)
-                                                );
+                                                reload_conflicts_clone
+                                                    .lock()
+                                                    .unwrap()
+                                                    .push(format!("Thread {} failed to acquire hash lock", thread_id));
                                             }
                                         }
                                     }
                                     Err(e) => {
-                                        reload_conflicts_clone.lock().unwrap().push(
-                                            format!("Thread {} failed to load config: {}", thread_id, e)
-                                        );
+                                        reload_conflicts_clone
+                                            .lock()
+                                            .unwrap()
+                                            .push(format!("Thread {} failed to load config: {}", thread_id, e));
                                     }
                                 }
                             }
                             Err(_) => {
-                                reload_conflicts_clone.lock().unwrap().push(
-                                    format!("Thread {} failed to acquire AKA lock", thread_id)
-                                );
+                                reload_conflicts_clone
+                                    .lock()
+                                    .unwrap()
+                                    .push(format!("Thread {} failed to acquire AKA lock", thread_id));
                             }
                         }
                     }
                     Err(e) => {
-                        reload_conflicts_clone.lock().unwrap().push(
-                            format!("Thread {} failed to hash config: {}", thread_id, e)
-                        );
+                        reload_conflicts_clone
+                            .lock()
+                            .unwrap()
+                            .push(format!("Thread {} failed to hash config: {}", thread_id, e));
                     }
                 }
 
@@ -392,7 +431,12 @@ aliases:
         let (_temp_dir, config_path, home_dir) = setup_test_environment("no_debouncing_test");
 
         // Setup like real daemon
-        let initial_aka = AKA::new(false, home_dir.clone(), get_config_path(&home_dir).expect("Failed to get config path")).expect("Failed to load initial config");
+        let initial_aka = AKA::new(
+            false,
+            home_dir.clone(),
+            get_config_path(&home_dir).expect("Failed to get config path"),
+        )
+        .expect("Failed to load initial config");
         let initial_hash = hash_config_file(&config_path).expect("Failed to hash config");
 
         let aka = Arc::new(std::sync::RwLock::new(initial_aka));
@@ -418,13 +462,16 @@ aliases:
                 thread::sleep(Duration::from_millis(i * 2));
 
                 // Each thread simulates a file change event
-                let config_content = format!(r#"
+                let config_content = format!(
+                    r#"
 lookups: {{}}
 aliases:
   test-alias-{}:
     value: echo "rapid change {}"
     global: true
-"#, i, i);
+"#,
+                    i, i
+                );
 
                 if let Err(_) = fs::write(&config_path_clone, &config_content) {
                     return;
@@ -445,7 +492,11 @@ aliases:
                                 // Simulate reload work
                                 thread::sleep(Duration::from_millis(10));
 
-                                if let Ok(new_aka) = AKA::new(false, home_dir_clone.clone(), get_config_path(&home_dir_clone).expect("Failed to get config path")) {
+                                if let Ok(new_aka) = AKA::new(
+                                    false,
+                                    home_dir_clone.clone(),
+                                    get_config_path(&home_dir_clone).expect("Failed to get config path"),
+                                ) {
                                     *aka_guard = new_aka;
                                     *hash_guard = new_hash;
                                     println!("Rapid reload {} completed", i);
@@ -479,12 +530,18 @@ aliases:
         println!("No debouncing test results:");
         println!("- Total reload attempts: {}", total_attempts);
         println!("- Wasted reload attempts: {}", total_wasted);
-        println!("- Efficiency: {:.1}%", ((total_attempts - total_wasted) as f64 / total_attempts as f64) * 100.0);
+        println!(
+            "- Efficiency: {:.1}%",
+            ((total_attempts - total_wasted) as f64 / total_attempts as f64) * 100.0
+        );
 
         // This test should show that without debouncing, many reload attempts are wasted
         if total_wasted > 0 {
             println!("✅ NO DEBOUNCING CONFIRMED!");
-            println!("   {} out of {} reload attempts were wasted due to contention", total_wasted, total_attempts);
+            println!(
+                "   {} out of {} reload attempts were wasted due to contention",
+                total_wasted, total_attempts
+            );
             println!("   This proves debouncing is needed to improve efficiency");
         } else {
             println!("❌ No wasted reloads detected - either timing was perfect or issue is fixed");

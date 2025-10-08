@@ -1,5 +1,5 @@
-use std::path::PathBuf;
 use std::fmt;
+use std::path::PathBuf;
 
 /// Enhanced error types with rich context for better debugging and user experience
 #[derive(Debug, Clone)]
@@ -53,10 +53,7 @@ pub enum AkaError {
     },
 
     /// Circular reference error
-    CircularReferenceError {
-        alias_chain: Vec<String>,
-        context: String,
-    },
+    CircularReferenceError { alias_chain: Vec<String>, context: String },
 
     /// Runtime error during operation
     RuntimeError {
@@ -79,115 +76,154 @@ pub struct ValidationError {
 impl fmt::Display for AkaError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            AkaError::ConfigNotFound { attempted_paths, home_dir, custom_path } => {
-                write!(f, "Configuration file not found\n")?;
+            AkaError::ConfigNotFound {
+                attempted_paths,
+                home_dir,
+                custom_path,
+            } => {
+                writeln!(f, "Configuration file not found")?;
                 if let Some(custom) = custom_path {
-                    write!(f, "  Custom config path: {}\n", custom.display())?;
+                    writeln!(f, "  Custom config path: {}", custom.display())?;
                 } else {
-                    write!(f, "  Home directory: {}\n", home_dir.display())?;
-                    write!(f, "  Attempted paths:\n")?;
+                    writeln!(f, "  Home directory: {}", home_dir.display())?;
+                    writeln!(f, "  Attempted paths:")?;
                     for path in attempted_paths {
-                        write!(f, "    - {}\n", path.display())?;
+                        writeln!(f, "    - {}", path.display())?;
                     }
-                    write!(f, "  \n")?;
-                    write!(f, "  To create a config file, run:\n")?;
-                    write!(f, "    mkdir -p {}\n", home_dir.join(".config/aka").display())?;
-                    write!(f, "    echo 'aliases: {{}}' > {}\n", home_dir.join(".config/aka/aka.yml").display())?;
+                    writeln!(f, "  ")?;
+                    writeln!(f, "  To create a config file, run:")?;
+                    writeln!(f, "    mkdir -p {}", home_dir.join(".config/aka").display())?;
+                    writeln!(
+                        f,
+                        "    echo 'aliases: {{}}' > {}",
+                        home_dir.join(".config/aka/aka.yml").display()
+                    )?;
                 }
                 Ok(())
             }
 
-            AkaError::ConfigParseError { file_path, line, column, context, underlying_error } => {
-                write!(f, "Configuration parsing error in {}\n", file_path.display())?;
+            AkaError::ConfigParseError {
+                file_path,
+                line,
+                column,
+                context,
+                underlying_error,
+            } => {
+                writeln!(f, "Configuration parsing error in {}", file_path.display())?;
                 if let (Some(line), Some(column)) = (line, column) {
-                    write!(f, "  Location: line {}, column {}\n", line, column)?;
+                    writeln!(f, "  Location: line {line}, column {column}")?;
                 } else if let Some(line) = line {
-                    write!(f, "  Location: line {}\n", line)?;
+                    writeln!(f, "  Location: line {line}")?;
                 }
-                write!(f, "  Context: {}\n", context)?;
-                write!(f, "  Error: {}\n", underlying_error)?;
-                write!(f, "  \n")?;
+                writeln!(f, "  Context: {context}")?;
+                writeln!(f, "  Error: {underlying_error}")?;
+                writeln!(f, "  ")?;
                 write!(f, "  Check the YAML syntax and ensure all quotes are properly closed.")?;
                 Ok(())
             }
 
             AkaError::ConfigValidationError { file_path, errors } => {
-                write!(f, "Configuration validation failed in {}\n", file_path.display())?;
-                write!(f, "  Found {} validation error(s):\n", errors.len())?;
+                writeln!(f, "Configuration validation failed in {}", file_path.display())?;
+                writeln!(f, "  Found {} validation error(s):", errors.len())?;
                 for (i, error) in errors.iter().enumerate() {
-                    write!(f, "    {}. {}: {}\n", i + 1, error.error_type, error.message)?;
+                    writeln!(f, "    {}. {}: {}", i + 1, error.error_type, error.message)?;
                     if let Some(line) = error.line {
-                        write!(f, "       Location: line {}\n", line)?;
+                        writeln!(f, "       Location: line {line}")?;
                     }
                     if !error.context.is_empty() {
-                        write!(f, "       Context: {}\n", error.context)?;
+                        writeln!(f, "       Context: {}", error.context)?;
                     }
                 }
                 Ok(())
             }
 
-            AkaError::FileOperationError { file_path, operation, underlying_error, context } => {
-                write!(f, "File operation failed\n")?;
-                write!(f, "  File: {}\n", file_path.display())?;
-                write!(f, "  Operation: {}\n", operation)?;
-                write!(f, "  Context: {}\n", context)?;
-                write!(f, "  Error: {}\n", underlying_error)?;
-                write!(f, "  \n")?;
+            AkaError::FileOperationError {
+                file_path,
+                operation,
+                underlying_error,
+                context,
+            } => {
+                writeln!(f, "File operation failed")?;
+                writeln!(f, "  File: {}", file_path.display())?;
+                writeln!(f, "  Operation: {operation}")?;
+                writeln!(f, "  Context: {context}")?;
+                writeln!(f, "  Error: {underlying_error}")?;
+                writeln!(f, "  ")?;
                 write!(f, "  Check file permissions and disk space.")?;
                 Ok(())
             }
 
-            AkaError::AliasProcessingError { alias_name, command_line, operation, underlying_error, context } => {
-                write!(f, "Alias processing failed\n")?;
-                write!(f, "  Alias: {}\n", alias_name)?;
-                write!(f, "  Command: {}\n", command_line)?;
-                write!(f, "  Operation: {}\n", operation)?;
-                write!(f, "  Context: {}\n", context)?;
-                write!(f, "  Error: {}\n", underlying_error)?;
+            AkaError::AliasProcessingError {
+                alias_name,
+                command_line,
+                operation,
+                underlying_error,
+                context,
+            } => {
+                writeln!(f, "Alias processing failed")?;
+                writeln!(f, "  Alias: {alias_name}")?;
+                writeln!(f, "  Command: {command_line}")?;
+                writeln!(f, "  Operation: {operation}")?;
+                writeln!(f, "  Context: {context}")?;
+                writeln!(f, "  Error: {underlying_error}")?;
                 Ok(())
             }
 
-            AkaError::LookupError { lookup_name, key, available_lookups, available_keys, context } => {
-                write!(f, "Lookup resolution failed\n")?;
-                write!(f, "  Lookup: {}\n", lookup_name)?;
-                write!(f, "  Key: {}\n", key)?;
-                write!(f, "  Context: {}\n", context)?;
-                write!(f, "  \n")?;
+            AkaError::LookupError {
+                lookup_name,
+                key,
+                available_lookups,
+                available_keys,
+                context,
+            } => {
+                writeln!(f, "Lookup resolution failed")?;
+                writeln!(f, "  Lookup: {lookup_name}")?;
+                writeln!(f, "  Key: {key}")?;
+                writeln!(f, "  Context: {context}")?;
+                writeln!(f, "  ")?;
                 if available_lookups.is_empty() {
-                    write!(f, "  No lookups are defined in the configuration.\n")?;
+                    writeln!(f, "  No lookups are defined in the configuration.")?;
                 } else {
-                    write!(f, "  Available lookups:\n")?;
+                    writeln!(f, "  Available lookups:")?;
                     for lookup in available_lookups {
-                        write!(f, "    - {}\n", lookup)?;
+                        writeln!(f, "    - {lookup}")?;
                     }
                 }
                 if !available_keys.is_empty() {
-                    write!(f, "  Available keys in {}:\n", lookup_name)?;
+                    writeln!(f, "  Available keys in {lookup_name}:")?;
                     for key in available_keys {
-                        write!(f, "    - {}\n", key)?;
+                        writeln!(f, "    - {key}")?;
                     }
                 }
                 Ok(())
             }
 
             AkaError::CircularReferenceError { alias_chain, context } => {
-                write!(f, "Circular reference detected\n")?;
-                write!(f, "  Context: {}\n", context)?;
-                write!(f, "  Alias chain: {}\n", alias_chain.join(" -> "))?;
-                write!(f, "  \n")?;
-                write!(f, "  To fix this, modify one of the aliases to break the circular dependency.")?;
+                writeln!(f, "Circular reference detected")?;
+                writeln!(f, "  Context: {context}")?;
+                writeln!(f, "  Alias chain: {}", alias_chain.join(" -> "))?;
+                writeln!(f, "  ")?;
+                write!(
+                    f,
+                    "  To fix this, modify one of the aliases to break the circular dependency."
+                )?;
                 Ok(())
             }
 
-            AkaError::RuntimeError { operation, context, underlying_error, suggestions } => {
-                write!(f, "Runtime error during {}\n", operation)?;
-                write!(f, "  Context: {}\n", context)?;
-                write!(f, "  Error: {}\n", underlying_error)?;
+            AkaError::RuntimeError {
+                operation,
+                context,
+                underlying_error,
+                suggestions,
+            } => {
+                writeln!(f, "Runtime error during {operation}")?;
+                writeln!(f, "  Context: {context}")?;
+                writeln!(f, "  Error: {underlying_error}")?;
                 if !suggestions.is_empty() {
-                    write!(f, "  \n")?;
-                    write!(f, "  Suggestions:\n")?;
+                    writeln!(f, "  ")?;
+                    writeln!(f, "  Suggestions:")?;
                     for suggestion in suggestions {
-                        write!(f, "    - {}\n", suggestion)?;
+                        writeln!(f, "    - {suggestion}")?;
                     }
                 }
                 Ok(())
@@ -238,7 +274,12 @@ impl ErrorContext {
         self
     }
 
-    pub fn to_config_not_found_error(self, attempted_paths: Vec<PathBuf>, home_dir: PathBuf, custom_path: Option<PathBuf>) -> AkaError {
+    pub fn to_config_not_found_error(
+        self,
+        attempted_paths: Vec<PathBuf>,
+        home_dir: PathBuf,
+        custom_path: Option<PathBuf>,
+    ) -> AkaError {
         AkaError::ConfigNotFound {
             attempted_paths,
             home_dir,
@@ -246,7 +287,12 @@ impl ErrorContext {
         }
     }
 
-    pub fn to_config_parse_error(self, underlying_error: eyre::Error, line: Option<usize>, column: Option<usize>) -> AkaError {
+    pub fn to_config_parse_error(
+        self,
+        underlying_error: eyre::Error,
+        line: Option<usize>,
+        column: Option<usize>,
+    ) -> AkaError {
         AkaError::ConfigParseError {
             file_path: self.file_path.unwrap_or_else(|| PathBuf::from("unknown")),
             line,
@@ -282,7 +328,13 @@ impl ErrorContext {
         }
     }
 
-    pub fn to_lookup_error(self, lookup_name: &str, key: &str, available_lookups: Vec<String>, available_keys: Vec<String>) -> AkaError {
+    pub fn to_lookup_error(
+        self,
+        lookup_name: &str,
+        key: &str,
+        available_lookups: Vec<String>,
+        available_keys: Vec<String>,
+    ) -> AkaError {
         AkaError::LookupError {
             lookup_name: lookup_name.to_string(),
             key: key.to_string(),
@@ -340,9 +392,11 @@ pub fn enhance_error(error: eyre::Error, context: ErrorContext) -> AkaError {
 
     if error_str.contains("YAML") || error_str.contains("yaml") {
         context.to_config_parse_error(error, line, column)
-    } else if error_str.contains("permission") || error_str.contains("Permission") {
-        context.to_file_operation_error(error)
-    } else if error_str.contains("not found") || error_str.contains("No such file") {
+    } else if error_str.contains("permission")
+        || error_str.contains("Permission")
+        || error_str.contains("not found")
+        || error_str.contains("No such file")
+    {
         context.to_file_operation_error(error)
     } else {
         context.to_runtime_error(error, vec![])
