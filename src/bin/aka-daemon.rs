@@ -163,6 +163,23 @@ impl DaemonServer {
         Ok(message)
     }
 
+    fn ensure_cache_fresh(&self) -> Result<()> {
+        let current_hash = hash_config_file(&self.config_path)?;
+        let cached_hash = {
+            let hash_guard = self.config_hash.read()
+                .map_err(|e| eyre!("Failed to acquire read lock on config hash: {}", e))?;
+            hash_guard.clone()
+        };
+        
+        if current_hash != cached_hash {
+            warn!("⚠️  Config hash mismatch detected, auto-reloading");
+            warn!("   Cached: {} → Current: {}", cached_hash, current_hash);
+            self.reload_config()?;
+        }
+        
+        Ok(())
+    }
+
     fn process_health_request(&self) -> Result<Response> {
         let aka_guard = self.aka.read().map_err(|e| eyre!("Failed to acquire read lock on AKA: {}", e))?;
         let hash_guard = self.config_hash.read().map_err(|e| eyre!("Failed to acquire read lock on config hash: {}", e))?;
@@ -189,6 +206,9 @@ impl DaemonServer {
     }
 
     fn handle_client(&self, mut stream: UnixStream) -> Result<()> {
+        // Check if config has changed and reload if necessary
+        self.ensure_cache_fresh()?;
+        
         let mut reader = BufReader::new(&stream);
         let mut line = String::new();
 
