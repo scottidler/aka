@@ -50,10 +50,19 @@ impl Alias {
     ///
     /// Will return `Err` if there was a problem in processing the positional arguments.
     pub fn positionals(&self) -> Result<Vec<String>> {
+        // Match $N but not $$N (filter out matches preceded by $)
         let re = Regex::new(r"(\$[1-9])")?;
         let mut items: Vec<String> = re
             .find_iter(&self.value)
-            .filter_map(|m| m.as_str().parse().ok())
+            .filter_map(|m| {
+                let start = m.start();
+                // Exclude if preceded by $ (i.e., part of $$N)
+                if start > 0 && self.value.chars().nth(start - 1) == Some('$') {
+                    None
+                } else {
+                    m.as_str().parse().ok()
+                }
+            })
             .collect();
         items.sort();
         items.dedup();
@@ -171,6 +180,9 @@ impl Alias {
                 count = 0;
             }
         }
+
+        // Step 4: Unescape $$ to $ (for shell variable/field references)
+        result = result.replace("$$", "$");
 
         Ok((result, count))
     }
