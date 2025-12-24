@@ -57,14 +57,7 @@ function add-space-to-command() {
 }
 zle -N zle-line-finish add-space-to-command
 
-# Recalls previous command from history and ensures it ends with a space upon pressing up-arrow
-function up-line-or-add-space() {
-    zle up-line-or-history
-    [[ $LBUFFER != *' '* ]] && zle backward-delete-char
-    LBUFFER+=' '
-}
-zle -N up-line-or-add-space
-bindkey '^[[A' up-line-or-add-space
+# History substring search keybindings are set at the end of .zshrc
 
 # Define a function to search through aka aliases
 aka-search() {
