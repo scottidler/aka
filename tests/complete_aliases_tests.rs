@@ -132,6 +132,7 @@ aliases:
     fs::write(&config_file, test_config).expect("Failed to write config");
 
     // Set environment variable to use our test config
+    // Use temp_dir paths for all test-specific directories to avoid race conditions
     let output = Command::new("cargo")
         .args([
             "run",
@@ -142,13 +143,17 @@ aliases:
             "__complete_aliases",
         ])
         .env("HOME", home_dir.to_str().unwrap())
-        .env("AKA_LOG_FILE", "/tmp/aka-test-logs/aka.log")
-        .env("AKA_CACHE_DIR", "/tmp/aka-test-cache")
-        .env("XDG_RUNTIME_DIR", "/tmp/aka-test-runtime") // Isolate daemon socket
+        .env("AKA_LOG_FILE", home_dir.join("aka.log").to_str().unwrap())
+        .env("AKA_CACHE_DIR", home_dir.join("cache").to_str().unwrap())
+        .env("XDG_RUNTIME_DIR", home_dir.join("run").to_str().unwrap())
         .output()
         .expect("Failed to execute command");
 
-    assert!(output.status.success(), "Command should succeed");
+    assert!(
+        output.status.success(),
+        "Command should succeed: stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
 
     let stdout = String::from_utf8(output.stdout).expect("Output should be valid UTF-8");
     let lines: Vec<&str> = stdout.trim().split('\n').collect();
@@ -183,6 +188,7 @@ aliases:
     fs::write(&config_file, test_config).expect("Failed to write config");
 
     // Set environment variable to use our test config
+    // Use temp_dir paths for all test-specific directories to avoid race conditions
     let output = Command::new("cargo")
         .args([
             "run",
@@ -193,13 +199,17 @@ aliases:
             "__complete_aliases",
         ])
         .env("HOME", home_dir.to_str().unwrap())
-        .env("AKA_LOG_FILE", "/tmp/aka-test-logs/aka.log")
-        .env("AKA_CACHE_DIR", "/tmp/aka-test-cache")
-        .env("XDG_RUNTIME_DIR", "/tmp/aka-test-runtime") // Isolate daemon socket
+        .env("AKA_LOG_FILE", home_dir.join("aka.log").to_str().unwrap())
+        .env("AKA_CACHE_DIR", home_dir.join("cache").to_str().unwrap())
+        .env("XDG_RUNTIME_DIR", home_dir.join("run").to_str().unwrap())
         .output()
         .expect("Failed to execute command");
 
-    assert!(output.status.success(), "Command should succeed");
+    assert!(
+        output.status.success(),
+        "Command should succeed: stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
 
     let stdout = String::from_utf8(output.stdout).expect("Output should be valid UTF-8");
 
@@ -232,6 +242,7 @@ aliases:
     fs::write(&config_file, test_config).expect("Failed to write config");
 
     // Set environment variable to use our test config
+    // Use temp_dir paths for all test-specific directories to avoid race conditions
     let output = Command::new("cargo")
         .args([
             "run",
@@ -242,9 +253,9 @@ aliases:
             "__complete_aliases",
         ])
         .env("HOME", home_dir.to_str().unwrap())
-        .env("AKA_LOG_FILE", "/tmp/aka-test-logs/aka.log")
-        .env("AKA_CACHE_DIR", "/tmp/aka-test-cache")
-        .env("XDG_RUNTIME_DIR", "/tmp/aka-test-runtime") // Isolate daemon socket
+        .env("AKA_LOG_FILE", home_dir.join("aka.log").to_str().unwrap())
+        .env("AKA_CACHE_DIR", home_dir.join("cache").to_str().unwrap())
+        .env("XDG_RUNTIME_DIR", home_dir.join("run").to_str().unwrap())
         .output()
         .expect("Failed to execute command");
 
