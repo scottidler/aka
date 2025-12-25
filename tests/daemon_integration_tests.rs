@@ -1,4 +1,3 @@
-use serde_json;
 use std::fs;
 use std::path::PathBuf;
 use std::time::Duration;

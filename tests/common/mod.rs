@@ -22,7 +22,7 @@ pub fn get_aka_binary_path() -> PathBuf {
 /// Ensure the aka binary is built
 pub fn ensure_aka_binary_built() {
     let output = Command::new("cargo")
-        .args(&["build", "--bin", "aka"])
+        .args(["build", "--bin", "aka"])
         .output()
         .expect("Failed to build aka binary");
 
@@ -41,21 +41,23 @@ pub fn run_aka_command(args: &[&str], temp_dir: Option<&TempDir>, config_file: O
 
     // Add config file argument if specified
     if let Some(config) = config_file {
-        cmd.args(&["--config", config.to_str().unwrap()]);
+        cmd.args(["--config", config.to_str().unwrap()]);
     }
 
     cmd.args(args);
 
     // Set environment variables based on temp_dir
+    // Use temp_dir paths for all test-specific directories to avoid race conditions
     if let Some(temp) = temp_dir {
         cmd.env("HOME", temp.path());
         cmd.env("XDG_RUNTIME_DIR", temp.path().join("run"));
+        cmd.env("AKA_LOG_FILE", temp.path().join("aka.log"));
+        cmd.env("AKA_CACHE_DIR", temp.path().join("cache"));
     } else {
         cmd.env("XDG_RUNTIME_DIR", "/tmp/aka-test-runtime");
+        cmd.env("AKA_LOG_FILE", "/tmp/aka-test-logs/aka.log");
+        cmd.env("AKA_CACHE_DIR", "/tmp/aka-test-cache");
     }
-
-    cmd.env("AKA_LOG_FILE", "/tmp/aka-test-logs/aka.log");
-    cmd.env("AKA_CACHE_DIR", "/tmp/aka-test-cache");
 
     let output = cmd.output().expect("Failed to run aka command");
     let success = output.status.success();

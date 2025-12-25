@@ -295,7 +295,7 @@ lookups:
 
         // Use the loader to load the file.
         let loader = Loader::new();
-        let spec = loader.load(&file.path().to_path_buf())?;
+        let spec = loader.load(file.path())?;
 
         // Assert the spec was loaded correctly.
         let expected_aliases = {
@@ -338,7 +338,7 @@ lookups:
         writeln!(file, "This is not valid YAML content")?;
 
         let loader = Loader::new();
-        let result = loader.load(&file.path().to_path_buf());
+        let result = loader.load(file.path());
 
         assert!(result.is_err());
 

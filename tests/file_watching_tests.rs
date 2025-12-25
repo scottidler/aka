@@ -228,7 +228,7 @@ invalid_yaml: [
         fs::write(&config_file, "lookups: {}\naliases: {}").expect("Failed to write config");
 
         // Test that get_config_path function works
-        let config_path = get_config_path(&cache_temp_dir.path().to_path_buf());
+        let config_path = get_config_path(cache_temp_dir.path());
         assert!(config_path.is_ok(), "get_config_path should succeed");
 
         let path = config_path.expect("get_config_path should return a valid path");
@@ -424,7 +424,7 @@ mod integration_tests {
     #[test]
     fn test_daemon_binary_exists() {
         // Test that the daemon binary can be built
-        let output = Command::new("cargo").args(&["build", "--bin", "aka-daemon"]).output();
+        let output = Command::new("cargo").args(["build", "--bin", "aka-daemon"]).output();
 
         assert!(output.is_ok(), "Should be able to build aka-daemon");
         let output = output.expect("Should be able to execute cargo build command");

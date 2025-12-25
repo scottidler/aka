@@ -1,5 +1,4 @@
 use aka_lib::{DaemonRequest, DaemonResponse};
-use serde_json;
 
 #[test]
 fn test_version_field_in_query_request() {
@@ -30,7 +29,7 @@ fn test_version_field_in_query_request() {
         } => {
             assert_eq!(version, "v0.5.0-test");
             assert_eq!(cmdline, "test command");
-            assert_eq!(eol, true);
+            assert!(eol);
             assert_eq!(config, None);
         }
         _ => panic!("Wrong variant deserialized"),
@@ -208,9 +207,10 @@ fn test_git_describe_version_format() {
             config: None,
         };
 
-        let json = serde_json::to_string(&request).expect(&format!("Failed to serialize version: {}", version));
+        let json =
+            serde_json::to_string(&request).unwrap_or_else(|_| panic!("Failed to serialize version: {}", version));
         let deserialized: DaemonRequest =
-            serde_json::from_str(&json).expect(&format!("Failed to deserialize version: {}", version));
+            serde_json::from_str(&json).unwrap_or_else(|_| panic!("Failed to deserialize version: {}", version));
 
         match deserialized {
             DaemonRequest::Query { version: v, .. } => {

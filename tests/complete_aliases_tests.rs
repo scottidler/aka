@@ -133,7 +133,7 @@ aliases:
 
     // Set environment variable to use our test config
     let output = Command::new("cargo")
-        .args(&[
+        .args([
             "run",
             "-q",
             "--",
@@ -184,7 +184,7 @@ aliases:
 
     // Set environment variable to use our test config
     let output = Command::new("cargo")
-        .args(&[
+        .args([
             "run",
             "-q",
             "--",
@@ -233,7 +233,7 @@ aliases:
 
     // Set environment variable to use our test config
     let output = Command::new("cargo")
-        .args(&[
+        .args([
             "run",
             "-q",
             "--",
@@ -258,7 +258,6 @@ aliases:
 #[cfg(test)]
 mod daemon_tests {
     use aka_lib::protocol::DaemonRequest;
-    use serde_json;
 
     /// Test that CompleteAliases request can be serialized/deserialized
     #[test]

@@ -52,7 +52,7 @@ aliases:
     eprintln!("Cache keys: {:?}", cache.aliases.keys().collect::<Vec<_>>());
     eprintln!("home count in cache: {}", cache.aliases.get("home").unwrap().count);
     assert_eq!(cache.aliases.get("home").unwrap().count, 1);
-    assert!(cache.aliases.get("desk").is_none()); // "desk" doesn't exist yet
+    assert!(!cache.aliases.contains_key("desk")); // "desk" doesn't exist yet
 
     // Step 2: Modify config to add "desk" as an additional alias: "home|desk: ssh desk.lan"
     let modified_config = r#"
@@ -104,11 +104,11 @@ aliases:
 
     // Both "home" and "desk" should exist now
     assert!(
-        cache_reloaded.aliases.get("home").is_some(),
+        cache_reloaded.aliases.contains_key("home"),
         "home should exist in cache"
     );
     assert!(
-        cache_reloaded.aliases.get("desk").is_some(),
+        cache_reloaded.aliases.contains_key("desk"),
         "desk should exist in cache"
     );
 
@@ -162,7 +162,7 @@ aliases:
     let lappy_cached = cache.aliases.get("lappy").unwrap();
     assert_eq!(lappy_cached.value, "ltl-7007");
     assert_eq!(lappy_cached.count, 4);
-    assert_eq!(lappy_cached.global, true);
+    assert!(lappy_cached.global);
 
     // Step 2: Delete "lappy" and redefine it as part of "work|lappy"
     let modified_config = r#"
@@ -194,8 +194,8 @@ aliases:
     );
 
     // The properties should be updated too
-    assert_eq!(
-        lappy_reloaded.global, false,
+    assert!(
+        !lappy_reloaded.global,
         "lappy global property should be updated to false"
     );
 
@@ -397,8 +397,8 @@ aliases:
     assert_eq!(lappy.count, 4, "Count should be preserved");
 
     // The global property should be updated
-    assert_eq!(
-        lappy.global, false,
+    assert!(
+        !lappy.global,
         "Cache merge must update properties when they change in config"
     );
 

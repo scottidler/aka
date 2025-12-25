@@ -3,7 +3,7 @@ Small, composable command-aliasing for Z shell powered by Rust & ZLE
 [![Crates.io](https://img.shields.io/crates/v/aka.svg)](https://crates.io/crates/aka)
 
 `aka` lets you write short _handles_ that get expanded into full command lines **while you type**, with no shell aliases to maintain and no functions polluting your namespace.
-The heavy lifting happens in Z shell’s *Z*-line-*E*ditor (ZLE) — see the [ZLE manual](https://zsh.sourceforge.net/Doc/Release/Zsh-Line-Editor.html) for the underlying primitives.
+The heavy lifting happens in Z shell's *Z*-line-*E*ditor (ZLE) — see the [ZLE manual](https://zsh.sourceforge.net/Doc/Release/Zsh-Line-Editor.html) for the underlying primitives.
 
 ---
 
@@ -31,58 +31,66 @@ cargo install --path .
 
 ### 2. Wire ZLE into your shell
 
+**Recommended: eval pattern** (industry standard, like starship/zoxide)
+
+Add this to your `~/.zshrc`:
+
+```zsh
+if hash aka 2>/dev/null; then
+    eval "$(aka shell-init zsh)"
+fi
+```
+
+This ensures the shell integration always matches your installed binary version.
+
 <details>
-<summary>If you already keep autoloadable functions in <code>~/.shell-functions.d/</code></summary>
+<summary>Alternative: Using a loader script</summary>
+
+If you prefer using a loader file in `~/.shell-functions.d/`:
 
 ```console
 mkdir -p ~/.shell-functions.d
-ln -sf "$HOME/.cargo/bin/aka-loader.zsh" ~/.shell-functions.d/00-aka-loader.zsh
+cat > ~/.shell-functions.d/aka-loader.zsh << 'EOF'
+#!/usr/bin/env zsh
+if hash aka 2>/dev/null; then
+    export EXPAND_AKA=yes
+    eval "$(aka shell-init zsh)"
+fi
+EOF
 ```
 
-Your `.zshrc` (or whatever `$ZDOTDIR/.zshrc` you use) should already source `~/.shell-functions.d/**/*`.
-If not:
+Your `.zshrc` should source files from `~/.shell-functions.d/`:
 
 ```zsh
 # ~/.zshrc
-fpath=(~/.shell-functions.d $fpath)
-autoload -Uz ~/.shell-functions.d/00-aka-loader.zsh
+if [ -d ~/.shell-functions.d/ ]; then
+    for f in ~/.shell-functions.d/*; do . $f; done
+fi
 ```
 </details>
 
-<details>
-<summary>If you prefer <code>$XDG_CONFIG_HOME</code> (recommended)</summary>
-
-```console
-mkdir -p "${XDG_CONFIG_HOME:-$HOME/.config}/aka"
-ln -sf "$HOME/.cargo/bin/aka-loader.zsh" \
-      "${XDG_CONFIG_HOME:-$HOME/.config}/aka/aka-loader.zsh"
-
-# Then, in ~/.zshrc:
-source "${XDG_CONFIG_HOME:-$HOME/.config}/aka/aka-loader.zsh"
-```
-</details>
-
-`aka-loader.zsh` is a two-liner that checks for the `aka` binary **and** your config, then loads [`bin/aka.zsh`](bin/aka.zsh) which registers the ZLE widgets:
+The shell integration registers these ZLE widgets:
 
 | Key binding                    | Widget                           | What it does |
 |--------------------------------|----------------------------------|--------------|
-| <kbd>Space</kbd>               | `expand-aka-space`               | Expand the first word if it matches an alias. |
-| <kbd>Enter</kbd> (`accept-line`)| `expand-aka-accept-line`        | Rewrites the command just before execution. |
-| <kbd>Ctrl-T</kbd>              | `aka-search` (via `sk`/`fzf`)    | Fuzzy-find & insert an alias. |
-| ↑ (Up arrow)                   | `up-line-or-add-space`           | Recall history *and* keep trailing space for chaining. |
+| <kbd>Space</kbd>               | `_aka_expand_space`              | Expand the first word if it matches an alias. |
+| <kbd>Enter</kbd> (`accept-line`)| `_aka_accept_line`              | Rewrites the command just before execution. |
+| <kbd>Ctrl-T</kbd>              | `_aka_search` (via `sk`/`fzf`)   | Fuzzy-find & insert an alias. |
 
-All widgets are defined in [`bin/aka.zsh`](bin/aka.zsh) and glued in with `zle -N`
-— worth a read if you are curious about ZLE magic.
+All widgets are defined in the embedded script (viewable via `aka shell-init zsh`).
 
 ---
 
 ## 📂 Configuration
 
-`aka` looks for the first existing file among
+`aka` looks for the first existing file among:
 
-1. `./aka.yml`
-2. `~/.aka.yml`
-3. `${XDG_CONFIG_HOME:-$HOME/.config}/aka/aka.yml`
+1. `~/.config/aka/aka.yml`
+2. `~/.config/aka/aka.yaml`
+3. `~/aka.yml`
+4. `~/aka.yaml`
+5. `~/.aka.yml`
+6. `~/.aka.yaml`
 
 ### Minimal example
 
@@ -111,6 +119,9 @@ lookups:                 # dynamic substitutions
 ```console
 aka ls [-g] [PATTERN…]        # list aliases (optionally globals only)
 aka query "some command line" # test what would expand
+aka freq [-a]                 # show alias usage frequency
+aka shell-init [SHELL]        # print shell initialization script
+aka daemon --status           # check daemon status
 ```
 
 For everyday use you never call `aka` directly — the ZLE widgets call it for you.
@@ -121,19 +132,21 @@ For everyday use you never call `aka` directly — the ZLE widgets call it for y
 
 | Area | Description |
 |------|-------------|
-| [`src/main.rs`](src/main.rs) | CLI + core replace engine + tests |
+| [`src/bin/aka.rs`](src/bin/aka.rs) | CLI entry point and command handling |
+| [`src/lib.rs`](src/lib.rs) | Core replace engine and shared logic |
 | [`src/cfg/`](src/cfg) | YAML loader, alias/lookup deserialisation |
-| [`bin/aka.zsh`](bin/aka.zsh) | ZLE widgets and key-bindings |
-| [`bin/aka-loader.zsh`](bin/aka-loader.zsh) | Minimal bootstrap sourced from `.zshrc` |
-| [`build.rs`](build.rs) | Injects `git describe` into the binary’s `--version` |
+| [`src/shell/`](src/shell) | Shell initialization scripts (embedded via `include_str!`) |
+| [`src/shell/init.zsh`](src/shell/init.zsh) | ZSH widgets and key-bindings |
+| [`build.rs`](build.rs) | Injects `git describe` into the binary's `--version` |
 
 ---
 
 ## 🩹 Troubleshooting
 
 * **Nothing expands** – touching `~/aka-killswitch` disables expansions; delete the file.
-* **Debug logging** – `export AKA_LOG=1` will append every query/answer to `~/aka.txt`.
-* **Widgets conflict** – rebind them in your own shell after sourcing `aka-loader.zsh`.
+* **Debug logging** – Logs are written to `~/.local/share/aka/logs/aka.log`
+* **View shell script** – Run `aka shell-init zsh` to see the exact script being loaded.
+* **Widgets conflict** – Override bindings in your `.zshrc` after the `eval` line.
 
 ---
 

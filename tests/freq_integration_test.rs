@@ -196,7 +196,7 @@ aliases:
     // Use the alias a few times to increment its count
     for i in 1..=3 {
         let mut cmd = std::process::Command::new(common::get_aka_binary_path());
-        cmd.args(&["query", "test-alias"])
+        cmd.args(["query", "test-alias"])
             .env("HOME", temp_dir.path())
             .env("AKA_CACHE_DIR", &unique_cache_dir)
             .env("AKA_LOG_FILE", "/tmp/aka-test-logs/aka.log")
@@ -215,7 +215,7 @@ aliases:
 
     // Now run freq to see the usage count
     let mut cmd = std::process::Command::new(common::get_aka_binary_path());
-    cmd.args(&["freq"])
+    cmd.args(["freq"])
         .env("HOME", temp_dir.path())
         .env("AKA_CACHE_DIR", &unique_cache_dir)
         .env("AKA_LOG_FILE", "/tmp/aka-test-logs/aka.log")

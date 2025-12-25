@@ -386,6 +386,9 @@ enum Command {
     #[clap(name = "daemon", about = "manage aka daemon")]
     Daemon(DaemonOpts),
 
+    #[clap(name = "shell-init", about = "print shell initialization script")]
+    ShellInit(ShellInitOpts),
+
     #[clap(name = "__complete_aliases", hide = true)]
     CompleteAliases,
 
@@ -446,6 +449,12 @@ struct DaemonOpts {
 struct FreqOpts {
     #[clap(short, long, help = "show all aliases including unused ones")]
     all: bool,
+}
+
+#[derive(Parser, Debug)]
+struct ShellInitOpts {
+    #[clap(default_value = "zsh", help = "Shell type (zsh)")]
+    shell: String,
 }
 
 // Basic service manager for proof of concept
@@ -1456,6 +1465,69 @@ fn handle_command_direct_timed(opts: &AkaOpts, timing: &mut TimingCollector) -> 
     }
 }
 
+fn handle_shell_init(shell_opts: &ShellInitOpts) -> Result<i32> {
+    match aka_lib::shell::generate_init_script(&shell_opts.shell) {
+        Some(script) => {
+            print!("{}", script);
+            Ok(0)
+        }
+        None => {
+            let supported = aka_lib::shell::supported_shells().join(", ");
+            eprintln!(
+                "Unsupported shell: '{}'. Supported shells: {}",
+                shell_opts.shell, supported
+            );
+            Ok(1)
+        }
+    }
+}
+
+fn main() {
+    let opts = AkaOpts::parse();
+
+    // Set up logging
+    let home_dir = match dirs::home_dir() {
+        Some(dir) => dir,
+        None => {
+            eprintln!("Error: Unable to determine home directory");
+            exit(1);
+        }
+    };
+    if let Err(e) = setup_logging(&home_dir) {
+        eprintln!("Warning: Failed to set up logging: {e}");
+    }
+
+    // Route commands - some bypass the regular command flow
+    let result = match &opts.command {
+        // shell-init doesn't need daemon or config loading
+        Some(Command::ShellInit(shell_opts)) => match handle_shell_init(shell_opts) {
+            Ok(code) => code,
+            Err(e) => {
+                eprintln!("Error: {e}");
+                1
+            }
+        },
+        // daemon commands have their own handler
+        Some(Command::Daemon(daemon_opts)) => match handle_daemon_command(daemon_opts) {
+            Ok(_) => 0,
+            Err(e) => {
+                eprintln!("Error: {e}");
+                1
+            }
+        },
+        // everything else goes through regular command handling
+        _ => match handle_regular_command(&opts) {
+            Ok(code) => code,
+            Err(e) => {
+                eprintln!("Error: {e}");
+                1
+            }
+        },
+    };
+
+    exit(result);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1465,7 +1537,7 @@ mod tests {
         // Test daemon process checking
         let result = check_daemon_process_simple();
         // Should return bool without panicking
-        assert!(result == true || result == false);
+        let _ = result; // Just verify it doesn't panic
     }
 
     #[test]
@@ -1481,10 +1553,10 @@ mod tests {
         let home_dir = std::env::temp_dir();
         let result = determine_socket_path(&home_dir);
         // Should either succeed or fail gracefully
-        match result {
-            Ok(path) => assert!(path.to_string_lossy().contains("aka")),
-            Err(_) => {} // Acceptable in test environment
+        if let Ok(path) = result {
+            assert!(path.to_string_lossy().contains("aka"));
         }
+        // Err case is acceptable in test environment
     }
 
     #[test]
@@ -1515,40 +1587,4 @@ mod tests {
             assert_eq!(status, "healthy:5:aliases");
         }
     }
-}
-
-fn main() {
-    let opts = AkaOpts::parse();
-
-    // Set up logging
-    let home_dir = match dirs::home_dir() {
-        Some(dir) => dir,
-        None => {
-            eprintln!("Error: Unable to determine home directory");
-            exit(1);
-        }
-    };
-    if let Err(e) = setup_logging(&home_dir) {
-        eprintln!("Warning: Failed to set up logging: {e}");
-    }
-
-    // Route daemon commands vs regular commands
-    let result = match &opts.command {
-        Some(Command::Daemon(daemon_opts)) => match handle_daemon_command(daemon_opts) {
-            Ok(_) => 0,
-            Err(e) => {
-                eprintln!("Error: {e}");
-                1
-            }
-        },
-        _ => match handle_regular_command(&opts) {
-            Ok(code) => code,
-            Err(e) => {
-                eprintln!("Error: {e}");
-                1
-            }
-        },
-    };
-
-    exit(result);
 }

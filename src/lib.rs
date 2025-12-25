@@ -9,6 +9,7 @@ use xxhash_rust::xxh3::xxh3_64;
 pub mod cfg;
 pub mod error;
 pub mod protocol;
+pub mod shell;
 pub mod timing;
 
 use cfg::alias::Alias;
@@ -1712,9 +1713,10 @@ mod tests {
 
         let result = aka_eol.replace("touch file !").unwrap();
         assert!(result.starts_with("sudo"), "Should start with sudo: {result}");
+        // Command may be wrapped with $(which touch) so check for touch and file separately
         assert!(
-            result.contains("touch file"),
-            "Should contain original command: {result}"
+            result.contains("touch") && result.contains("file"),
+            "Should contain command and argument: {result}"
         );
         assert!(!result.contains("!"), "Should not contain exclamation mark: {result}");
 
@@ -1748,7 +1750,11 @@ mod tests {
             result.starts_with("sudo"),
             "Should work with quoted arguments: {result}"
         );
-        assert!(result.contains("echo \"test\""), "Should preserve quotes: {result}");
+        // Command may be wrapped with $(which echo) so check for echo and "test" separately
+        assert!(
+            result.contains("echo") && result.contains("\"test\""),
+            "Should preserve quotes: {result}"
+        );
         assert!(!result.contains("!"), "Should not contain exclamation mark: {result}");
 
         // Test lone exclamation mark (should be ignored)
@@ -1761,8 +1767,9 @@ mod tests {
             result.starts_with("sudo"),
             "Should trigger sudo with trailing exclamation: {result}"
         );
+        // Command may be wrapped with $(which echo) so check for echo and "! test" separately
         assert!(
-            result.contains("echo ! test"),
+            result.contains("echo") && result.contains("! test"),
             "Should preserve earlier exclamation marks: {result}"
         );
         assert!(!result.ends_with("!"), "Should not end with exclamation mark");
@@ -1827,7 +1834,7 @@ mod tests {
         let home_config = home_path.join(".aka.yml");
         fs::write(&home_config, "aliases:\n  home: echo home").unwrap();
 
-        let result = get_config_path(&home_path.to_path_buf()).unwrap();
+        let result = get_config_path(home_path).unwrap();
 
         // Should prefer .config/aka/aka.yml over home/.aka.yml
         assert_eq!(result, config_file);
@@ -1850,7 +1857,7 @@ mod tests {
         fs::write(&yml_file, "aliases:\n  yml: echo yml").unwrap();
         fs::write(&yaml_file, "aliases:\n  yaml: echo yaml").unwrap();
 
-        let result = get_config_path(&home_path.to_path_buf()).unwrap();
+        let result = get_config_path(home_path).unwrap();
 
         // Should prefer .yml over .yaml (first in the list)
         assert_eq!(result, yml_file);
@@ -1868,7 +1875,7 @@ mod tests {
         let home_config = home_path.join("aka.yaml");
         fs::write(&home_config, "aliases:\n  home: echo home").unwrap();
 
-        let result = get_config_path(&home_path.to_path_buf()).unwrap();
+        let result = get_config_path(home_path).unwrap();
         assert_eq!(result, home_config);
     }
 
@@ -1887,7 +1894,7 @@ mod tests {
         fs::write(&regular_config, "aliases:\n  regular: echo regular").unwrap();
         fs::write(&hidden_config, "aliases:\n  hidden: echo hidden").unwrap();
 
-        let result = get_config_path(&home_path.to_path_buf()).unwrap();
+        let result = get_config_path(home_path).unwrap();
 
         // Should prefer non-hidden file (aka.yml comes before .aka.yml in the list)
         assert_eq!(result, regular_config);
@@ -2103,8 +2110,8 @@ mod tests {
         assert!(is_already_wrapped("$(which ls)"));
         assert!(is_already_wrapped("$(which cat)"));
         // Note: this test may be too strict, depends on implementation
-        let grep_wrapped = is_already_wrapped("$(which grep) pattern");
-        assert!(grep_wrapped || !grep_wrapped); // Just verify it doesn't panic
+        let _grep_wrapped = is_already_wrapped("$(which grep) pattern");
+        // Just verify it doesn't panic
 
         // Test commands that are not wrapped
         assert!(!is_already_wrapped("ls"));
@@ -2131,12 +2138,9 @@ mod tests {
         assert!(!needs_sudo_wrapping("$(which cat) file.txt"));
 
         // Test some basic commands (results may vary by system)
-        let ls_result = needs_sudo_wrapping("ls");
-        let cat_result = needs_sudo_wrapping("cat file.txt");
-
+        let _ls_result = needs_sudo_wrapping("ls");
+        let _cat_result = needs_sudo_wrapping("cat file.txt");
         // Just verify the function runs without panicking
-        assert!(ls_result || !ls_result);
-        assert!(cat_result || !cat_result);
 
         // Test commands that definitely shouldn't be wrapped (non-existent)
         assert!(!needs_sudo_wrapping("nonexistent_command_12345"));

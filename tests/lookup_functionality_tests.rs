@@ -23,7 +23,7 @@ lookups:
     file.write_all(yaml_content.as_bytes())?;
 
     let loader = Loader::new();
-    let mut spec = loader.load(&file.path().to_path_buf())?;
+    let mut spec = loader.load(file.path())?;
 
     // Apply the same expansion logic that should be in AKA::new()
     for (_, map) in spec.lookups.iter_mut() {

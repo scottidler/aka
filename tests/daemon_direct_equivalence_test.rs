@@ -5,7 +5,7 @@ use tempfile::TempDir;
 
 fn get_aka_binary_path() -> String {
     let output = Command::new("cargo")
-        .args(&["build", "--bin", "aka"])
+        .args(["build", "--bin", "aka"])
         .output()
         .expect("Failed to build aka binary");
 
@@ -21,7 +21,7 @@ fn get_aka_binary_path() -> String {
 
 fn start_daemon_with_config(config_path: &str) -> std::process::Child {
     let daemon_output = Command::new("cargo")
-        .args(&["build", "--bin", "aka-daemon"])
+        .args(["build", "--bin", "aka-daemon"])
         .output()
         .expect("Failed to build aka-daemon binary");
 
@@ -33,7 +33,7 @@ fn start_daemon_with_config(config_path: &str) -> std::process::Child {
     }
 
     Command::new("target/debug/aka-daemon")
-        .args(&["--config", config_path, "--foreground"])
+        .args(["--config", config_path, "--foreground"])
         .env("AKA_LOG_FILE", "/tmp/aka-test-logs/aka.log") // Direct test logs to /tmp
         .env("AKA_CACHE_DIR", "/tmp/aka-test-cache") // Direct test cache to /tmp
         .env("XDG_RUNTIME_DIR", "/tmp/aka-test-runtime") // Isolate daemon socket
@@ -51,7 +51,7 @@ fn stop_daemon() {
 fn run_aka_command(config_path: &str, args: &[&str]) -> (String, String, i32) {
     let aka_binary = get_aka_binary_path();
     let mut cmd = Command::new(&aka_binary);
-    cmd.args(&["--config", config_path]);
+    cmd.args(["--config", config_path]);
     cmd.args(args);
     cmd.env("AKA_LOG_FILE", "/tmp/aka-test-logs/aka.log"); // Direct test logs to /tmp
     cmd.env("AKA_CACHE_DIR", "/tmp/aka-test-cache"); // Direct test cache to /tmp
@@ -127,7 +127,8 @@ fn test_query_command_equivalence() {
         let (daemon_stdout, _, daemon_code) = run_aka_command(config_path, &["query", test_case]);
 
         // Stop daemon
-        daemon.kill().expect("Failed to kill daemon");
+        let _ = daemon.kill();
+        let _ = daemon.wait();
         stop_daemon();
 
         // Assert equivalence
@@ -176,7 +177,8 @@ fn test_list_command_equivalence() {
         let (daemon_stdout, _, daemon_code) = run_aka_command(config_path, test_case);
 
         // Stop daemon
-        daemon.kill().expect("Failed to kill daemon");
+        let _ = daemon.kill();
+        let _ = daemon.wait();
         stop_daemon();
 
         // Assert equivalence
@@ -219,7 +221,8 @@ fn test_freq_command_equivalence() {
         let (daemon_stdout, _, daemon_code) = run_aka_command(config_path, test_case);
 
         // Stop daemon
-        daemon.kill().expect("Failed to kill daemon");
+        let _ = daemon.kill();
+        let _ = daemon.wait();
         stop_daemon();
 
         // Assert equivalence
@@ -273,7 +276,8 @@ fn test_eol_parameter_equivalence() {
         let (daemon_stdout, _, daemon_code) = run_aka_command(config_path, &direct_args);
 
         // Stop daemon
-        daemon.kill().expect("Failed to kill daemon");
+        let _ = daemon.kill();
+        let _ = daemon.wait();
         stop_daemon();
 
         // Assert equivalence
@@ -346,7 +350,8 @@ aliases:
         let (daemon_stdout, _, daemon_code) = run_aka_command(config_path, &["query", query]);
 
         // Stop daemon
-        daemon.kill().expect("Failed to kill daemon");
+        let _ = daemon.kill();
+        let _ = daemon.wait();
         stop_daemon();
 
         // Assert equivalence
@@ -385,7 +390,8 @@ fn test_error_handling_equivalence() {
     let (_, _, daemon_code) = run_aka_command(config_path, &["query", "test"]);
 
     // Stop daemon
-    daemon.kill().expect("Failed to kill daemon");
+    let _ = daemon.kill();
+    let _ = daemon.wait();
     stop_daemon();
 
     // Both should fail, but consistently
@@ -437,7 +443,8 @@ fn test_performance_consistency() {
         let daemon_duration = start.elapsed();
 
         // Stop daemon
-        daemon.kill().expect("Failed to kill daemon");
+        let _ = daemon.kill();
+        let _ = daemon.wait();
         stop_daemon();
 
         // Assert functional equivalence (performance can differ)

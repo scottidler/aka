@@ -284,17 +284,18 @@ fn test_request_type_differentiation() {
     ];
 
     for json in requests_json {
-        let request: DaemonRequest = serde_json::from_str(json).expect(&format!("Should deserialize: {}", json));
+        let request: DaemonRequest =
+            serde_json::from_str(json).unwrap_or_else(|_| panic!("Should deserialize: {}", json));
 
         // Verify we can match on the deserialized type
         match request {
             DaemonRequest::Health => {}
             DaemonRequest::Query { cmdline, eol, .. } => {
                 assert_eq!(cmdline, "test");
-                assert_eq!(eol, true);
+                assert!(eol);
             }
             DaemonRequest::List { global, patterns, .. } => {
-                assert_eq!(global, false);
+                assert!(!global);
                 assert_eq!(patterns.len(), 0);
             }
             DaemonRequest::Freq { .. } => {}

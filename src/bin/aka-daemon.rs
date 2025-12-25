@@ -716,6 +716,88 @@ impl DaemonServer {
     }
 }
 
+fn initialize_daemon_server(opts: &DaemonOpts, home_dir: &std::path::Path) -> Result<(DaemonServer, PathBuf)> {
+    // Determine socket path
+    let socket_path = match determine_socket_path(home_dir) {
+        Ok(path) => path,
+        Err(e) => {
+            error!("Failed to determine socket path: {e}");
+            std::process::exit(1);
+        }
+    };
+
+    // Create daemon server
+    let server = match DaemonServer::new(&opts.config) {
+        Ok(server) => server,
+        Err(e) => {
+            error!("Failed to create daemon server: {e}");
+            std::process::exit(1);
+        }
+    };
+
+    Ok((server, socket_path))
+}
+
+fn main() {
+    let opts = DaemonOpts::parse();
+
+    // Set up logging - respect HOME environment variable for tests
+    let home_dir = std::env::var("HOME")
+        .ok()
+        .map(PathBuf::from)
+        .or_else(dirs::home_dir)
+        .ok_or_else(|| eyre!("Unable to determine home directory"))
+        .unwrap_or_else(|e| {
+            eprintln!("Error: {e}");
+            std::process::exit(1);
+        });
+    if let Err(e) = setup_logging(&home_dir) {
+        eprintln!("Warning: Failed to set up logging: {e}");
+    }
+
+    info!("🚀 AKA Daemon starting...");
+
+    // Initialize daemon server
+    let (server, socket_path) = match initialize_daemon_server(&opts, &home_dir) {
+        Ok((server, socket_path)) => (server, socket_path),
+        Err(e) => {
+            error!("Failed to initialize daemon server: {e}");
+            std::process::exit(1);
+        }
+    };
+
+    // Set up signal handling
+    let shutdown_clone = server.shutdown.clone();
+    let socket_path_clone = socket_path.clone();
+    if let Err(e) = ctrlc::set_handler(move || {
+        debug!("🛑 Shutdown signal received");
+        shutdown_clone.store(true, Ordering::Relaxed);
+
+        // Clean up socket file on signal
+        if socket_path_clone.exists() {
+            debug!("🧹 Cleaning up socket file on signal");
+            if let Err(e) = std::fs::remove_file(&socket_path_clone) {
+                error!("Failed to remove socket file on signal: {e}");
+            } else {
+                debug!("✅ Socket file removed successfully on signal");
+            }
+        }
+    }) {
+        error!("Error setting signal handler: {e}");
+        std::process::exit(1);
+    }
+
+    info!("✅ Daemon running (PID: {})", std::process::id());
+
+    // Run the server
+    if let Err(e) = server.run(&socket_path) {
+        error!("Server error: {e}");
+        std::process::exit(1);
+    }
+
+    info!("👋 Daemon stopped");
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -815,86 +897,4 @@ mod tests {
             _ => panic!("Request roundtrip failed"),
         }
     }
-}
-
-fn initialize_daemon_server(opts: &DaemonOpts, home_dir: &std::path::Path) -> Result<(DaemonServer, PathBuf)> {
-    // Determine socket path
-    let socket_path = match determine_socket_path(home_dir) {
-        Ok(path) => path,
-        Err(e) => {
-            error!("Failed to determine socket path: {e}");
-            std::process::exit(1);
-        }
-    };
-
-    // Create daemon server
-    let server = match DaemonServer::new(&opts.config) {
-        Ok(server) => server,
-        Err(e) => {
-            error!("Failed to create daemon server: {e}");
-            std::process::exit(1);
-        }
-    };
-
-    Ok((server, socket_path))
-}
-
-fn main() {
-    let opts = DaemonOpts::parse();
-
-    // Set up logging - respect HOME environment variable for tests
-    let home_dir = std::env::var("HOME")
-        .ok()
-        .map(PathBuf::from)
-        .or_else(dirs::home_dir)
-        .ok_or_else(|| eyre!("Unable to determine home directory"))
-        .unwrap_or_else(|e| {
-            eprintln!("Error: {e}");
-            std::process::exit(1);
-        });
-    if let Err(e) = setup_logging(&home_dir) {
-        eprintln!("Warning: Failed to set up logging: {e}");
-    }
-
-    info!("🚀 AKA Daemon starting...");
-
-    // Initialize daemon server
-    let (server, socket_path) = match initialize_daemon_server(&opts, &home_dir) {
-        Ok((server, socket_path)) => (server, socket_path),
-        Err(e) => {
-            error!("Failed to initialize daemon server: {e}");
-            std::process::exit(1);
-        }
-    };
-
-    // Set up signal handling
-    let shutdown_clone = server.shutdown.clone();
-    let socket_path_clone = socket_path.clone();
-    if let Err(e) = ctrlc::set_handler(move || {
-        debug!("🛑 Shutdown signal received");
-        shutdown_clone.store(true, Ordering::Relaxed);
-
-        // Clean up socket file on signal
-        if socket_path_clone.exists() {
-            debug!("🧹 Cleaning up socket file on signal");
-            if let Err(e) = std::fs::remove_file(&socket_path_clone) {
-                error!("Failed to remove socket file on signal: {e}");
-            } else {
-                debug!("✅ Socket file removed successfully on signal");
-            }
-        }
-    }) {
-        error!("Error setting signal handler: {e}");
-        std::process::exit(1);
-    }
-
-    info!("✅ Daemon running (PID: {})", std::process::id());
-
-    // Run the server
-    if let Err(e) = server.run(&socket_path) {
-        error!("Server error: {e}");
-        std::process::exit(1);
-    }
-
-    info!("👋 Daemon stopped");
 }

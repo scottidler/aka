@@ -102,7 +102,7 @@ aliases:
     println!("First application: sudo ls -> {}", result1);
 
     // Second application should be idempotent
-    let result2 = aka.replace(&result1.trim()).expect("Second application should work");
+    let result2 = aka.replace(result1.trim()).expect("Second application should work");
     println!("Second application: {} -> {}", result1.trim(), result2);
 
     // Should not double-wrap or add multiple sudos
@@ -118,7 +118,7 @@ aliases:
     );
 
     // Third application should also be idempotent
-    let result3 = aka.replace(&result2.trim()).expect("Third application should work");
+    let result3 = aka.replace(result2.trim()).expect("Third application should work");
     println!("Third application: {} -> {}", result2.trim(), result3);
 
     assert!(

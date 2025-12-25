@@ -1,0 +1,78 @@
+otto:
+  api: 1
+  jobs: 4
+  tasks:
+  - ci
+  envs:
+    VERSION: "$(git describe --tags --always --dirty 2>/dev/null || echo 'dev')"
+
+tasks:
+  # Full CI pipeline
+  ci:
+    help: "Full CI pipeline (lint + check in parallel, then cov)"
+    before: [lint, check, test]
+
+  # Code quality checks
+  check:
+    help: "Run all quality checks (compile, clippy, format)"
+    bash: |
+      #!/bin/bash
+      set -e
+      echo "=== Checking compilation ==="
+      cargo check
+      echo ""
+      echo "=== Running Clippy ==="
+      cargo clippy --all-targets --all-features -- -D warnings
+      echo ""
+      echo "=== Checking format ==="
+      cargo fmt --check
+      echo ""
+      echo "✅ All checks passed!"
+
+  # Coverage with tarpaulin (--skip-clean to avoid race conditions)
+  cov:
+    help: "Run tests with coverage via tarpaulin"
+    bash: |
+      #!/bin/bash
+      set -e
+      cargo tarpaulin --skip-clean --ignore-tests --fail-under 80
+
+  # Whitespace linting
+  lint:
+    help: "Run whitespace linting"
+    bash: |
+      whitespace -r
+
+  # Run tests without coverage
+  test:
+    help: "Run all tests"
+    bash: |
+      #!/bin/bash
+      set -e
+      cargo test
+
+  # Clean build artifacts
+  clean:
+    help: "Clean build artifacts"
+    bash: |
+      #!/bin/bash
+      cargo clean
+      echo "✅ Build artifacts cleaned"
+
+  # Build release binary
+  build:
+    help: "Build release binary"
+    bash: |
+      #!/bin/bash
+      set -e
+      cargo build --release
+      echo "✅ Release build complete"
+
+  # Install locally
+  install:
+    help: "Install aka locally via cargo"
+    bash: |
+      #!/bin/bash
+      set -e
+      cargo install --path .
+      echo "✅ aka installed"
