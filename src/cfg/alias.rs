@@ -351,4 +351,155 @@ mod tests {
         assert_eq!(alias.count, 0);
         Ok(())
     }
+
+    #[test]
+    fn test_positionals_with_escaped_dollar() -> Result<()> {
+        // Test that $$1 is NOT treated as a positional (escaped dollar sign)
+        let alias = Alias {
+            name: "alias".to_string(),
+            value: "echo $$1 $2".to_string(),
+            space: true,
+            global: false,
+            count: 0,
+        };
+
+        // $$1 should be excluded, only $2 should be found
+        let positionals = alias.positionals()?;
+        assert_eq!(positionals, vec!["$2"]);
+        Ok(())
+    }
+
+    #[test]
+    fn test_replace_with_escaped_dollar() -> Result<()> {
+        // Test that $$ is unescaped to $ after replacement
+        let alias = Alias {
+            name: "alias".to_string(),
+            value: "echo $$HOME".to_string(),
+            space: true,
+            global: false,
+            count: 0,
+        };
+
+        let mut remainders = vec![];
+        let aliases = HashMap::new();
+        let (result, _count) = alias.replace(&mut remainders, &aliases, true)?;
+        // $$ should be replaced with $
+        assert_eq!(result, "echo $HOME");
+        Ok(())
+    }
+
+    #[test]
+    fn test_alias_default() {
+        let alias = Alias::default();
+        assert!(alias.name.is_empty());
+        assert!(alias.value.is_empty());
+        // Note: Default trait uses Rust's default (false), not serde's default_true
+        // The serde defaults only apply during deserialization
+        assert!(!alias.space); // Rust default is false
+        assert!(!alias.global); // Both Rust default and serde default are false
+        assert_eq!(alias.count, 0); // Both default to 0
+    }
+
+    #[test]
+    fn test_alias_clone() {
+        let alias = Alias {
+            name: "test".to_string(),
+            value: "echo test".to_string(),
+            space: false,
+            global: true,
+            count: 10,
+        };
+        let cloned = alias.clone();
+        assert_eq!(alias, cloned);
+    }
+
+    #[test]
+    fn test_alias_debug() {
+        let alias = Alias {
+            name: "test".to_string(),
+            value: "echo test".to_string(),
+            space: true,
+            global: false,
+            count: 0,
+        };
+        let debug_str = format!("{:?}", alias);
+        assert!(debug_str.contains("test"));
+        assert!(debug_str.contains("echo test"));
+    }
+
+    #[test]
+    fn test_alias_serialize() {
+        let alias = Alias {
+            name: "test".to_string(),
+            value: "echo test".to_string(),
+            space: true,
+            global: false,
+            count: 5,
+        };
+        let serialized = serde_json::to_string(&alias).unwrap();
+        assert!(serialized.contains("echo test"));
+        assert!(serialized.contains("space"));
+    }
+
+    #[test]
+    fn test_variadic_alias_with_eol_false() -> Result<()> {
+        // When eol=false, variadic aliases should not be expanded
+        let alias = Alias {
+            name: "alias".to_string(),
+            value: "echo $@".to_string(),
+            space: true,
+            global: false,
+            count: 0,
+        };
+
+        let mut remainders = vec!["Hello".to_string(), "World".to_string()];
+        let aliases = HashMap::new();
+        let (result, count) = alias.replace(&mut remainders, &aliases, false)?;
+
+        // Should return alias name when eol=false
+        assert_eq!(result, "alias");
+        assert_eq!(count, 0);
+        Ok(())
+    }
+
+    #[test]
+    fn test_positionals_empty_value() -> Result<()> {
+        let alias = Alias {
+            name: "alias".to_string(),
+            value: "".to_string(),
+            space: true,
+            global: false,
+            count: 0,
+        };
+
+        assert_eq!(alias.positionals()?, Vec::<String>::new());
+        Ok(())
+    }
+
+    #[test]
+    fn test_variable_references_empty_value() -> Result<()> {
+        let alias = Alias {
+            name: "alias".to_string(),
+            value: "".to_string(),
+            space: true,
+            global: false,
+            count: 0,
+        };
+
+        assert_eq!(alias.variable_references()?, Vec::<String>::new());
+        Ok(())
+    }
+
+    #[test]
+    fn test_is_variadic_false() {
+        let alias = Alias {
+            name: "alias".to_string(),
+            value: "echo hello".to_string(),
+            space: true,
+            global: false,
+            count: 0,
+        };
+
+        assert!(!alias.is_variadic());
+    }
 }

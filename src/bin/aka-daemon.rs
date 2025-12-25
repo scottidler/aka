@@ -815,6 +815,16 @@ mod tests {
     }
 
     #[test]
+    fn test_daemon_opts_no_config() {
+        let opts = DaemonOpts {
+            foreground: false,
+            config: None,
+        };
+        assert!(!opts.foreground);
+        assert!(opts.config.is_none());
+    }
+
+    #[test]
     fn test_request_serialization() {
         // Test that IPC requests can be serialized
         let health_request = Request::Health;
@@ -896,5 +906,138 @@ mod tests {
             }
             _ => panic!("Request roundtrip failed"),
         }
+    }
+
+    // Additional protocol tests
+    #[test]
+    fn test_request_freq_serialization() {
+        let request = Request::Freq {
+            version: "v0.5.0".to_string(),
+            all: true,
+            config: None,
+        };
+        let serialized = serde_json::to_string(&request).unwrap();
+        assert!(serialized.contains("Freq"));
+        assert!(serialized.contains("all"));
+    }
+
+    #[test]
+    fn test_request_reload_config_serialization() {
+        let request = Request::ReloadConfig;
+        let serialized = serde_json::to_string(&request).unwrap();
+        assert!(serialized.contains("ReloadConfig"));
+    }
+
+    #[test]
+    fn test_request_shutdown_serialization() {
+        let request = Request::Shutdown;
+        let serialized = serde_json::to_string(&request).unwrap();
+        assert!(serialized.contains("Shutdown"));
+    }
+
+    #[test]
+    fn test_request_complete_aliases_serialization() {
+        let request = Request::CompleteAliases {
+            version: "v0.5.0".to_string(),
+            config: None,
+        };
+        let serialized = serde_json::to_string(&request).unwrap();
+        assert!(serialized.contains("CompleteAliases"));
+    }
+
+    #[test]
+    fn test_request_with_config_override() {
+        let config_path = PathBuf::from("/custom/config.yml");
+        let request = Request::Query {
+            version: "v0.5.0".to_string(),
+            cmdline: "test".to_string(),
+            eol: false,
+            config: Some(config_path.clone()),
+        };
+        let serialized = serde_json::to_string(&request).unwrap();
+        assert!(serialized.contains("config"));
+
+        let deserialized: Request = serde_json::from_str(&serialized).unwrap();
+        if let Request::Query { config, .. } = deserialized {
+            assert_eq!(config, Some(config_path));
+        } else {
+            panic!("Wrong request type");
+        }
+    }
+
+    #[test]
+    fn test_response_config_reloaded_serialization() {
+        let response = Response::ConfigReloaded {
+            success: true,
+            message: "Config reloaded successfully".to_string(),
+        };
+        let serialized = serde_json::to_string(&response).unwrap();
+        assert!(serialized.contains("ConfigReloaded"));
+        assert!(serialized.contains("success"));
+    }
+
+    #[test]
+    fn test_response_shutdown_ack_serialization() {
+        let response = Response::ShutdownAck;
+        let serialized = serde_json::to_string(&response).unwrap();
+        assert!(serialized.contains("ShutdownAck"));
+    }
+
+    #[test]
+    fn test_response_version_mismatch_serialization() {
+        let response = Response::VersionMismatch {
+            daemon_version: "v1.0.0".to_string(),
+            client_version: "v0.9.0".to_string(),
+            message: "Please restart daemon".to_string(),
+        };
+        let serialized = serde_json::to_string(&response).unwrap();
+        assert!(serialized.contains("VersionMismatch"));
+        assert!(serialized.contains("daemon_version"));
+        assert!(serialized.contains("client_version"));
+    }
+
+    #[test]
+    fn test_response_deserialization() {
+        let json = r#"{"type":"Success","data":"test result"}"#;
+        let response: Response = serde_json::from_str(json).unwrap();
+        if let Response::Success { data } = response {
+            assert_eq!(data, "test result");
+        } else {
+            panic!("Wrong response type");
+        }
+    }
+
+    #[test]
+    fn test_request_list_with_multiple_patterns() {
+        let request = Request::List {
+            version: "v0.5.0".to_string(),
+            global: false,
+            patterns: vec!["git".to_string(), "docker".to_string(), "k8s".to_string()],
+            config: None,
+        };
+        let serialized = serde_json::to_string(&request).unwrap();
+        assert!(serialized.contains("git"));
+        assert!(serialized.contains("docker"));
+        assert!(serialized.contains("k8s"));
+    }
+
+    #[test]
+    fn test_request_query_with_eol_true() {
+        let request = Request::Query {
+            version: "v0.5.0".to_string(),
+            cmdline: "ls -la !".to_string(),
+            eol: true,
+            config: None,
+        };
+        let serialized = serde_json::to_string(&request).unwrap();
+        assert!(serialized.contains("eol"));
+        assert!(serialized.contains("true"));
+    }
+
+    #[test]
+    fn test_daemon_version_constant() {
+        // Verify the version constant is defined
+        let version = DAEMON_VERSION;
+        assert!(!version.is_empty());
     }
 }

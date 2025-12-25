@@ -1587,4 +1587,313 @@ mod tests {
             assert_eq!(status, "healthy:5:aliases");
         }
     }
+
+    // DaemonError tests
+    #[test]
+    fn test_daemon_error_display_connection_timeout() {
+        let error = DaemonError::ConnectionTimeout;
+        assert_eq!(error.to_string(), "Daemon connection timeout");
+    }
+
+    #[test]
+    fn test_daemon_error_display_read_timeout() {
+        let error = DaemonError::ReadTimeout;
+        assert_eq!(error.to_string(), "Daemon read timeout");
+    }
+
+    #[test]
+    fn test_daemon_error_display_write_timeout() {
+        let error = DaemonError::WriteTimeout;
+        assert_eq!(error.to_string(), "Daemon write timeout");
+    }
+
+    #[test]
+    fn test_daemon_error_display_connection_refused() {
+        let error = DaemonError::ConnectionRefused;
+        assert_eq!(error.to_string(), "Daemon connection refused");
+    }
+
+    #[test]
+    fn test_daemon_error_display_socket_not_found() {
+        let error = DaemonError::SocketNotFound;
+        assert_eq!(error.to_string(), "Daemon socket not found");
+    }
+
+    #[test]
+    fn test_daemon_error_display_socket_permission_denied() {
+        let error = DaemonError::SocketPermissionDenied;
+        assert_eq!(error.to_string(), "Daemon socket permission denied");
+    }
+
+    #[test]
+    fn test_daemon_error_display_protocol_error() {
+        let error = DaemonError::ProtocolError("test error".to_string());
+        assert_eq!(error.to_string(), "Daemon protocol error: test error");
+    }
+
+    #[test]
+    fn test_daemon_error_display_daemon_shutdown() {
+        let error = DaemonError::DaemonShutdown;
+        assert_eq!(error.to_string(), "Daemon is shutting down");
+    }
+
+    #[test]
+    fn test_daemon_error_display_total_operation_timeout() {
+        let error = DaemonError::TotalOperationTimeout;
+        assert_eq!(error.to_string(), "Total daemon operation timeout");
+    }
+
+    #[test]
+    fn test_daemon_error_display_unknown_error() {
+        let error = DaemonError::UnknownError("something happened".to_string());
+        assert_eq!(error.to_string(), "Unknown daemon error: something happened");
+    }
+
+    #[test]
+    fn test_should_retry_daemon_error() {
+        // Should retry
+        assert!(should_retry_daemon_error(&DaemonError::ConnectionTimeout));
+        assert!(should_retry_daemon_error(&DaemonError::ConnectionRefused));
+
+        // Should not retry
+        assert!(!should_retry_daemon_error(&DaemonError::ReadTimeout));
+        assert!(!should_retry_daemon_error(&DaemonError::WriteTimeout));
+        assert!(!should_retry_daemon_error(&DaemonError::SocketNotFound));
+        assert!(!should_retry_daemon_error(&DaemonError::SocketPermissionDenied));
+        assert!(!should_retry_daemon_error(&DaemonError::ProtocolError(
+            "test".to_string()
+        )));
+        assert!(!should_retry_daemon_error(&DaemonError::DaemonShutdown));
+        assert!(!should_retry_daemon_error(&DaemonError::TotalOperationTimeout));
+        assert!(!should_retry_daemon_error(&DaemonError::UnknownError(
+            "test".to_string()
+        )));
+    }
+
+    #[test]
+    fn test_categorize_daemon_error() {
+        use std::io::{Error, ErrorKind};
+
+        let error = Error::new(ErrorKind::TimedOut, "timeout");
+        assert!(matches!(
+            categorize_daemon_error(&error),
+            DaemonError::ConnectionTimeout
+        ));
+
+        let error = Error::new(ErrorKind::ConnectionRefused, "refused");
+        assert!(matches!(
+            categorize_daemon_error(&error),
+            DaemonError::ConnectionRefused
+        ));
+
+        let error = Error::new(ErrorKind::NotFound, "not found");
+        assert!(matches!(categorize_daemon_error(&error), DaemonError::SocketNotFound));
+
+        let error = Error::new(ErrorKind::PermissionDenied, "denied");
+        assert!(matches!(
+            categorize_daemon_error(&error),
+            DaemonError::SocketPermissionDenied
+        ));
+
+        let error = Error::new(ErrorKind::WouldBlock, "would block");
+        assert!(matches!(categorize_daemon_error(&error), DaemonError::ReadTimeout));
+
+        let error = Error::other("other");
+        assert!(matches!(categorize_daemon_error(&error), DaemonError::UnknownError(_)));
+    }
+
+    #[test]
+    fn test_validate_socket_path_not_found() {
+        let socket_path = PathBuf::from("/nonexistent/path/to/socket.sock");
+        let result = validate_socket_path(&socket_path);
+        assert!(matches!(result, Err(DaemonError::SocketNotFound)));
+    }
+
+    #[test]
+    fn test_validate_socket_path_not_socket() {
+        use tempfile::NamedTempFile;
+
+        // Create a regular file (not a socket)
+        let temp_file = NamedTempFile::new().unwrap();
+        let result = validate_socket_path(&temp_file.path().to_path_buf());
+
+        // Should fail because it's not a socket
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_daemon_error_clone() {
+        let error = DaemonError::ConnectionTimeout;
+        let cloned = error.clone();
+        assert_eq!(error.to_string(), cloned.to_string());
+    }
+
+    #[test]
+    fn test_daemon_error_debug() {
+        let error = DaemonError::ConnectionTimeout;
+        let debug_str = format!("{:?}", error);
+        assert!(debug_str.contains("ConnectionTimeout"));
+    }
+
+    #[test]
+    fn test_daemon_error_is_std_error() {
+        let error: Box<dyn std::error::Error> = Box::new(DaemonError::ConnectionTimeout);
+        let _ = error.to_string();
+    }
+
+    // Opts struct tests
+    #[test]
+    fn test_query_opts_debug() {
+        let opts = QueryOpts {
+            cmdline: "test command".to_string(),
+        };
+        let debug_str = format!("{:?}", opts);
+        assert!(debug_str.contains("test command"));
+    }
+
+    #[test]
+    fn test_list_opts_debug() {
+        let opts = ListOpts {
+            global: true,
+            patterns: vec!["test".to_string()],
+        };
+        let debug_str = format!("{:?}", opts);
+        assert!(debug_str.contains("global"));
+        assert!(debug_str.contains("test"));
+    }
+
+    #[test]
+    fn test_freq_opts_debug() {
+        let opts = FreqOpts { all: true };
+        let debug_str = format!("{:?}", opts);
+        assert!(debug_str.contains("all"));
+    }
+
+    #[test]
+    fn test_shell_init_opts_debug() {
+        let opts = ShellInitOpts {
+            shell: "zsh".to_string(),
+        };
+        let debug_str = format!("{:?}", opts);
+        assert!(debug_str.contains("zsh"));
+    }
+
+    #[test]
+    fn test_daemon_opts_debug() {
+        let opts = DaemonOpts {
+            install: false,
+            uninstall: false,
+            reinstall: false,
+            start: true,
+            stop: false,
+            restart: false,
+            reload: false,
+            status: false,
+            legend: false,
+            export_timing: false,
+            timing_summary: false,
+        };
+        let debug_str = format!("{:?}", opts);
+        assert!(debug_str.contains("start"));
+    }
+
+    #[test]
+    fn test_daemon_request_list() {
+        let request = DaemonRequest::List {
+            version: "v0.5.0".to_string(),
+            global: true,
+            patterns: vec!["git".to_string()],
+            config: None,
+        };
+        let serialized = serde_json::to_string(&request).unwrap();
+        assert!(serialized.contains("List"));
+        assert!(serialized.contains("global"));
+        assert!(serialized.contains("git"));
+    }
+
+    #[test]
+    fn test_daemon_request_freq() {
+        let request = DaemonRequest::Freq {
+            version: "v0.5.0".to_string(),
+            all: true,
+            config: None,
+        };
+        let serialized = serde_json::to_string(&request).unwrap();
+        assert!(serialized.contains("Freq"));
+        assert!(serialized.contains("all"));
+    }
+
+    #[test]
+    fn test_daemon_request_reload_config() {
+        let request = DaemonRequest::ReloadConfig;
+        let serialized = serde_json::to_string(&request).unwrap();
+        assert!(serialized.contains("ReloadConfig"));
+    }
+
+    #[test]
+    fn test_daemon_request_shutdown() {
+        let request = DaemonRequest::Shutdown;
+        let serialized = serde_json::to_string(&request).unwrap();
+        assert!(serialized.contains("Shutdown"));
+    }
+
+    #[test]
+    fn test_daemon_request_complete_aliases() {
+        let request = DaemonRequest::CompleteAliases {
+            version: "v0.5.0".to_string(),
+            config: None,
+        };
+        let serialized = serde_json::to_string(&request).unwrap();
+        assert!(serialized.contains("CompleteAliases"));
+    }
+
+    #[test]
+    fn test_daemon_response_success() {
+        let response = DaemonResponse::Success {
+            data: "test data".to_string(),
+        };
+        let serialized = serde_json::to_string(&response).unwrap();
+        assert!(serialized.contains("Success"));
+        assert!(serialized.contains("test data"));
+    }
+
+    #[test]
+    fn test_daemon_response_error() {
+        let response = DaemonResponse::Error {
+            message: "test error".to_string(),
+        };
+        let serialized = serde_json::to_string(&response).unwrap();
+        assert!(serialized.contains("Error"));
+        assert!(serialized.contains("test error"));
+    }
+
+    #[test]
+    fn test_daemon_response_config_reloaded() {
+        let response = DaemonResponse::ConfigReloaded {
+            success: true,
+            message: "Config reloaded".to_string(),
+        };
+        let serialized = serde_json::to_string(&response).unwrap();
+        assert!(serialized.contains("ConfigReloaded"));
+    }
+
+    #[test]
+    fn test_daemon_response_shutdown_ack() {
+        let response = DaemonResponse::ShutdownAck;
+        let serialized = serde_json::to_string(&response).unwrap();
+        assert!(serialized.contains("ShutdownAck"));
+    }
+
+    #[test]
+    fn test_daemon_response_version_mismatch() {
+        let response = DaemonResponse::VersionMismatch {
+            daemon_version: "v1.0.0".to_string(),
+            client_version: "v0.9.0".to_string(),
+            message: "Version mismatch".to_string(),
+        };
+        let serialized = serde_json::to_string(&response).unwrap();
+        assert!(serialized.contains("VersionMismatch"));
+        assert!(serialized.contains("v1.0.0"));
+        assert!(serialized.contains("v0.9.0"));
+    }
 }

@@ -344,4 +344,357 @@ lookups:
 
         Ok(())
     }
+
+    #[test]
+    fn test_loader_default() {
+        let loader1 = Loader::new();
+        let loader2 = Loader::default();
+        assert_eq!(loader1, loader2);
+    }
+
+    #[test]
+    fn test_loader_clone() {
+        let loader1 = Loader::new();
+        let loader2 = loader1.clone();
+        assert_eq!(loader1, loader2);
+    }
+
+    #[test]
+    fn test_validate_file_not_regular_file() -> Result<(), Error> {
+        // Create a directory instead of a file
+        let temp_dir = tempfile::tempdir()?;
+
+        let loader = Loader::new();
+        let result = loader.load(temp_dir.path());
+
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("not a regular file"));
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_validate_alias_with_empty_name() -> Result<(), Error> {
+        let mut file = NamedTempFile::new()?;
+        // This YAML creates an alias with empty name by having empty key
+        let content = r#"
+aliases:
+  "": "echo empty"
+        "#;
+        file.write_all(content.as_bytes())?;
+
+        let loader = Loader::new();
+        let result = loader.load(file.path());
+
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("Empty alias name"));
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_validate_alias_with_spaces_in_name() -> Result<(), Error> {
+        let mut file = NamedTempFile::new()?;
+        let content = r#"
+aliases:
+  "my alias": "echo test"
+        "#;
+        file.write_all(content.as_bytes())?;
+
+        let loader = Loader::new();
+        let result = loader.load(file.path());
+
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("contains spaces"));
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_validate_alias_starting_with_hyphen() -> Result<(), Error> {
+        let mut file = NamedTempFile::new()?;
+        let content = r#"
+aliases:
+  -myalias: "echo test"
+        "#;
+        file.write_all(content.as_bytes())?;
+
+        let loader = Loader::new();
+        let result = loader.load(file.path());
+
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("starts with hyphen"));
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_validate_alias_with_empty_value() -> Result<(), Error> {
+        let mut file = NamedTempFile::new()?;
+        let content = r#"
+aliases:
+  myalias:
+    value: ""
+        "#;
+        file.write_all(content.as_bytes())?;
+
+        let loader = Loader::new();
+        let result = loader.load(file.path());
+
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("empty value"));
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_validate_empty_lookup_name() -> Result<(), Error> {
+        let mut file = NamedTempFile::new()?;
+        let content = r#"
+aliases:
+  test: "echo test"
+lookups:
+  "":
+    key: value
+        "#;
+        file.write_all(content.as_bytes())?;
+
+        let loader = Loader::new();
+        let result = loader.load(file.path());
+
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("Empty lookup name"));
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_validate_empty_lookup_map() -> Result<(), Error> {
+        let mut file = NamedTempFile::new()?;
+        let content = r#"
+aliases:
+  test: "echo test"
+lookups:
+  myLookup: {}
+        "#;
+        file.write_all(content.as_bytes())?;
+
+        let loader = Loader::new();
+        let result = loader.load(file.path());
+
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("is empty"));
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_validate_empty_lookup_key() -> Result<(), Error> {
+        let mut file = NamedTempFile::new()?;
+        let content = r#"
+aliases:
+  test: "echo test"
+lookups:
+  myLookup:
+    "": "value"
+        "#;
+        file.write_all(content.as_bytes())?;
+
+        let loader = Loader::new();
+        let result = loader.load(file.path());
+
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("Empty key in lookup"));
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_validate_empty_lookup_value() -> Result<(), Error> {
+        let mut file = NamedTempFile::new()?;
+        let content = r#"
+aliases:
+  test: "echo test"
+lookups:
+  myLookup:
+    key: ""
+        "#;
+        file.write_all(content.as_bytes())?;
+
+        let loader = Loader::new();
+        let result = loader.load(file.path());
+
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("Empty value for key"));
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_validate_undefined_lookup_reference() -> Result<(), Error> {
+        let mut file = NamedTempFile::new()?;
+        let content = r#"
+aliases:
+  deploy: "kubectl apply -f lookup:undefined[key]"
+        "#;
+        file.write_all(content.as_bytes())?;
+
+        let loader = Loader::new();
+        let result = loader.load(file.path());
+
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("undefined lookup"));
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_validate_valid_lookup_reference() -> Result<(), Error> {
+        let mut file = NamedTempFile::new()?;
+        let content = r#"
+aliases:
+  deploy: "kubectl apply -f lookup:env[prod]"
+lookups:
+  env:
+    prod: "production.yaml"
+        "#;
+        file.write_all(content.as_bytes())?;
+
+        let loader = Loader::new();
+        let result = loader.load(file.path());
+
+        assert!(result.is_ok());
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_extract_lookup_references() {
+        let loader = Loader::new();
+
+        // Single lookup reference
+        let refs = loader.extract_lookup_references("kubectl apply -f lookup:env[prod]");
+        assert_eq!(refs, vec!["env"]);
+
+        // Multiple lookup references
+        let refs = loader.extract_lookup_references("echo lookup:first[a] and lookup:second[b]");
+        assert_eq!(refs, vec!["first", "second"]);
+
+        // No lookup references
+        let refs = loader.extract_lookup_references("echo hello world");
+        assert!(refs.is_empty());
+
+        // Incomplete lookup reference (no bracket)
+        let refs = loader.extract_lookup_references("lookup:incomplete");
+        assert!(refs.is_empty());
+    }
+
+    #[test]
+    fn test_load_with_usage_count_initialization() -> Result<(), Error> {
+        let mut file = NamedTempFile::new()?;
+        let content = r#"
+aliases:
+  test:
+    value: "echo test"
+        "#;
+        file.write_all(content.as_bytes())?;
+
+        let loader = Loader::new();
+        let spec = loader.load(file.path())?;
+
+        // Count should be initialized to 0
+        assert_eq!(spec.aliases.get("test").unwrap().count, 0);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_load_multiple_aliases() -> Result<(), Error> {
+        let mut file = NamedTempFile::new()?;
+        let content = r#"
+aliases:
+  ls: "eza -la"
+  cat: "bat -p"
+  gc: "git commit"
+  gp: "git push"
+        "#;
+        file.write_all(content.as_bytes())?;
+
+        let loader = Loader::new();
+        let spec = loader.load(file.path())?;
+
+        assert_eq!(spec.aliases.len(), 4);
+        assert!(spec.aliases.contains_key("ls"));
+        assert!(spec.aliases.contains_key("cat"));
+        assert!(spec.aliases.contains_key("gc"));
+        assert!(spec.aliases.contains_key("gp"));
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_load_with_global_aliases() -> Result<(), Error> {
+        let mut file = NamedTempFile::new()?;
+        let content = r#"
+aliases:
+  "|c":
+    value: "| xclip -sel clip"
+    global: true
+        "#;
+        file.write_all(content.as_bytes())?;
+
+        let loader = Loader::new();
+        let spec = loader.load(file.path())?;
+
+        let alias = spec.aliases.get("|c").unwrap();
+        assert!(alias.global);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_load_with_space_false() -> Result<(), Error> {
+        let mut file = NamedTempFile::new()?;
+        let content = r#"
+aliases:
+  ping10:
+    value: "ping 10.10.10."
+    space: false
+        "#;
+        file.write_all(content.as_bytes())?;
+
+        let loader = Loader::new();
+        let spec = loader.load(file.path())?;
+
+        let alias = spec.aliases.get("ping10").unwrap();
+        assert!(!alias.space);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_load_with_complex_lookups() -> Result<(), Error> {
+        let mut file = NamedTempFile::new()?;
+        let content = r#"
+aliases:
+  deploy: "kubectl apply"
+lookups:
+  env:
+    prod: production
+    dev: development
+  region:
+    east: us-east-1
+    west: us-west-2
+        "#;
+        file.write_all(content.as_bytes())?;
+
+        let loader = Loader::new();
+        let spec = loader.load(file.path())?;
+
+        assert_eq!(spec.lookups.len(), 2);
+        assert_eq!(spec.lookups["env"]["prod"], "production");
+        assert_eq!(spec.lookups["region"]["east"], "us-east-1");
+
+        Ok(())
+    }
 }

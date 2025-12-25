@@ -539,4 +539,408 @@ mod tests {
         assert_eq!(line2, Some(3));
         assert_eq!(column2, None);
     }
+
+    #[test]
+    fn test_yaml_position_extraction_no_position() {
+        let error_msg = "Some random error message";
+        let (line, column) = extract_yaml_position(error_msg);
+        assert_eq!(line, None);
+        assert_eq!(column, None);
+    }
+
+    #[test]
+    fn test_yaml_position_extraction_column_only() {
+        let error_msg = "Error at column 15";
+        let (line, column) = extract_yaml_position(error_msg);
+        assert_eq!(line, None);
+        assert_eq!(column, Some(15));
+    }
+
+    #[test]
+    fn test_file_operation_error_display() {
+        let error = AkaError::FileOperationError {
+            file_path: PathBuf::from("/home/user/config.yml"),
+            operation: "read".to_string(),
+            underlying_error: "Permission denied".to_string(),
+            context: "loading configuration".to_string(),
+        };
+
+        let display = error.to_string();
+        assert!(display.contains("File operation failed"));
+        assert!(display.contains("/home/user/config.yml"));
+        assert!(display.contains("read"));
+        assert!(display.contains("Permission denied"));
+        assert!(display.contains("loading configuration"));
+        assert!(display.contains("Check file permissions"));
+    }
+
+    #[test]
+    fn test_alias_processing_error_display() {
+        let error = AkaError::AliasProcessingError {
+            alias_name: "test_alias".to_string(),
+            command_line: "test command".to_string(),
+            operation: "replace".to_string(),
+            underlying_error: "Invalid pattern".to_string(),
+            context: "processing user input".to_string(),
+        };
+
+        let display = error.to_string();
+        assert!(display.contains("Alias processing failed"));
+        assert!(display.contains("test_alias"));
+        assert!(display.contains("test command"));
+        assert!(display.contains("replace"));
+        assert!(display.contains("Invalid pattern"));
+        assert!(display.contains("processing user input"));
+    }
+
+    #[test]
+    fn test_lookup_error_display_no_lookups() {
+        let error = AkaError::LookupError {
+            lookup_name: "env".to_string(),
+            key: "missing_key".to_string(),
+            available_lookups: vec![],
+            available_keys: vec![],
+            context: "testing".to_string(),
+        };
+
+        let display = error.to_string();
+        assert!(display.contains("Lookup resolution failed"));
+        assert!(display.contains("No lookups are defined"));
+    }
+
+    #[test]
+    fn test_runtime_error_display() {
+        let error = AkaError::RuntimeError {
+            operation: "daemon startup".to_string(),
+            context: "initializing socket".to_string(),
+            underlying_error: "Address already in use".to_string(),
+            suggestions: vec![
+                "Check if another daemon is running".to_string(),
+                "Use 'aka daemon --stop' to stop existing daemon".to_string(),
+            ],
+        };
+
+        let display = error.to_string();
+        assert!(display.contains("Runtime error during daemon startup"));
+        assert!(display.contains("initializing socket"));
+        assert!(display.contains("Address already in use"));
+        assert!(display.contains("Suggestions:"));
+        assert!(display.contains("Check if another daemon is running"));
+        assert!(display.contains("Use 'aka daemon --stop'"));
+    }
+
+    #[test]
+    fn test_runtime_error_display_no_suggestions() {
+        let error = AkaError::RuntimeError {
+            operation: "test operation".to_string(),
+            context: "test context".to_string(),
+            underlying_error: "test error".to_string(),
+            suggestions: vec![],
+        };
+
+        let display = error.to_string();
+        assert!(display.contains("Runtime error during test operation"));
+        assert!(display.contains("test context"));
+        assert!(display.contains("test error"));
+        // No suggestions section when empty
+        assert!(!display.contains("Suggestions:"));
+    }
+
+    #[test]
+    fn test_config_not_found_with_custom_path() {
+        let error = AkaError::ConfigNotFound {
+            attempted_paths: vec![PathBuf::from("/custom/path/config.yml")],
+            home_dir: PathBuf::from("/home/user"),
+            custom_path: Some(PathBuf::from("/custom/path/config.yml")),
+        };
+
+        let display = error.to_string();
+        assert!(display.contains("Configuration file not found"));
+        assert!(display.contains("Custom config path: /custom/path/config.yml"));
+        // Should NOT contain mkdir instructions for custom paths
+        assert!(!display.contains("mkdir -p"));
+    }
+
+    #[test]
+    fn test_config_parse_error_line_only() {
+        let error = AkaError::ConfigParseError {
+            file_path: PathBuf::from("/home/user/aka.yml"),
+            line: Some(42),
+            column: None,
+            context: "parsing aliases".to_string(),
+            underlying_error: "unexpected character".to_string(),
+        };
+
+        let display = error.to_string();
+        assert!(display.contains("Configuration parsing error"));
+        assert!(display.contains("line 42"));
+        // Should not mention column when None
+        assert!(!display.contains("column"));
+    }
+
+    #[test]
+    fn test_config_parse_error_no_position() {
+        let error = AkaError::ConfigParseError {
+            file_path: PathBuf::from("/home/user/aka.yml"),
+            line: None,
+            column: None,
+            context: "initial parse".to_string(),
+            underlying_error: "invalid yaml".to_string(),
+        };
+
+        let display = error.to_string();
+        assert!(display.contains("Configuration parsing error"));
+        assert!(!display.contains("Location:"));
+    }
+
+    #[test]
+    fn test_error_context_with_alias() {
+        let context = ErrorContext::new("alias expansion")
+            .with_alias("my_alias")
+            .with_command("echo hello");
+
+        let error = context.to_alias_processing_error(eyre!("test error"));
+
+        match error {
+            AkaError::AliasProcessingError {
+                alias_name,
+                command_line,
+                ..
+            } => {
+                assert_eq!(alias_name, "my_alias");
+                assert_eq!(command_line, "echo hello");
+            }
+            _ => panic!("Wrong error type"),
+        }
+    }
+
+    #[test]
+    fn test_error_context_to_config_not_found() {
+        let context = ErrorContext::new("finding config")
+            .with_file("/some/path")
+            .with_context("during startup");
+
+        let error = context.to_config_not_found_error(
+            vec![PathBuf::from("/path1"), PathBuf::from("/path2")],
+            PathBuf::from("/home/user"),
+            None,
+        );
+
+        match error {
+            AkaError::ConfigNotFound { attempted_paths, .. } => {
+                assert_eq!(attempted_paths.len(), 2);
+            }
+            _ => panic!("Wrong error type"),
+        }
+    }
+
+    #[test]
+    fn test_error_context_to_config_parse_error() {
+        let context = ErrorContext::new("parsing")
+            .with_file("/home/user/config.yml")
+            .with_context("during load");
+
+        let error = context.to_config_parse_error(eyre!("parse failed"), Some(10), Some(5));
+
+        match error {
+            AkaError::ConfigParseError {
+                file_path,
+                line,
+                column,
+                ..
+            } => {
+                assert_eq!(file_path, PathBuf::from("/home/user/config.yml"));
+                assert_eq!(line, Some(10));
+                assert_eq!(column, Some(5));
+            }
+            _ => panic!("Wrong error type"),
+        }
+    }
+
+    #[test]
+    fn test_error_context_to_config_validation_error() {
+        let validation_errors = vec![ValidationError {
+            error_type: "test".to_string(),
+            message: "test message".to_string(),
+            line: Some(1),
+            column: None,
+            context: "test context".to_string(),
+        }];
+
+        let context = ErrorContext::new("validating").with_file("/home/user/config.yml");
+
+        let error = context.to_config_validation_error(validation_errors);
+
+        match error {
+            AkaError::ConfigValidationError { errors, .. } => {
+                assert_eq!(errors.len(), 1);
+            }
+            _ => panic!("Wrong error type"),
+        }
+    }
+
+    #[test]
+    fn test_error_context_to_lookup_error() {
+        let context = ErrorContext::new("lookup").with_context("processing variable");
+
+        let error = context.to_lookup_error(
+            "env_vars",
+            "HOME",
+            vec!["env_vars".to_string(), "paths".to_string()],
+            vec!["PATH".to_string(), "USER".to_string()],
+        );
+
+        match error {
+            AkaError::LookupError {
+                lookup_name,
+                key,
+                available_lookups,
+                available_keys,
+                ..
+            } => {
+                assert_eq!(lookup_name, "env_vars");
+                assert_eq!(key, "HOME");
+                assert_eq!(available_lookups.len(), 2);
+                assert_eq!(available_keys.len(), 2);
+            }
+            _ => panic!("Wrong error type"),
+        }
+    }
+
+    #[test]
+    fn test_error_context_to_circular_reference_error() {
+        let context = ErrorContext::new("expansion").with_context("detecting cycles");
+
+        let error =
+            context.to_circular_reference_error(vec!["alias1".to_string(), "alias2".to_string(), "alias1".to_string()]);
+
+        match error {
+            AkaError::CircularReferenceError { alias_chain, .. } => {
+                assert_eq!(alias_chain.len(), 3);
+            }
+            _ => panic!("Wrong error type"),
+        }
+    }
+
+    #[test]
+    fn test_error_context_to_runtime_error() {
+        let context = ErrorContext::new("runtime").with_context("during operation");
+
+        let error = context.to_runtime_error(
+            eyre!("runtime failure"),
+            vec!["suggestion 1".to_string(), "suggestion 2".to_string()],
+        );
+
+        match error {
+            AkaError::RuntimeError {
+                suggestions, operation, ..
+            } => {
+                assert_eq!(suggestions.len(), 2);
+                assert_eq!(operation, "runtime");
+            }
+            _ => panic!("Wrong error type"),
+        }
+    }
+
+    #[test]
+    fn test_error_context_default_values() {
+        // Test with no optional values set
+        let context = ErrorContext::new("operation");
+
+        let error = context.to_file_operation_error(eyre!("error"));
+
+        match error {
+            AkaError::FileOperationError {
+                file_path,
+                operation,
+                context,
+                ..
+            } => {
+                assert_eq!(file_path, PathBuf::from("unknown"));
+                assert_eq!(operation, "operation");
+                assert_eq!(context, ""); // Empty context when none added
+            }
+            _ => panic!("Wrong error type"),
+        }
+    }
+
+    #[test]
+    fn test_enhance_error_yaml() {
+        let context = ErrorContext::new("parsing").with_file("/config.yml");
+        let error = eyre!("YAML parsing failed at line 5");
+
+        let enhanced = enhance_error(error, context);
+
+        match enhanced {
+            AkaError::ConfigParseError { line, .. } => {
+                assert_eq!(line, Some(5));
+            }
+            _ => panic!("Should have been ConfigParseError"),
+        }
+    }
+
+    #[test]
+    fn test_enhance_error_permission() {
+        let context = ErrorContext::new("reading").with_file("/protected/file");
+        let error = eyre!("permission denied: cannot access file");
+
+        let enhanced = enhance_error(error, context);
+
+        assert!(matches!(enhanced, AkaError::FileOperationError { .. }));
+    }
+
+    #[test]
+    fn test_enhance_error_not_found() {
+        let context = ErrorContext::new("opening").with_file("/nonexistent");
+        let error = eyre!("No such file or directory: not found");
+
+        let enhanced = enhance_error(error, context);
+
+        assert!(matches!(enhanced, AkaError::FileOperationError { .. }));
+    }
+
+    #[test]
+    fn test_enhance_error_generic() {
+        let context = ErrorContext::new("processing");
+        let error = eyre!("some generic error");
+
+        let enhanced = enhance_error(error, context);
+
+        assert!(matches!(enhanced, AkaError::RuntimeError { .. }));
+    }
+
+    #[test]
+    fn test_aka_error_is_std_error() {
+        // Verify AkaError implements std::error::Error
+        let error: Box<dyn std::error::Error> = Box::new(AkaError::RuntimeError {
+            operation: "test".to_string(),
+            context: "test".to_string(),
+            underlying_error: "test".to_string(),
+            suggestions: vec![],
+        });
+
+        // Should be able to use as std error
+        let _ = error.to_string();
+    }
+
+    #[test]
+    fn test_validation_error_with_no_line_or_context() {
+        let validation_error = ValidationError {
+            error_type: "test_error".to_string(),
+            message: "test message".to_string(),
+            line: None,
+            column: None,
+            context: "".to_string(),
+        };
+
+        let error = AkaError::ConfigValidationError {
+            file_path: PathBuf::from("/test.yml"),
+            errors: vec![validation_error],
+        };
+
+        let display = error.to_string();
+        assert!(display.contains("test_error"));
+        assert!(display.contains("test message"));
+        // Should not contain Location line when line is None
+    }
 }

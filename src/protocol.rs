@@ -52,7 +52,7 @@ pub enum DaemonRequest {
     },
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(tag = "type")]
 pub enum DaemonResponse {
     /// Successful operation with data

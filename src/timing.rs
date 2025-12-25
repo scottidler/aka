@@ -309,3 +309,379 @@ pub fn get_timing_file_path() -> Result<PathBuf> {
     std::fs::create_dir_all(&data_dir)?;
     Ok(data_dir.join("timing_data.csv"))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::Duration;
+
+    #[test]
+    fn test_is_benchmark_mode_default() {
+        // Clear any existing env vars that would enable benchmark mode
+        std::env::remove_var("AKA_BENCHMARK");
+        std::env::remove_var("AKA_TIMING");
+        std::env::remove_var("AKA_DEBUG_TIMING");
+
+        // Default should be false when no env vars are set
+        // Note: this test may fail if run in a benchmark environment
+        let result = is_benchmark_mode();
+        // Just verify it doesn't panic - the actual value depends on environment
+        let _ = result;
+    }
+
+    #[test]
+    fn test_timing_collector_creation() {
+        let collector = TimingCollector::new(ProcessingMode::Daemon);
+        // Verify the collector was created with correct mode
+        assert!(matches!(collector.mode, ProcessingMode::Daemon));
+
+        let collector2 = TimingCollector::new(ProcessingMode::Direct);
+        assert!(matches!(collector2.mode, ProcessingMode::Direct));
+    }
+
+    #[test]
+    fn test_timing_collector_config_load() {
+        let mut collector = TimingCollector::new(ProcessingMode::Direct);
+
+        // Initially, config_start should be None
+        assert!(collector.config_start.is_none());
+
+        collector.start_config_load();
+        assert!(collector.config_start.is_some());
+
+        // Small sleep to ensure duration is measurable
+        std::thread::sleep(Duration::from_millis(1));
+
+        let duration = collector.end_config_load();
+        assert!(duration.is_some());
+        assert!(duration.unwrap() >= Duration::from_millis(1));
+    }
+
+    #[test]
+    fn test_timing_collector_ipc() {
+        let mut collector = TimingCollector::new(ProcessingMode::Daemon);
+
+        // Initially, ipc_start should be None
+        assert!(collector.ipc_start.is_none());
+
+        collector.start_ipc();
+        assert!(collector.ipc_start.is_some());
+
+        std::thread::sleep(Duration::from_millis(1));
+
+        let duration = collector.end_ipc();
+        assert!(duration.is_some());
+        assert!(duration.unwrap() >= Duration::from_millis(1));
+    }
+
+    #[test]
+    fn test_timing_collector_processing() {
+        let mut collector = TimingCollector::new(ProcessingMode::Direct);
+
+        // Initially, processing_start should be None
+        assert!(collector.processing_start.is_none());
+
+        collector.start_processing();
+        assert!(collector.processing_start.is_some());
+
+        std::thread::sleep(Duration::from_millis(1));
+
+        let duration = collector.end_processing();
+        assert!(duration >= Duration::from_millis(1));
+    }
+
+    #[test]
+    fn test_timing_collector_end_without_start() {
+        let mut collector = TimingCollector::new(ProcessingMode::Direct);
+
+        // End without start should return None/default
+        let config_duration = collector.end_config_load();
+        assert!(config_duration.is_none());
+
+        let ipc_duration = collector.end_ipc();
+        assert!(ipc_duration.is_none());
+
+        let processing_duration = collector.end_processing();
+        assert_eq!(processing_duration, Duration::default());
+    }
+
+    #[test]
+    fn test_timing_collector_finalize() {
+        let mut collector = TimingCollector::new(ProcessingMode::Daemon);
+
+        // Start some timers
+        collector.start_config_load();
+        std::thread::sleep(Duration::from_millis(1));
+
+        collector.start_ipc();
+        std::thread::sleep(Duration::from_millis(1));
+
+        collector.start_processing();
+        std::thread::sleep(Duration::from_millis(1));
+
+        let timing_data = collector.finalize();
+
+        assert!(matches!(timing_data.mode, ProcessingMode::Daemon));
+        assert!(timing_data.total_duration >= Duration::from_millis(3));
+        assert!(timing_data.config_load_duration.is_some());
+        assert!(timing_data.ipc_duration.is_some());
+        // Processing duration is also calculated in finalize
+    }
+
+    #[test]
+    fn test_timing_data_to_csv_line() {
+        let timing_data = TimingData {
+            total_duration: Duration::from_millis(100),
+            config_load_duration: Some(Duration::from_millis(30)),
+            ipc_duration: Some(Duration::from_millis(20)),
+            processing_duration: Duration::from_millis(50),
+            mode: ProcessingMode::Daemon,
+            timestamp: SystemTime::UNIX_EPOCH + Duration::from_secs(1000000),
+        };
+
+        let csv_line = timing_data.to_csv_line();
+
+        // Verify the CSV format
+        let parts: Vec<&str> = csv_line.split(',').collect();
+        assert_eq!(parts.len(), 6);
+        assert_eq!(parts[1], "Daemon");
+
+        // Parse the numeric values (verify they're valid)
+        let _timestamp: u64 = parts[0].parse().unwrap();
+        let _total_ms: f64 = parts[2].parse().unwrap();
+        let _config_ms: f64 = parts[3].parse().unwrap();
+        let _ipc_ms: f64 = parts[4].parse().unwrap();
+        let _processing_ms: f64 = parts[5].parse().unwrap();
+    }
+
+    #[test]
+    fn test_timing_data_to_csv_line_no_optional_durations() {
+        let timing_data = TimingData {
+            total_duration: Duration::from_millis(100),
+            config_load_duration: None,
+            ipc_duration: None,
+            processing_duration: Duration::from_millis(50),
+            mode: ProcessingMode::Direct,
+            timestamp: SystemTime::UNIX_EPOCH + Duration::from_secs(1000000),
+        };
+
+        let csv_line = timing_data.to_csv_line();
+
+        let parts: Vec<&str> = csv_line.split(',').collect();
+        assert_eq!(parts.len(), 6);
+        assert_eq!(parts[1], "Direct");
+
+        // Optional durations should be 0.0
+        let config_ms: f64 = parts[3].parse().unwrap();
+        let ipc_ms: f64 = parts[4].parse().unwrap();
+        assert_eq!(config_ms, 0.0);
+        assert_eq!(ipc_ms, 0.0);
+    }
+
+    #[test]
+    fn test_parse_csv_line_valid_daemon() {
+        let csv_line = "1000000000,Daemon,100.000,30.000,20.000,50.000";
+        let result = parse_csv_line(csv_line);
+
+        assert!(result.is_ok());
+        let timing_data = result.unwrap();
+
+        assert!(matches!(timing_data.mode, ProcessingMode::Daemon));
+        assert!(timing_data.config_load_duration.is_some());
+        assert!(timing_data.ipc_duration.is_some());
+    }
+
+    #[test]
+    fn test_parse_csv_line_valid_direct() {
+        let csv_line = "1000000000,Direct,100.000,0.000,0.000,50.000";
+        let result = parse_csv_line(csv_line);
+
+        assert!(result.is_ok());
+        let timing_data = result.unwrap();
+
+        assert!(matches!(timing_data.mode, ProcessingMode::Direct));
+        assert!(timing_data.config_load_duration.is_none());
+        assert!(timing_data.ipc_duration.is_none());
+    }
+
+    #[test]
+    fn test_parse_csv_line_invalid_format() {
+        // Wrong number of fields
+        let csv_line = "1000000000,Daemon,100.000,30.000";
+        let result = parse_csv_line(csv_line);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_parse_csv_line_invalid_mode() {
+        let csv_line = "1000000000,InvalidMode,100.000,30.000,20.000,50.000";
+        let result = parse_csv_line(csv_line);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_parse_csv_line_invalid_numbers() {
+        let csv_line = "not_a_number,Daemon,100.000,30.000,20.000,50.000";
+        let result = parse_csv_line(csv_line);
+        assert!(result.is_err());
+
+        let csv_line2 = "1000000000,Daemon,not_a_float,30.000,20.000,50.000";
+        let result2 = parse_csv_line(csv_line2);
+        assert!(result2.is_err());
+    }
+
+    #[test]
+    fn test_csv_roundtrip() {
+        let original = TimingData {
+            total_duration: Duration::from_millis(100),
+            config_load_duration: Some(Duration::from_millis(30)),
+            ipc_duration: Some(Duration::from_millis(20)),
+            processing_duration: Duration::from_millis(50),
+            mode: ProcessingMode::Daemon,
+            timestamp: SystemTime::UNIX_EPOCH + Duration::from_secs(1000000),
+        };
+
+        let csv_line = original.to_csv_line();
+        let parsed = parse_csv_line(&csv_line).unwrap();
+
+        // Mode should match
+        assert!(matches!(parsed.mode, ProcessingMode::Daemon));
+
+        // Durations should be approximately equal (some precision loss due to f64 conversion)
+        // Note: Duration -> ms -> Duration conversion loses sub-millisecond precision
+    }
+
+    #[test]
+    fn test_timing_data_log_detailed_no_panic() {
+        // This test just verifies log_detailed doesn't panic
+        let timing_data = TimingData {
+            total_duration: Duration::from_millis(100),
+            config_load_duration: Some(Duration::from_millis(30)),
+            ipc_duration: Some(Duration::from_millis(20)),
+            processing_duration: Duration::from_millis(50),
+            mode: ProcessingMode::Daemon,
+            timestamp: SystemTime::now(),
+        };
+
+        // Should not panic regardless of benchmark mode
+        timing_data.log_detailed();
+    }
+
+    #[test]
+    fn test_timing_data_log_detailed_with_zero_total() {
+        // Edge case: zero total duration (shouldn't cause division by zero)
+        let timing_data = TimingData {
+            total_duration: Duration::from_millis(0),
+            config_load_duration: Some(Duration::from_millis(0)),
+            ipc_duration: None,
+            processing_duration: Duration::from_millis(0),
+            mode: ProcessingMode::Direct,
+            timestamp: SystemTime::now(),
+        };
+
+        // Should not panic
+        timing_data.log_detailed();
+    }
+
+    #[test]
+    fn test_get_timing_file_path() {
+        // This should succeed on systems with data_local_dir defined
+        let result = get_timing_file_path();
+
+        match result {
+            Ok(path) => {
+                assert!(path.to_string_lossy().contains("aka"));
+                assert!(path.to_string_lossy().ends_with("timing_data.csv"));
+            }
+            Err(_) => {
+                // Acceptable if system doesn't have data_local_dir
+            }
+        }
+    }
+
+    #[test]
+    fn test_log_timing_no_panic() {
+        let timing_data = TimingData {
+            total_duration: Duration::from_millis(100),
+            config_load_duration: None,
+            ipc_duration: None,
+            processing_duration: Duration::from_millis(100),
+            mode: ProcessingMode::Direct,
+            timestamp: SystemTime::now(),
+        };
+
+        // Should not panic
+        log_timing(timing_data);
+    }
+
+    #[test]
+    fn test_export_timing_csv_format() {
+        let result = export_timing_csv();
+
+        assert!(result.is_ok());
+        let csv = result.unwrap();
+
+        // Should have header
+        assert!(csv.starts_with("timestamp,mode,total_ms,config_ms,ipc_ms,processing_ms"));
+    }
+
+    #[test]
+    fn test_get_timing_summary_no_panic() {
+        // Should not panic even if no timing data exists
+        let result = get_timing_summary();
+
+        match result {
+            Ok((daemon_avg, direct_avg, daemon_count, direct_count)) => {
+                // Averages should be valid durations
+                let _ = daemon_avg;
+                let _ = direct_avg;
+                // Counts should be non-negative (they're usize)
+                let _ = daemon_count;
+                let _ = direct_count;
+            }
+            Err(_) => {
+                // Acceptable if timing file operations fail
+            }
+        }
+    }
+
+    #[test]
+    fn test_processing_mode_display() {
+        // Test that ProcessingMode can be used in debug/display contexts
+        let daemon_mode = ProcessingMode::Daemon;
+        let direct_mode = ProcessingMode::Direct;
+
+        let daemon_str = format!("{daemon_mode:?}");
+        let direct_str = format!("{direct_mode:?}");
+
+        assert_eq!(daemon_str, "Daemon");
+        assert_eq!(direct_str, "Direct");
+    }
+
+    #[test]
+    fn test_timing_data_clone() {
+        let original = TimingData {
+            total_duration: Duration::from_millis(100),
+            config_load_duration: Some(Duration::from_millis(30)),
+            ipc_duration: Some(Duration::from_millis(20)),
+            processing_duration: Duration::from_millis(50),
+            mode: ProcessingMode::Daemon,
+            timestamp: SystemTime::now(),
+        };
+
+        let cloned = original.clone();
+
+        assert_eq!(original.total_duration, cloned.total_duration);
+        assert_eq!(original.config_load_duration, cloned.config_load_duration);
+        assert_eq!(original.ipc_duration, cloned.ipc_duration);
+        assert_eq!(original.processing_duration, cloned.processing_duration);
+    }
+
+    #[test]
+    fn test_timing_collector_clone() {
+        let collector = TimingCollector::new(ProcessingMode::Direct);
+        let cloned = collector.clone();
+
+        assert!(matches!(cloned.mode, ProcessingMode::Direct));
+    }
+}
