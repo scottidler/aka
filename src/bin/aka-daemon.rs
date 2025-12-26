@@ -1,4 +1,5 @@
 use clap::Parser;
+use colored;
 use std::fs;
 use std::io::{BufRead, BufReader, Write};
 use std::os::unix::net::{UnixListener, UnixStream};
@@ -740,6 +741,9 @@ fn initialize_daemon_server(opts: &DaemonOpts, home_dir: &std::path::Path) -> Re
 
 fn main() {
     let opts = DaemonOpts::parse();
+
+    // Force colored output - daemon output goes to client which displays on terminal
+    colored::control::set_override(true);
 
     // Set up logging - respect HOME environment variable for tests
     let home_dir = std::env::var("HOME")
