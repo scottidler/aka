@@ -109,15 +109,22 @@ bindkey -M isearch " " magic-space
 bindkey "^t" _aka_search
 
 # -----------------------------------------------------------------------------
-# Completion support - register aka alias completion
+# Completion support - register aka alias completion using -first- context
+# This runs BEFORE other completers and adds aka aliases without blocking them
+# See: man zshcompsys, search for "-first-"
 # -----------------------------------------------------------------------------
 if (( $+functions[compdef] )); then
     _aka_complete_commands() {
+        # Only add completions when in command position
+        [[ $compstate[context] == command ]] || return 1
+
         local -a aka_aliases
         aka_aliases=(${(f)"$(aka __complete_aliases 2>/dev/null)"})
-        compadd -a aka_aliases
-        return $?
+        (( ${#aka_aliases} )) && compadd -a aka_aliases
+
+        # Return 0 but don't set _compskip - allows other completers to also run
+        return 0
     }
-    compdef _aka_complete_commands -command-
+    compdef _aka_complete_commands -first-
 fi
 
