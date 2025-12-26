@@ -1,5 +1,7 @@
+use colored::Colorize;
 use eyre::{eyre, Result};
 use log::{debug, info, warn};
+use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs::OpenOptions;
@@ -834,6 +836,37 @@ impl AKA {
 
 /// Format alias output with proper alignment and optional counts
 /// This function works with iterators to avoid unnecessary allocations
+/// Colorize alias value, highlighting positional parameters like $1, $2, $@
+fn colorize_value(value: &str) -> String {
+    // Match only positional parameters: $1-$9 and $@
+    let re = Regex::new(r"\$[@1-9]").unwrap();
+
+    let mut result = String::new();
+    let mut last_end = 0;
+
+    for cap in re.find_iter(value) {
+        // Add the text before this match in white
+        if cap.start() > last_end {
+            result.push_str(&value[last_end..cap.start()].white().to_string());
+        }
+        // Add the positional parameter in cyan
+        result.push_str(&cap.as_str().cyan().to_string());
+        last_end = cap.end();
+    }
+
+    // Add any remaining text in white
+    if last_end < value.len() {
+        result.push_str(&value[last_end..].white().to_string());
+    }
+
+    // If value was empty or had no matches, return white text
+    if result.is_empty() {
+        value.white().to_string()
+    } else {
+        result
+    }
+}
+
 pub fn format_alias_output_from_iter<I>(aliases: I, show_counts: bool) -> String
 where
     I: Iterator<Item = Alias>,
@@ -852,23 +885,46 @@ where
     let output = aliases
         .iter()
         .map(|alias| {
-            let prefix = if show_counts {
-                format!("{:>4} {:>width$} -> ", alias.count, alias.name, width = max_name_width)
+            // Color the alias name: red for global, orange for non-global
+            let colored_name = if alias.global {
+                format!("{:>width$}", alias.name, width = max_name_width).red().to_string()
             } else {
-                format!("{:>width$} -> ", alias.name, width = max_name_width)
+                // Orange using truecolor (255, 165, 0)
+                format!("{:>width$}", alias.name, width = max_name_width)
+                    .truecolor(255, 165, 0)
+                    .to_string()
             };
 
-            let indent = " ".repeat(prefix.len());
+            // Green arrow
+            let arrow = "->".green().to_string();
+
+            // Colorize the value with variables highlighted
+            let colored_value = colorize_value(&alias.value);
+
+            // Build the prefix with optional count
+            let prefix = if show_counts {
+                format!("{:>4} {} {} ", alias.count, colored_name, arrow)
+            } else {
+                format!("{} {} ", colored_name, arrow)
+            };
+
+            // Calculate indent width for multiline values (using uncolored length)
+            let indent_width = if show_counts {
+                4 + 1 + max_name_width + 1 + 2 + 1 // count + space + name + space + arrow + space
+            } else {
+                max_name_width + 1 + 2 + 1 // name + space + arrow + space
+            };
+            let indent = " ".repeat(indent_width);
 
             if alias.value.contains('\n') {
                 let lines: Vec<&str> = alias.value.split('\n').collect();
-                let mut result = format!("{}{}", prefix, lines[0]);
+                let mut result = format!("{}{}", prefix, colorize_value(lines[0]));
                 for line in &lines[1..] {
-                    result.push_str(&format!("\n{indent}{line}"));
+                    result.push_str(&format!("\n{}{}", indent, colorize_value(line)));
                 }
                 result
             } else {
-                format!("{}{}", prefix, alias.value)
+                format!("{}{}", prefix, colored_value)
             }
         })
         .collect::<Vec<_>>()
