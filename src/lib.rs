@@ -887,7 +887,9 @@ where
         .map(|alias| {
             // Color the alias name: red for global, orange for non-global
             let colored_name = if alias.global {
-                format!("{:>width$}", alias.name, width = max_name_width).red().to_string()
+                format!("{:>width$}", alias.name, width = max_name_width)
+                    .red()
+                    .to_string()
             } else {
                 // Orange using truecolor (255, 165, 0)
                 format!("{:>width$}", alias.name, width = max_name_width)
