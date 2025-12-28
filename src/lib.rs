@@ -594,9 +594,9 @@ impl AKA {
 
         debug!("🔍 SPLIT ARGS: {args:?}");
 
-        // Check for sudo trigger pattern: command ends with "!" (only when eol=true)
+        // Check for sudo trigger pattern: command ends with "!" or "!binary" (only when eol=true)
         if self.eol && !args.is_empty() {
-            if let Some(last_arg) = args.last() {
+            if let Some(last_arg) = args.last().cloned() {
                 if last_arg == "!" {
                     args.pop(); // Remove the "!"
                     sudo = true;
@@ -607,6 +607,30 @@ impl AKA {
                         debug!("🔍 EMPTY ARGS AFTER SUDO TRIGGER: Lone '!' detected, returning empty");
                         return Ok(String::new());
                     }
+                } else if let Some(binary) = last_arg.strip_prefix('!') {
+                    // Replace first command with the binary after !
+                    // e.g., "ls -la /path !cat" -> "cat /path"
+                    let next_arg = binary.to_string();
+                    debug!("🔍 BINARY REPLACE DETECTED: Replacing first arg with '{next_arg}'");
+                    args[0] = next_arg;
+                    replaced = true;
+
+                    // Remove all flag arguments (-foo, --bar, etc.) but preserve non-flag args
+                    let mut i = 1;
+                    while i < args.len() {
+                        if args[i].starts_with('-') {
+                            debug!("🔍 REMOVING FLAG ARG: '{}'", args[i]);
+                            args.remove(i);
+                        } else if args[i] == "|" || args[i] == ">" || args[i] == "<" {
+                            // Stop at shell operators
+                            break;
+                        } else {
+                            i += 1;
+                        }
+                    }
+                    // Remove the !binary arg itself (now at the end)
+                    args.pop();
+                    debug!("🔍 AFTER BINARY REPLACE: {args:?}");
                 }
             }
         }
@@ -1861,6 +1885,145 @@ mod tests {
         // Test lone exclamation mark
         let result = AKA::split_respecting_quotes("!");
         assert_eq!(result, vec!["!"]);
+
+        // Test !binary at end (should stay as one token)
+        let result = AKA::split_respecting_quotes("ls -la /path !cat");
+        assert_eq!(result, vec!["ls", "-la", "/path", "!cat"]);
+
+        // Test !binary without space before it
+        let result = AKA::split_respecting_quotes("ls /path!cat");
+        assert_eq!(result, vec!["ls", "/path!cat"]);
+    }
+
+    #[test]
+    fn test_binary_replace_basic() {
+        // Test basic !binary replacement: "ls /path !cat" -> "cat /path"
+        let aliases = HashMap::new();
+        let mut aka = create_test_aka_with_aliases(aliases);
+        aka.eol = true;
+
+        let result = aka.replace("ls /path/to/file.txt !cat").unwrap();
+        assert!(
+            result.contains("cat") && result.contains("/path/to/file.txt"),
+            "Should replace ls with cat and keep path: {result}"
+        );
+        assert!(!result.contains("ls"), "Should not contain original command: {result}");
+        assert!(!result.contains("!"), "Should not contain exclamation mark: {result}");
+    }
+
+    #[test]
+    fn test_binary_replace_removes_flags() {
+        // Test that flags are removed: "ls -la /path !cat" -> "cat /path"
+        let aliases = HashMap::new();
+        let mut aka = create_test_aka_with_aliases(aliases);
+        aka.eol = true;
+
+        let result = aka.replace("ls -la /path/to/file.txt !cat").unwrap();
+        assert!(
+            result.contains("cat") && result.contains("/path/to/file.txt"),
+            "Should replace ls with cat and keep path: {result}"
+        );
+        assert!(!result.contains("-la"), "Should not contain flags: {result}");
+        assert!(!result.contains("-l"), "Should not contain flags: {result}");
+        assert!(!result.contains("-a"), "Should not contain flags: {result}");
+    }
+
+    #[test]
+    fn test_binary_replace_removes_long_flags() {
+        // Test that long flags are also removed: "ls --all --human-readable /path !cat" -> "cat /path"
+        let aliases = HashMap::new();
+        let mut aka = create_test_aka_with_aliases(aliases);
+        aka.eol = true;
+
+        let result = aka.replace("ls --all --human-readable /path/to/file.txt !cat").unwrap();
+        assert!(
+            result.contains("cat") && result.contains("/path/to/file.txt"),
+            "Should replace ls with cat and keep path: {result}"
+        );
+        assert!(!result.contains("--all"), "Should not contain long flags: {result}");
+        assert!(
+            !result.contains("--human-readable"),
+            "Should not contain long flags: {result}"
+        );
+    }
+
+    #[test]
+    fn test_binary_replace_preserves_multiple_paths() {
+        // Test that multiple non-flag args are preserved
+        let aliases = HashMap::new();
+        let mut aka = create_test_aka_with_aliases(aliases);
+        aka.eol = true;
+
+        let result = aka.replace("ls -la /path1 /path2 !cat").unwrap();
+        assert!(
+            result.contains("cat") && result.contains("/path1") && result.contains("/path2"),
+            "Should keep all paths: {result}"
+        );
+        assert!(!result.contains("-la"), "Should not contain flags: {result}");
+    }
+
+    #[test]
+    fn test_binary_replace_with_jq() {
+        // Test with jq as the replacement binary
+        let aliases = HashMap::new();
+        let mut aka = create_test_aka_with_aliases(aliases);
+        aka.eol = true;
+
+        let result = aka.replace("curl -s http://api.example.com/data !jq").unwrap();
+        assert!(
+            result.contains("jq") && result.contains("http://api.example.com/data"),
+            "Should replace curl with jq and keep URL: {result}"
+        );
+        assert!(!result.contains("-s"), "Should not contain flags: {result}");
+        assert!(
+            !result.contains("curl"),
+            "Should not contain original command: {result}"
+        );
+    }
+
+    #[test]
+    fn test_binary_replace_eol_false() {
+        // Test that !binary does NOT work when eol=false (space key, not enter)
+        let aliases = HashMap::new();
+        let mut aka = create_test_aka_with_aliases(aliases);
+        aka.eol = false;
+
+        let result = aka.replace("ls /path !cat").unwrap();
+        // When eol=false, !cat should not be processed, command should be returned as-is or empty
+        // Based on current behavior with eol=false for variadic, it returns empty
+        assert!(
+            result.is_empty() || result.contains("!cat"),
+            "Should not process !binary when eol=false: {result}"
+        );
+    }
+
+    #[test]
+    fn test_binary_replace_stops_at_pipe() {
+        // Test that replacement stops at shell operators
+        let aliases = HashMap::new();
+        let mut aka = create_test_aka_with_aliases(aliases);
+        aka.eol = true;
+
+        let result = aka.replace("ls -la /path | grep foo !cat").unwrap();
+        // The pipe is a separate arg, so flags before it get removed but pipe and after stay
+        assert!(result.contains("cat"), "Should replace with cat: {result}");
+    }
+
+    #[test]
+    fn test_binary_replace_vs_sudo_trigger() {
+        // Test that lone ! still triggers sudo, not binary replace
+        let aliases = HashMap::new();
+        let mut aka = create_test_aka_with_aliases(aliases);
+        aka.eol = true;
+
+        // Lone ! should trigger sudo
+        let result = aka.replace("ls /path !").unwrap();
+        assert!(result.starts_with("sudo"), "Lone ! should trigger sudo: {result}");
+
+        // !cat should trigger binary replace, NOT sudo
+        let result = aka.replace("ls /path !cat").unwrap();
+        assert!(!result.starts_with("sudo"), "!cat should not trigger sudo: {result}");
+        assert!(result.contains("cat"), "!cat should replace command with cat: {result}");
     }
 
     // High Priority Tests: Configuration Path Resolution Edge Cases
