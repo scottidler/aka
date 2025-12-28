@@ -4,6 +4,7 @@
 # Features:
 #   - Space triggers alias expansion while typing
 #   - Enter (accept-line) expands aliases before execution
+#   - Up/Down arrows: prefix search when typing, cursor-at-end when empty
 #   - Ctrl+t opens fuzzy search for aliases (requires sk or fzf)
 #   - Killswitch: create ~/aka-killswitch file to disable
 
@@ -102,11 +103,44 @@ zle -N zle-line-finish _aka_add_space_to_command
 zle -N accept-line _aka_accept_line
 
 # -----------------------------------------------------------------------------
+# Smart history navigation - hybrid prefix search / cursor-at-end
+# -----------------------------------------------------------------------------
+# When buffer has text: prefix search (find commands starting with typed text)
+# When buffer is empty: recall history with cursor at end + trailing space
+_aka_history_up() {
+    if [[ -n "$BUFFER" ]]; then
+        zle history-beginning-search-backward
+    else
+        zle up-line-or-history
+        [[ "${BUFFER: -1}" != " " ]] && BUFFER+=" "
+        CURSOR=$#BUFFER
+    fi
+}
+
+_aka_history_down() {
+    if [[ -n "$BUFFER" ]]; then
+        zle history-beginning-search-forward
+    else
+        zle down-line-or-history
+        [[ "${BUFFER: -1}" != " " ]] && BUFFER+=" "
+        CURSOR=$#BUFFER
+    fi
+}
+
+# -----------------------------------------------------------------------------
 # Key bindings
 # -----------------------------------------------------------------------------
 bindkey " " _aka_expand_space
 bindkey -M isearch " " magic-space
 bindkey "^t" _aka_search
+
+# History navigation (both normal and application mode escape sequences)
+zle -N _aka_history_up
+zle -N _aka_history_down
+bindkey '^[[A' _aka_history_up
+bindkey '^[[B' _aka_history_down
+bindkey '^[OA' _aka_history_up
+bindkey '^[OB' _aka_history_down
 
 # -----------------------------------------------------------------------------
 # Completion support - register aka alias completion using -first- context
