@@ -28,6 +28,7 @@ _aka_expand_space() {
     if [[ $rc -eq 0 && -n "$output" ]]; then
         BUFFER="$output"
         CURSOR=${#BUFFER}
+        POSTDISPLAY=""  # Clear autosuggestion ghost text
     else
         zle self-insert
     fi
@@ -46,6 +47,7 @@ _aka_accept_line() {
     if [[ $rc -eq 0 && -n "$output" ]]; then
         BUFFER="$output"
         CURSOR=${#BUFFER}
+        POSTDISPLAY=""  # Clear autosuggestion ghost text
     fi
     zle .accept-line
 }
