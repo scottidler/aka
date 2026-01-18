@@ -81,7 +81,7 @@ _aka_search() {
         return
     fi
 
-    alias_line=$(aka ls 2>/dev/null | $fuzzy_cmd --prompt "aka> " 2>/dev/null)
+    alias_line=$(aka ls 2>/dev/null | $fuzzy_cmd --ansi --prompt "aka> " 2>/dev/null)
 
     if [[ -n "$alias_line" ]]; then
         # Extract alias name (everything before first space and arrow)
