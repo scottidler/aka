@@ -46,9 +46,10 @@ _aka_accept_line() {
     rc=$?
 
     if [[ $rc -eq 0 && -n "$output" ]]; then
+        POSTDISPLAY=""  # Clear autosuggestion ghost text first
         BUFFER="$output"
         CURSOR=${#BUFFER}
-        POSTDISPLAY=""  # Clear autosuggestion ghost text
+        zle reset-prompt  # Full prompt redraw to clear stale syntax highlighting
     fi
     zle .accept-line
 }

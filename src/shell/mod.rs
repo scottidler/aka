@@ -5,6 +5,10 @@
 //! so they can be edited with proper syntax highlighting while still being distributed
 //! as part of the single binary.
 //!
+//! This directory (rather than a flat `shell.rs`) exists to co-locate the `.zsh` asset
+//! with the Rust code that embeds it — `include_str!("init.zsh")` resolves relative to
+//! this file, keeping the script and its owner together without path gymnastics.
+//!
 //! # Usage
 //!
 //! Users add this to their `.zshrc`:
@@ -171,5 +175,164 @@ mod tests {
 
         // Should call aka ls for search
         assert!(script.contains("aka ls"));
+    }
+
+    // -------------------------------------------------------------------------
+    // Visual artifact prevention tests
+    //
+    // These tests enforce that both the Space and Enter handlers use the same
+    // pattern to prevent stale zsh-syntax-highlighting from ghosting onto the
+    // expanded command text. The fix requires:
+    //   1. POSTDISPLAY="" BEFORE BUFFER assignment (clear ghost text first)
+    //   2. zle reset-prompt AFTER BUFFER/CURSOR assignment (force full redraw)
+    //
+    // Without these, ZSH's region_highlight array retains stale color ranges
+    // from the short alias text and applies them to the expanded command.
+    // -------------------------------------------------------------------------
+
+    /// Helper: extract the body of a ZSH function from the init script.
+    /// Returns the text between the opening `{` and the matching closing `}`.
+    fn extract_zsh_function(script: &str, name: &str) -> String {
+        let pattern = format!("{name}()");
+        let start = script
+            .find(&pattern)
+            .unwrap_or_else(|| panic!("function {name}() not found in init.zsh"));
+        let after_sig = &script[start..];
+        let brace_start = after_sig
+            .find('{')
+            .unwrap_or_else(|| panic!("opening brace not found for {name}()"));
+        let body_start = start + brace_start + 1;
+
+        // Walk forward counting braces to find the matching close
+        let mut depth = 1u32;
+        let mut end = body_start;
+        for (i, ch) in script[body_start..].char_indices() {
+            match ch {
+                '{' => depth += 1,
+                '}' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        end = body_start + i;
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+        script[body_start..end].to_string()
+    }
+
+    #[test]
+    fn test_accept_line_has_reset_prompt() {
+        // The Enter handler MUST call `zle reset-prompt` after modifying BUFFER
+        // to force ZSH to fully re-render, clearing stale syntax highlighting.
+        // This was the root cause of the red-highlight ghost artifact bug.
+        let body = extract_zsh_function(ZSH_INIT_SCRIPT, "_aka_accept_line");
+        assert!(
+            body.contains("zle reset-prompt"),
+            "_aka_accept_line must call `zle reset-prompt` to clear stale \
+             syntax highlighting after alias expansion. Without this, \
+             region_highlight entries from the original alias text ghost \
+             onto the expanded command.\n\nFunction body:\n{body}"
+        );
+    }
+
+    #[test]
+    fn test_expand_space_has_reset_prompt() {
+        // The Space handler must also have `zle reset-prompt` (regression guard)
+        let body = extract_zsh_function(ZSH_INIT_SCRIPT, "_aka_expand_space");
+        assert!(
+            body.contains("zle reset-prompt"),
+            "_aka_expand_space must call `zle reset-prompt`.\n\nFunction body:\n{body}"
+        );
+    }
+
+    #[test]
+    fn test_accept_line_clears_postdisplay_before_buffer() {
+        // POSTDISPLAY="" must come BEFORE BUFFER= to prevent autosuggestion
+        // ghost text from blending with the new buffer during redraw.
+        let body = extract_zsh_function(ZSH_INIT_SCRIPT, "_aka_accept_line");
+        let postdisplay_pos = body
+            .find("POSTDISPLAY=\"\"")
+            .unwrap_or_else(|| panic!("_aka_accept_line must clear POSTDISPLAY.\n\nFunction body:\n{body}"));
+        let buffer_pos = body
+            .find("BUFFER=\"$output\"")
+            .unwrap_or_else(|| panic!("_aka_accept_line must set BUFFER.\n\nFunction body:\n{body}"));
+        assert!(
+            postdisplay_pos < buffer_pos,
+            "_aka_accept_line must clear POSTDISPLAY before setting BUFFER \
+             to prevent ghost text artifacts during redraw.\n\
+             POSTDISPLAY at byte {postdisplay_pos}, BUFFER at byte {buffer_pos}\n\n\
+             Function body:\n{body}"
+        );
+    }
+
+    #[test]
+    fn test_expand_space_clears_postdisplay_before_buffer() {
+        // Same ordering requirement for the Space handler (regression guard)
+        let body = extract_zsh_function(ZSH_INIT_SCRIPT, "_aka_expand_space");
+        let postdisplay_pos = body
+            .find("POSTDISPLAY=\"\"")
+            .unwrap_or_else(|| panic!("_aka_expand_space must clear POSTDISPLAY.\n\nFunction body:\n{body}"));
+        let buffer_pos = body
+            .find("BUFFER=\"$output\"")
+            .unwrap_or_else(|| panic!("_aka_expand_space must set BUFFER.\n\nFunction body:\n{body}"));
+        assert!(
+            postdisplay_pos < buffer_pos,
+            "_aka_expand_space must clear POSTDISPLAY before setting BUFFER.\n\
+             POSTDISPLAY at byte {postdisplay_pos}, BUFFER at byte {buffer_pos}\n\n\
+             Function body:\n{body}"
+        );
+    }
+
+    #[test]
+    fn test_both_handlers_have_consistent_artifact_prevention() {
+        // Both handlers must use the same pattern for visual artifact prevention.
+        // This test ensures they stay in sync and neither regresses independently.
+        let space_body = extract_zsh_function(ZSH_INIT_SCRIPT, "_aka_expand_space");
+        let enter_body = extract_zsh_function(ZSH_INIT_SCRIPT, "_aka_accept_line");
+
+        let required_elements = [
+            ("POSTDISPLAY=\"\"", "clear autosuggestion ghost text"),
+            ("BUFFER=\"$output\"", "set buffer to expanded alias"),
+            ("CURSOR=${#BUFFER}", "move cursor to end of expanded text"),
+            (
+                "zle reset-prompt",
+                "force full prompt redraw to clear stale highlighting",
+            ),
+        ];
+
+        for (element, purpose) in &required_elements {
+            assert!(
+                space_body.contains(element),
+                "_aka_expand_space is missing `{element}` ({purpose})\n\nBody:\n{space_body}"
+            );
+            assert!(
+                enter_body.contains(element),
+                "_aka_accept_line is missing `{element}` ({purpose})\n\nBody:\n{enter_body}"
+            );
+        }
+
+        // Verify ordering: POSTDISPLAY < BUFFER < CURSOR < reset-prompt
+        for (body, name) in [(&space_body, "_aka_expand_space"), (&enter_body, "_aka_accept_line")] {
+            let positions: Vec<(&str, usize)> = required_elements
+                .iter()
+                .map(|(elem, _)| {
+                    let pos = body.find(elem).unwrap();
+                    (*elem, pos)
+                })
+                .collect();
+
+            for window in positions.windows(2) {
+                assert!(
+                    window[0].1 < window[1].1,
+                    "In {name}: `{}` (byte {}) must come before `{}` (byte {})\n\nBody:\n{body}",
+                    window[0].0,
+                    window[0].1,
+                    window[1].0,
+                    window[1].1,
+                );
+            }
+        }
     }
 }
