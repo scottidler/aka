@@ -205,7 +205,9 @@ impl DaemonServer {
         if current_hash != cached_hash {
             warn!("⚠️  Config hash mismatch detected, auto-reloading");
             warn!("   Cached: {cached_hash} → Current: {current_hash}");
-            self.reload_config()?;
+            if let Err(e) = self.reload_config() {
+                warn!("❌ Auto-reload failed (keeping previous config): {e}");
+            }
         }
 
         Ok(())
