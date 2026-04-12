@@ -6,6 +6,7 @@
 #   - Enter (accept-line) expands aliases before execution
 #   - Ctrl+t opens fuzzy search for aliases (requires sk or fzf)
 #   - Killswitch: create ~/aka-killswitch file to disable
+#   - Circuit breaker: disables after 5 consecutive failures per session
 
 # -----------------------------------------------------------------------------
 # Killswitch - create ~/aka-killswitch to disable all aka functionality
@@ -16,20 +17,45 @@ _aka_killswitch() {
 }
 
 # -----------------------------------------------------------------------------
+# Circuit breaker state - per session, never resets while shell is open
+# -----------------------------------------------------------------------------
+typeset -gi _AKA_FAIL_COUNT=0
+typeset -gi _AKA_SESSION_DISABLED=0
+
+_aka_on_failure() {
+    (( _AKA_FAIL_COUNT++ ))
+    if (( _AKA_FAIL_COUNT == 1 )); then
+        zle -M "aka: config error - run 'aka check'"
+    elif (( _AKA_FAIL_COUNT >= 5 && !_AKA_SESSION_DISABLED )); then
+        _AKA_SESSION_DISABLED=1
+        zle -M "aka: disabled this session after 5 failures - run 'aka check' or restart shell"
+    fi
+}
+
+_aka_on_success() {
+    _AKA_FAIL_COUNT=0
+}
+
+# -----------------------------------------------------------------------------
 # Space key handler - expand aliases as you type
 # -----------------------------------------------------------------------------
 _aka_expand_space() {
     _aka_killswitch || { zle self-insert; return }
+    (( _AKA_SESSION_DISABLED )) && { zle self-insert; return }
 
     local output rc
     output=$(aka query "$BUFFER" 2>/dev/null)
     rc=$?
 
     if [[ $rc -eq 0 && -n "$output" ]]; then
+        _aka_on_success
         POSTDISPLAY=""  # Clear autosuggestion ghost text first
         BUFFER="$output"
         CURSOR=${#BUFFER}
         zle reset-prompt  # Full prompt redraw to clear visual artifacts
+    elif [[ $rc -ne 0 && -z "$output" ]]; then
+        _aka_on_failure
+        zle self-insert
     else
         zle self-insert
     fi
@@ -40,16 +66,20 @@ _aka_expand_space() {
 # -----------------------------------------------------------------------------
 _aka_accept_line() {
     _aka_killswitch || { zle .accept-line; return }
+    (( _AKA_SESSION_DISABLED )) && { zle .accept-line; return }
 
     local output rc
     output=$(aka --eol query "$BUFFER" 2>/dev/null)
     rc=$?
 
     if [[ $rc -eq 0 && -n "$output" ]]; then
+        _aka_on_success
         POSTDISPLAY=""  # Clear autosuggestion ghost text first
         BUFFER="$output"
         CURSOR=${#BUFFER}
         zle reset-prompt  # Full prompt redraw to clear stale syntax highlighting
+    elif [[ $rc -ne 0 && -z "$output" ]]; then
+        _aka_on_failure
     fi
     zle .accept-line
 }
@@ -132,3 +162,10 @@ if (( $+functions[compdef] )); then
     compdef _aka_complete_commands -first-
 fi
 
+# -----------------------------------------------------------------------------
+# Startup health check - warn once if config is already broken when shell opens
+# -----------------------------------------------------------------------------
+if command -v aka >/dev/null 2>&1; then
+    aka check --quiet 2>/dev/null || \
+        echo "⚠️  aka: config error - run 'aka check' to diagnose" >&2
+fi
