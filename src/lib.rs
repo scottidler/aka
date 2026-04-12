@@ -1067,7 +1067,17 @@ pub fn load_alias_cache(home_dir: &std::path::Path) -> Result<AliasCache> {
 
     debug!("Loading alias cache from: {cache_path:?}");
     let content = std::fs::read_to_string(&cache_path)?;
-    let mut cache: AliasCache = serde_json::from_str(&content)?;
+    let mut cache: AliasCache = match serde_json::from_str(&content) {
+        Ok(c) => c,
+        Err(e) => {
+            warn!("Cache file corrupted ({e}), starting fresh: {cache_path:?}");
+            let corrupt_path = cache_path.with_extension("json.corrupt");
+            if let Err(rename_err) = std::fs::rename(&cache_path, &corrupt_path) {
+                warn!("Could not preserve corrupt cache: {rename_err}");
+            }
+            return Ok(AliasCache::default());
+        }
+    };
 
     // Restore names from HashMap keys since they might be empty in the cache
     for (key, alias) in cache.aliases.iter_mut() {
@@ -1094,7 +1104,17 @@ pub fn load_alias_cache_with_base(base_dir: Option<&PathBuf>) -> Result<AliasCac
 
     debug!("Loading alias cache from: {cache_path:?}");
     let content = std::fs::read_to_string(&cache_path)?;
-    let mut cache: AliasCache = serde_json::from_str(&content)?;
+    let mut cache: AliasCache = match serde_json::from_str(&content) {
+        Ok(c) => c,
+        Err(e) => {
+            warn!("Cache file corrupted ({e}), starting fresh: {cache_path:?}");
+            let corrupt_path = cache_path.with_extension("json.corrupt");
+            if let Err(rename_err) = std::fs::rename(&cache_path, &corrupt_path) {
+                warn!("Could not preserve corrupt cache: {rename_err}");
+            }
+            return Ok(AliasCache::default());
+        }
+    };
 
     // Restore names from HashMap keys since they might be empty in the cache
     for (key, alias) in cache.aliases.iter_mut() {
@@ -3849,5 +3869,28 @@ mod tests {
         assert_eq!(merged.aliases.get("ls").unwrap().value, "eza");
         // New hash
         assert_eq!(merged.hash, "new_hash");
+    }
+
+    #[test]
+    fn test_corrupt_cache_returns_default() -> Result<()> {
+        use tempfile::TempDir;
+        let temp = TempDir::new()?;
+        let cache_path = temp.path().join("aka.json");
+        std::fs::write(&cache_path, "this is not valid json {")?;
+
+        // AKA_CACHE_DIR redirects both get_alias_cache_path functions to temp dir
+        std::env::set_var("AKA_CACHE_DIR", temp.path());
+        let result = load_alias_cache(temp.path());
+        std::env::remove_var("AKA_CACHE_DIR");
+
+        assert!(
+            result.is_ok(),
+            "should not propagate JSON error, got: {:?}",
+            result.err()
+        );
+        let cache = result.unwrap();
+        assert!(cache.aliases.is_empty(), "corrupted cache should return empty aliases");
+        assert!(cache.hash.is_empty(), "corrupted cache should return empty hash");
+        Ok(())
     }
 }
