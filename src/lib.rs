@@ -256,6 +256,14 @@ fn validate_fresh_config_and_store_hash(
         }
         Err(e) => {
             debug!("❌ Health check failed: config file invalid: {e}");
+            // If config is invalid but we have cached aliases, serve from cache
+            if let Ok(cache) = load_alias_cache(home_dir) {
+                if !cache.aliases.is_empty() {
+                    debug!("✅ Cache has {} aliases - using CACHE_FALLBACK", cache.aliases.len());
+                    debug!("🎯 Health check result: CACHE_FALLBACK (returning 5)");
+                    return Ok(5); // Config broken but cache available
+                }
+            }
             debug!("🚨 All health check methods failed - ZLE should not use aka");
             debug!("🎯 Health check result: CONFIG_INVALID (returning 2)");
             Ok(2) // Config file invalid - critical failure
@@ -540,6 +548,20 @@ impl AKA {
             config_hash,
             home_dir,
         })
+    }
+
+    pub fn from_cache(cache: AliasCache, home_dir: PathBuf) -> Self {
+        let spec = Spec {
+            aliases: cache.aliases,
+            lookups: HashMap::new(),
+            defaults: Default::default(),
+        };
+        AKA {
+            eol: false,
+            spec,
+            config_hash: cache.hash,
+            home_dir,
+        }
     }
 
     pub fn use_alias(&self, alias: &Alias, pos: usize) -> bool {
@@ -4010,6 +4032,103 @@ mod tests {
 
         let backed_up = std::fs::read_to_string(&backup_path)?;
         assert_eq!(backed_up, config_content, "backup content should match source");
+        Ok(())
+    }
+
+    #[test]
+    fn test_from_cache_builds_aka_from_alias_cache() {
+        use tempfile::TempDir;
+
+        let temp_dir = TempDir::new().unwrap();
+        let fake_home = temp_dir.path().to_path_buf();
+
+        let mut aliases = HashMap::new();
+        aliases.insert(
+            "ll".to_string(),
+            Alias {
+                name: "ll".to_string(),
+                value: "ls -la".to_string(),
+                space: true,
+                global: false,
+                count: 3,
+            },
+        );
+        aliases.insert(
+            "gs".to_string(),
+            Alias {
+                name: "gs".to_string(),
+                value: "git status".to_string(),
+                space: true,
+                global: false,
+                count: 7,
+            },
+        );
+
+        let cache = AliasCache {
+            hash: "deadbeef".to_string(),
+            aliases,
+        };
+
+        let aka = AKA::from_cache(cache, fake_home);
+
+        assert_eq!(aka.spec.aliases.len(), 2);
+        assert!(aka.spec.aliases.contains_key("ll"), "expected 'll' alias");
+        assert!(aka.spec.aliases.contains_key("gs"), "expected 'gs' alias");
+        assert_eq!(aka.spec.aliases["ll"].value, "ls -la");
+        assert_eq!(aka.spec.aliases["gs"].value, "git status");
+        assert!(aka.spec.lookups.is_empty(), "lookups should be empty");
+        assert_eq!(aka.config_hash, "deadbeef");
+    }
+
+    #[test]
+    fn test_validate_fresh_config_returns_cache_fallback_when_aliases_exist() -> Result<()> {
+        use tempfile::TempDir;
+
+        let home_temp = TempDir::new()?;
+        let home_dir = home_temp.path().to_path_buf();
+
+        // Create a broken config file
+        let config_dir = home_dir.join(".config").join("aka");
+        std::fs::create_dir_all(&config_dir)?;
+        let config_path = config_dir.join("aka.yml");
+        std::fs::write(&config_path, "invalid: yaml: {{broken")?;
+
+        // Create a valid cache at the expected location under home_dir
+        // (get_alias_cache_path uses home_dir/.local/share/aka/aka.json when AKA_CACHE_DIR is unset)
+        let cache_dir = home_dir.join(".local").join("share").join("aka");
+        std::fs::create_dir_all(&cache_dir)?;
+
+        let mut aliases = HashMap::new();
+        aliases.insert(
+            "ls".to_string(),
+            Alias {
+                name: "ls".to_string(),
+                value: "eza -la".to_string(),
+                space: true,
+                global: false,
+                count: 5,
+            },
+        );
+        let cache = AliasCache {
+            hash: "somehash".to_string(),
+            aliases,
+        };
+        let cache_json = serde_json::to_string_pretty(&cache)?;
+        std::fs::write(cache_dir.join("aka.json"), cache_json)?;
+
+        // Temporarily clear AKA_CACHE_DIR so load_alias_cache uses the home_dir path
+        let original_cache_dir = std::env::var("AKA_CACHE_DIR").ok();
+        std::env::remove_var("AKA_CACHE_DIR");
+
+        let result = validate_fresh_config_and_store_hash(&config_path, "irrelevant-hash", &home_dir);
+
+        match original_cache_dir {
+            Some(val) => std::env::set_var("AKA_CACHE_DIR", val),
+            None => std::env::remove_var("AKA_CACHE_DIR"),
+        }
+
+        assert!(result.is_ok(), "expected Ok, got: {:?}", result.err());
+        assert_eq!(result.unwrap(), 5, "expected CACHE_FALLBACK status 5");
         Ok(())
     }
 }

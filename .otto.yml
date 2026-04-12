@@ -30,7 +30,7 @@ tasks:
   test:
     help: "Run all tests"
     bash: |
-      cargo test --all-features
+      cargo test --all-features -- --test-threads=1
 
   # Run coverage tests and output data
   cov:

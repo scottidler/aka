@@ -10,11 +10,14 @@ use std::time::{Duration, Instant};
 // Import from the shared library
 use aka_lib::{
     determine_socket_path, execute_health_check, export_timing_csv, get_config_path_with_override, get_timing_summary,
-    log_timing, setup_logging, DaemonRequest, DaemonResponse, ProcessingMode, TimingCollector, AKA,
+    load_alias_cache, log_timing, setup_logging, DaemonRequest, DaemonResponse, ProcessingMode, TimingCollector, AKA,
 };
 
 // Version constant for compatibility checking
 const CLI_VERSION: &str = env!("GIT_DESCRIBE");
+
+// Health status constants
+const CACHE_FALLBACK: i32 = 5; // config broken, serving from last-valid cache
 
 // Daemon client constants and types - moved from shared library
 const DAEMON_CONNECTION_TIMEOUT_MS: u64 = 100; // 100ms to connect
@@ -1055,8 +1058,16 @@ fn route_command_by_health_status(health_status: i32, opts: &AkaOpts) -> Result<
             debug!("🔀 Routing to handle_command_via_daemon_with_fallback");
             handle_command_via_daemon_with_fallback(opts)
         }
+        CACHE_FALLBACK => {
+            // Config is broken but cache has aliases - serve from cache
+            debug!(
+                "⚠️ Health check returned CACHE_FALLBACK (status={CACHE_FALLBACK}), config invalid but cache available"
+            );
+            debug!("🔀 Routing to handle_command_from_cache");
+            handle_command_from_cache(opts)
+        }
         _ => {
-            // Any non-zero status means fallback to direct mode
+            // Any other non-zero status means fallback to direct mode
             debug!("⚠️ Health check returned status={health_status}, falling back to direct mode");
             debug!("🔀 Routing directly to handle_command_direct_timed");
 
@@ -1075,6 +1086,65 @@ fn route_command_by_health_status(health_status: i32, opts: &AkaOpts) -> Result<
             log_timing(timing_data);
             result
         }
+    }
+}
+
+fn handle_command_from_cache(opts: &AkaOpts) -> Result<i32> {
+    let home_dir = dirs::home_dir().ok_or_else(|| eyre::eyre!("Could not determine home directory"))?;
+    let cache = load_alias_cache(&home_dir)?;
+
+    if cache.aliases.is_empty() {
+        return Ok(0);
+    }
+
+    let aka = AKA::from_cache(cache, home_dir);
+    handle_command_direct_with_aka(aka, opts)
+}
+
+fn handle_command_direct_with_aka(mut aka: AKA, opts: &AkaOpts) -> Result<i32> {
+    if let Some(ref command) = &opts.command {
+        match command {
+            Command::Query(query_opts) => match aka.replace_with_mode(&query_opts.cmdline, ProcessingMode::Direct) {
+                Ok(result) => {
+                    println!("{result}");
+                    Ok(0)
+                }
+                Err(e) => {
+                    eprintln!("Error: {e}");
+                    Ok(1)
+                }
+            },
+            Command::List(list_opts) => {
+                let output = aka_lib::format_aliases_efficiently(
+                    aka.spec.aliases.values(),
+                    false,
+                    true,
+                    list_opts.global,
+                    &list_opts.patterns,
+                );
+                println!("{output}");
+                Ok(0)
+            }
+            Command::Freq(freq_opts) => {
+                let output =
+                    aka_lib::format_aliases_efficiently(aka.spec.aliases.values(), true, freq_opts.all, false, &[]);
+                println!("{output}");
+                Ok(0)
+            }
+            Command::CompleteAliases => {
+                let alias_names = aka_lib::get_alias_names_for_completion(&aka);
+                for name in alias_names {
+                    println!("{name}");
+                }
+                Ok(0)
+            }
+            _ => {
+                eprintln!("Command not supported in cache fallback mode");
+                Ok(1)
+            }
+        }
+    } else {
+        Ok(0)
     }
 }
 
