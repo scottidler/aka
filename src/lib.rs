@@ -527,8 +527,11 @@ impl AKA {
         debug!("  🗃️  Cache handling: {:.3}ms", cache_duration.as_secs_f64() * 1000.0);
         debug!("  🎯 Total time: {:.3}ms", total_duration.as_secs_f64() * 1000.0);
 
-        if let Err(e) = backup_last_valid_config(&home_dir) {
-            warn!("Could not backup last-valid config: {e}");
+        // Only backup when using the default config (custom configs are not restored by `aka restore`)
+        if config_path == default_config_path {
+            if let Err(e) = backup_last_valid_config(&config_path, &home_dir) {
+                warn!("Could not backup last-valid config: {e}");
+            }
         }
 
         Ok(AKA {
@@ -1041,20 +1044,17 @@ pub fn get_last_valid_config_path(home_dir: &std::path::Path) -> Result<PathBuf>
     let data_dir = if let Ok(custom_cache_dir) = std::env::var("AKA_CACHE_DIR") {
         PathBuf::from(custom_cache_dir)
     } else {
-        dirs::data_local_dir()
-            .unwrap_or_else(|| home_dir.join(".local/share"))
-            .join("aka")
+        home_dir.join(".local").join("share").join("aka")
     };
 
     Ok(data_dir.join("last").join("aka.yml"))
 }
 
-pub fn backup_last_valid_config(home_dir: &std::path::Path) -> Result<()> {
-    let src = get_config_path(home_dir)?;
+pub fn backup_last_valid_config(config_path: &std::path::Path, home_dir: &std::path::Path) -> Result<()> {
     let dest = get_last_valid_config_path(home_dir)?;
 
     std::fs::create_dir_all(dest.parent().expect("last/aka.yml must have a parent dir"))?;
-    std::fs::copy(&src, &dest)?;
+    std::fs::copy(config_path, &dest)?;
     debug!("Backed up last-valid config to: {dest:?}");
 
     Ok(())
@@ -3957,12 +3957,36 @@ mod tests {
     }
 
     #[test]
+    fn test_get_last_valid_config_path_uses_home_dir() -> Result<()> {
+        use tempfile::TempDir;
+        let fake_home = TempDir::new()?;
+
+        let original = std::env::var("AKA_CACHE_DIR").ok();
+        std::env::remove_var("AKA_CACHE_DIR");
+
+        let result = get_last_valid_config_path(fake_home.path());
+
+        match original {
+            Some(val) => std::env::set_var("AKA_CACHE_DIR", val),
+            None => std::env::remove_var("AKA_CACHE_DIR"),
+        }
+
+        let path = result?;
+        assert!(
+            path.starts_with(fake_home.path()),
+            "path should be rooted under home_dir, not system dirs, got: {path:?}"
+        );
+        assert!(path.ends_with("last/aka.yml"), "path should end with last/aka.yml");
+        Ok(())
+    }
+
+    #[test]
     fn test_backup_last_valid_config_creates_file() -> Result<()> {
         use tempfile::TempDir;
         let fake_home = TempDir::new()?;
         let cache_temp = TempDir::new()?;
 
-        // Create fake ~/.config/aka/aka.yml
+        // Create fake config file to back up
         let config_dir = fake_home.path().join(".config").join("aka");
         std::fs::create_dir_all(&config_dir)?;
         let config_path = config_dir.join("aka.yml");
@@ -3972,7 +3996,7 @@ mod tests {
         let original = std::env::var("AKA_CACHE_DIR").ok();
         std::env::set_var("AKA_CACHE_DIR", cache_temp.path());
 
-        let result = backup_last_valid_config(fake_home.path());
+        let result = backup_last_valid_config(&config_path, fake_home.path());
 
         match original {
             Some(val) => std::env::set_var("AKA_CACHE_DIR", val),
