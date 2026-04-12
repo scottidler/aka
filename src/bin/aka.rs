@@ -9,8 +9,9 @@ use std::time::{Duration, Instant};
 
 // Import from the shared library
 use aka_lib::{
-    determine_socket_path, execute_health_check, export_timing_csv, get_config_path_with_override, get_timing_summary,
-    load_alias_cache, log_timing, setup_logging, DaemonRequest, DaemonResponse, ProcessingMode, TimingCollector, AKA,
+    determine_socket_path, execute_health_check, export_timing_csv, get_config_path, get_config_path_with_override,
+    get_last_valid_config_path, get_timing_summary, load_alias_cache, log_timing, setup_logging, ConfigLoader,
+    DaemonRequest, DaemonResponse, ProcessingMode, TimingCollector, AKA,
 };
 
 // Version constant for compatibility checking
@@ -397,6 +398,24 @@ enum Command {
 
     #[clap(name = "__health_check", hide = true)]
     HealthCheck,
+
+    #[clap(name = "check", about = "validate aka config and print errors")]
+    Check(CheckOpts),
+
+    #[clap(name = "restore", about = "restore last-valid config backup")]
+    Restore(RestoreOpts),
+
+    #[clap(name = "edit", about = "safely edit aka config (validate before applying)")]
+    Edit,
+
+    #[clap(name = "disable", about = "disable aka ZLE integration (create killswitch)")]
+    Disable,
+
+    #[clap(name = "enable", about = "enable aka ZLE integration (remove killswitch)")]
+    Enable,
+
+    #[clap(name = "prompt-status", about = "print status for shell prompt integration")]
+    PromptStatus,
 }
 
 #[derive(Parser, Debug)]
@@ -458,6 +477,24 @@ struct FreqOpts {
 struct ShellInitOpts {
     #[clap(default_value = "zsh", help = "Shell type (zsh)")]
     shell: String,
+}
+
+#[derive(Parser, Debug)]
+struct CheckOpts {
+    #[clap(long, help = "suppress output, exit code only")]
+    quiet: bool,
+
+    #[clap(long, help = "output results as JSON")]
+    json: bool,
+}
+
+#[derive(Parser, Debug)]
+struct RestoreOpts {
+    #[clap(long, help = "show diff only, do not restore")]
+    diff: bool,
+
+    #[clap(long, help = "restore without confirmation prompt")]
+    force: bool,
 }
 
 // Basic service manager for proof of concept
@@ -1148,6 +1185,190 @@ fn handle_command_direct_with_aka(mut aka: AKA, opts: &AkaOpts) -> Result<i32> {
     }
 }
 
+fn handle_check(opts: &CheckOpts) -> Result<i32> {
+    let home_dir = dirs::home_dir().ok_or_else(|| eyre::eyre!("Could not determine home directory"))?;
+    let config_path = get_config_path(&home_dir)?;
+
+    if opts.quiet {
+        let loader = ConfigLoader::new();
+        return match loader.load(&config_path) {
+            Ok(_) => Ok(0),
+            Err(_) => Ok(1),
+        };
+    }
+
+    let loader = ConfigLoader::new();
+    match loader.load(&config_path) {
+        Ok(spec) => {
+            if opts.json {
+                println!(
+                    r#"{{"status":"valid","path":"{}","alias_count":{}}}"#,
+                    config_path.display(),
+                    spec.aliases.len()
+                );
+            } else {
+                println!("Config: {}", config_path.display());
+                println!("Status: VALID ({} aliases)", spec.aliases.len());
+            }
+            Ok(0)
+        }
+        Err(e) => {
+            if opts.json {
+                let msg = e.to_string().replace('"', "\\\"");
+                println!(
+                    r#"{{"status":"invalid","path":"{}","errors":["{msg}"]}}"#,
+                    config_path.display()
+                );
+            } else {
+                eprintln!("Config: {}", config_path.display());
+                eprintln!("Status: INVALID");
+                eprintln!();
+                eprintln!("Errors:");
+                for line in e.to_string().lines() {
+                    eprintln!("  {line}");
+                }
+            }
+            Ok(1)
+        }
+    }
+}
+
+fn handle_restore(opts: &RestoreOpts) -> Result<i32> {
+    let home_dir = dirs::home_dir().ok_or_else(|| eyre::eyre!("Could not determine home directory"))?;
+    let backup_path = get_last_valid_config_path(&home_dir)?;
+
+    if !backup_path.exists() {
+        eprintln!("No backup available yet. Run aka with a valid config first.");
+        return Ok(1);
+    }
+
+    let current_path = get_config_path(&home_dir)?;
+
+    if opts.diff {
+        let _ = std::process::Command::new("git")
+            .args(["diff", "--no-index", "--color=always"])
+            .arg(&current_path)
+            .arg(&backup_path)
+            .status()
+            .or_else(|_| {
+                std::process::Command::new("diff")
+                    .arg("-u")
+                    .arg(&current_path)
+                    .arg(&backup_path)
+                    .status()
+            });
+        return Ok(0);
+    }
+
+    println!("Restoring from: {}", backup_path.display());
+
+    if !opts.force {
+        let _ = std::process::Command::new("git")
+            .args(["diff", "--no-index", "--color=always"])
+            .arg(&current_path)
+            .arg(&backup_path)
+            .status()
+            .or_else(|_| {
+                std::process::Command::new("diff")
+                    .arg("-u")
+                    .arg(&current_path)
+                    .arg(&backup_path)
+                    .status()
+            });
+
+        eprint!("Restore? [y/N]: ");
+        use std::io::Write as _;
+        std::io::stdout().flush()?;
+        let mut input = String::new();
+        std::io::stdin().read_line(&mut input)?;
+        if !input.trim().eq_ignore_ascii_case("y") {
+            println!("Aborted.");
+            return Ok(0);
+        }
+    }
+
+    std::fs::copy(&backup_path, &current_path)?;
+    println!("Restored. Run 'aka check' to verify.");
+    Ok(0)
+}
+
+fn handle_edit() -> Result<i32> {
+    let home_dir = dirs::home_dir().ok_or_else(|| eyre::eyre!("Could not determine home directory"))?;
+    let config_path = get_config_path(&home_dir)?;
+
+    let editor = std::env::var("VISUAL")
+        .or_else(|_| std::env::var("EDITOR"))
+        .unwrap_or_else(|_| "vi".to_string());
+
+    let tmp = tempfile::NamedTempFile::new()?;
+    std::fs::copy(&config_path, tmp.path())?;
+
+    loop {
+        std::process::Command::new(&editor).arg(tmp.path()).status()?;
+
+        let loader = ConfigLoader::new();
+        match loader.load(tmp.path()) {
+            Ok(_) => {
+                std::fs::copy(tmp.path(), &config_path)?;
+                println!("Config saved.");
+                return Ok(0);
+            }
+            Err(e) => {
+                eprintln!("Config invalid: {e}");
+                eprint!("Re-edit? [Y/n]: ");
+                use std::io::Write as _;
+                std::io::stdout().flush()?;
+                let mut input = String::new();
+                std::io::stdin().read_line(&mut input)?;
+                if input.trim().eq_ignore_ascii_case("n") {
+                    println!("Aborted. Original config unchanged.");
+                    return Ok(1);
+                }
+            }
+        }
+    }
+}
+
+fn handle_disable() -> Result<i32> {
+    let home_dir = dirs::home_dir().ok_or_else(|| eyre::eyre!("Could not determine home directory"))?;
+    let killswitch = home_dir.join("aka-killswitch");
+    if killswitch.exists() {
+        println!("aka already disabled");
+    } else {
+        std::fs::write(&killswitch, "")?;
+        println!("aka disabled (created {})", killswitch.display());
+    }
+    Ok(0)
+}
+
+fn handle_enable() -> Result<i32> {
+    let home_dir = dirs::home_dir().ok_or_else(|| eyre::eyre!("Could not determine home directory"))?;
+    let killswitch = home_dir.join("aka-killswitch");
+    if killswitch.exists() {
+        std::fs::remove_file(&killswitch)?;
+        println!("aka enabled (removed {})", killswitch.display());
+    } else {
+        println!("aka already enabled");
+    }
+    Ok(0)
+}
+
+fn handle_prompt_status() -> Result<i32> {
+    let home_dir = dirs::home_dir().ok_or_else(|| eyre::eyre!("Could not determine home directory"))?;
+    let config_path = get_config_path(&home_dir)?;
+    let loader = ConfigLoader::new();
+    match loader.load(&config_path) {
+        Ok(_) => {
+            print!("");
+            Ok(0)
+        }
+        Err(_) => {
+            print!("⚠aka");
+            Ok(1)
+        }
+    }
+}
+
 fn handle_regular_command(opts: &AkaOpts) -> Result<i32> {
     debug!("🎯 === STARTING REGULAR COMMAND PROCESSING ===");
     debug!("🔍 Command options: {opts:?}");
@@ -1580,6 +1801,48 @@ fn main() {
         // daemon commands have their own handler
         Some(Command::Daemon(daemon_opts)) => match handle_daemon_command(daemon_opts) {
             Ok(_) => 0,
+            Err(e) => {
+                eprintln!("Error: {e}");
+                1
+            }
+        },
+        Some(Command::Check(check_opts)) => match handle_check(check_opts) {
+            Ok(code) => code,
+            Err(e) => {
+                eprintln!("Error: {e}");
+                1
+            }
+        },
+        Some(Command::Restore(restore_opts)) => match handle_restore(restore_opts) {
+            Ok(code) => code,
+            Err(e) => {
+                eprintln!("Error: {e}");
+                1
+            }
+        },
+        Some(Command::Edit) => match handle_edit() {
+            Ok(code) => code,
+            Err(e) => {
+                eprintln!("Error: {e}");
+                1
+            }
+        },
+        Some(Command::Disable) => match handle_disable() {
+            Ok(code) => code,
+            Err(e) => {
+                eprintln!("Error: {e}");
+                1
+            }
+        },
+        Some(Command::Enable) => match handle_enable() {
+            Ok(code) => code,
+            Err(e) => {
+                eprintln!("Error: {e}");
+                1
+            }
+        },
+        Some(Command::PromptStatus) => match handle_prompt_status() {
+            Ok(code) => code,
             Err(e) => {
                 eprintln!("Error: {e}");
                 1
