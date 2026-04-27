@@ -11,6 +11,10 @@ use xxhash_rust::xxh3::xxh3_64;
 pub mod cfg;
 #[path = "daemon-client.rs"]
 pub mod daemon_client;
+
+// cfg::alias::POSITIONAL_RE covers $1-$9 in all bash expansion forms.
+// This variant adds [@] to also highlight $@ (variadic aliases).
+const COLORIZE_RE: &str = r"\$(?:\{#?[1-9][^}]*\}|[@1-9])";
 pub mod error;
 pub mod protocol;
 pub mod shell;
@@ -891,8 +895,9 @@ impl AKA {
 /// This function works with iterators to avoid unnecessary allocations
 /// Colorize alias value, highlighting positional parameters like $1, $2, $@
 fn colorize_value(value: &str) -> String {
-    // Match only positional parameters: $1-$9 and $@
-    let re = Regex::new(r"\$[@1-9]").unwrap();
+    // cfg::alias::POSITIONAL_RE covers $1-$9 and braced ${N...} forms.
+    // COLORIZE_RE extends it with [@] so $@ (variadic) is also highlighted.
+    let re = Regex::new(COLORIZE_RE).unwrap();
 
     let mut result = String::new();
     let mut last_end = 0;
