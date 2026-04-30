@@ -41,6 +41,29 @@ fn positional_digit(token: &str) -> Option<char> {
     }
 }
 
+/// Extract the default value from a positional token using `:-` or `-` operators.
+/// Returns None for tokens without a default-value operator (bare `$1`, `${1}`, `${#1}`,
+/// or other operators like `:+`, `:=`, `:?`, `:N:M`, `/x/y`, `#pat`, `%pat`, `^`, `,`).
+/// e.g. "${1:-.}" → Some("."), "${1-foo}" → Some("foo"), "${1:-}" → Some(""), "$1" → None
+fn positional_default(token: &str) -> Option<String> {
+    let inner = token.strip_prefix("${")?.strip_suffix('}')?;
+    // ${#N} is the length operator — has no default-value semantics
+    if inner.starts_with('#') {
+        return None;
+    }
+    // Skip the digit (one ASCII char, 1-9)
+    let after_digit = inner.get(1..)?;
+    // ":-" (default when unset OR null) — check before "-" since it's a longer prefix
+    if let Some(default) = after_digit.strip_prefix(":-") {
+        return Some(default.to_string());
+    }
+    // "-" (default when unset only)
+    if let Some(default) = after_digit.strip_prefix('-') {
+        return Some(default.to_string());
+    }
+    None
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
 pub struct Alias {
     #[serde(skip_deserializing)]
@@ -186,6 +209,30 @@ impl Alias {
                     result = result.replace(positional, &remainders.swap_remove(0));
                 }
                 count = positionals.len();
+            } else if eol && remainders.len() < positionals.len() {
+                // At end-of-line, fill missing args from ${N:-default} forms.
+                // Returns alias name if any unmatched positional lacks a default,
+                // preserving safety for bare `$1` aliases like `mv $1 $2`.
+                let replacements: Option<Vec<String>> = positionals
+                    .iter()
+                    .enumerate()
+                    .map(|(i, positional)| {
+                        if i < remainders.len() {
+                            Some(remainders[i].clone())
+                        } else {
+                            positional_default(positional)
+                        }
+                    })
+                    .collect();
+                if let Some(replacements) = replacements {
+                    for (positional, replacement) in positionals.iter().zip(replacements.iter()) {
+                        result = result.replace(positional, replacement);
+                    }
+                    count = remainders.len();
+                    remainders.clear();
+                } else {
+                    result = self.name.clone();
+                }
             } else {
                 result = self.name.clone();
             }
@@ -376,9 +423,9 @@ mod tests {
 
     #[test]
     fn test_positionals_braced_removal() -> Result<()> {
-        assert_eq!(pos("cmd ${1#pat}"), s(&["${1#pat}"]));   // remove shortest prefix
+        assert_eq!(pos("cmd ${1#pat}"), s(&["${1#pat}"])); // remove shortest prefix
         assert_eq!(pos("cmd ${1##pat}"), s(&["${1##pat}"])); // remove longest prefix
-        assert_eq!(pos("cmd ${1%pat}"), s(&["${1%pat}"]));   // remove shortest suffix
+        assert_eq!(pos("cmd ${1%pat}"), s(&["${1%pat}"])); // remove shortest suffix
         assert_eq!(pos("cmd ${1%%pat}"), s(&["${1%%pat}"])); // remove longest suffix
         Ok(())
     }
@@ -387,9 +434,9 @@ mod tests {
 
     #[test]
     fn test_positionals_braced_case() -> Result<()> {
-        assert_eq!(pos("cmd ${1^}"), s(&["${1^}"]));   // uppercase first
+        assert_eq!(pos("cmd ${1^}"), s(&["${1^}"])); // uppercase first
         assert_eq!(pos("cmd ${1^^}"), s(&["${1^^}"])); // uppercase all
-        assert_eq!(pos("cmd ${1,}"), s(&["${1,}"]));   // lowercase first
+        assert_eq!(pos("cmd ${1,}"), s(&["${1,}"])); // lowercase first
         assert_eq!(pos("cmd ${1,,}"), s(&["${1,,}"])); // lowercase all
         Ok(())
     }
@@ -522,6 +569,43 @@ mod tests {
         Ok(())
     }
 
+    // ── positional_default: extract default value from token ────────────────
+
+    #[test]
+    fn test_positional_default_colon_dash() {
+        assert_eq!(positional_default("${1:-.}"), Some(".".to_string()));
+        assert_eq!(positional_default("${1:-foo}"), Some("foo".to_string()));
+        assert_eq!(positional_default("${1:-/some/path}"), Some("/some/path".to_string()));
+        assert_eq!(positional_default("${1:-}"), Some(String::new()));
+    }
+
+    #[test]
+    fn test_positional_default_dash_only() {
+        assert_eq!(positional_default("${1-foo}"), Some("foo".to_string()));
+        assert_eq!(positional_default("${1-}"), Some(String::new()));
+    }
+
+    #[test]
+    fn test_positional_default_no_default_operator() {
+        // No default value for these forms — return None
+        assert_eq!(positional_default("$1"), None);
+        assert_eq!(positional_default("${1}"), None);
+        assert_eq!(positional_default("${#1}"), None); // length operator
+        assert_eq!(positional_default("${1:+alt}"), None); // alternate value
+        assert_eq!(positional_default("${1+alt}"), None);
+        assert_eq!(positional_default("${1:?msg}"), None); // error operator
+        assert_eq!(positional_default("${1?msg}"), None);
+        assert_eq!(positional_default("${1:=val}"), None); // assign default
+        assert_eq!(positional_default("${1=val}"), None);
+        assert_eq!(positional_default("${1:2}"), None); // substring
+        assert_eq!(positional_default("${1:2:3}"), None);
+        assert_eq!(positional_default("${1/x/y}"), None); // pattern substitution
+        assert_eq!(positional_default("${1#pat}"), None); // pattern removal
+        assert_eq!(positional_default("${1%pat}"), None);
+        assert_eq!(positional_default("${1^^}"), None); // case modification
+        assert_eq!(positional_default("${1,,}"), None);
+    }
+
     // ── Replacement: braced forms ─────────────────────────────────────────────
 
     #[test]
@@ -544,12 +628,107 @@ mod tests {
     }
 
     #[test]
-    fn test_replace_braced_default_no_arg() -> Result<()> {
-        // No arg → positionals.len() != remainders.len() → alias name returned
+    fn test_replace_braced_default_no_arg_eol() -> Result<()> {
+        // No arg + eol=true → default value substituted (bash ${1:-.} semantics)
         let alias = mk("cargo metadata --manifest-path ${1:-.}/Cargo.toml");
-        let alias = Alias { name: "cip".to_string(), ..alias };
+        let alias = Alias {
+            name: "cip".to_string(),
+            ..alias
+        };
         let (result, count) = alias.replace(&mut vec![], &HashMap::new(), true)?;
+        assert_eq!(result, "cargo metadata --manifest-path ./Cargo.toml");
+        assert_eq!(count, 0);
+        Ok(())
+    }
+
+    #[test]
+    fn test_replace_braced_default_no_arg_not_eol() -> Result<()> {
+        // No arg + eol=false → alias name returned (waiting for possible arg)
+        let alias = mk("cargo metadata --manifest-path ${1:-.}/Cargo.toml");
+        let alias = Alias {
+            name: "cip".to_string(),
+            ..alias
+        };
+        let (result, count) = alias.replace(&mut vec![], &HashMap::new(), false)?;
         assert_eq!(result, "cip");
+        assert_eq!(count, 0);
+        Ok(())
+    }
+
+    #[test]
+    fn test_replace_braced_default_no_colon_eol() -> Result<()> {
+        // ${1-foo} (no-colon form) at eol with no arg → default substituted
+        let alias = Alias {
+            name: "a".to_string(),
+            ..mk("echo ${1-foo}")
+        };
+        let (result, count) = alias.replace(&mut vec![], &HashMap::new(), true)?;
+        assert_eq!(result, "echo foo");
+        assert_eq!(count, 0);
+        Ok(())
+    }
+
+    #[test]
+    fn test_replace_empty_default_eol() -> Result<()> {
+        // ${1:-} with no arg at eol → empty default substituted
+        let alias = Alias {
+            name: "a".to_string(),
+            ..mk("echo x${1:-}y")
+        };
+        let (result, count) = alias.replace(&mut vec![], &HashMap::new(), true)?;
+        assert_eq!(result, "echo xy");
+        assert_eq!(count, 0);
+        Ok(())
+    }
+
+    #[test]
+    fn test_replace_bare_positional_no_arg_eol() -> Result<()> {
+        // Bare $1 with no default + no arg at eol → alias name (no fallback available)
+        let alias = Alias {
+            name: "mv2".to_string(),
+            ..mk("mv $1 $2")
+        };
+        let (result, count) = alias.replace(&mut vec![], &HashMap::new(), true)?;
+        assert_eq!(result, "mv2");
+        assert_eq!(count, 0);
+        Ok(())
+    }
+
+    #[test]
+    fn test_replace_mixed_default_and_bare_no_args_eol() -> Result<()> {
+        // $1 (no default) + ${2:-foo} with 0 args at eol → alias name (any missing default fails)
+        let alias = Alias {
+            name: "mix".to_string(),
+            ..mk("cmd $1 ${2:-foo}")
+        };
+        let (result, count) = alias.replace(&mut vec![], &HashMap::new(), true)?;
+        assert_eq!(result, "mix");
+        assert_eq!(count, 0);
+        Ok(())
+    }
+
+    #[test]
+    fn test_replace_mixed_default_and_bare_one_arg_eol() -> Result<()> {
+        // $1 + ${2:-foo} with 1 arg at eol → arg fills $1, default fills ${2:-foo}
+        let alias = Alias {
+            name: "mix".to_string(),
+            ..mk("cmd $1 ${2:-foo}")
+        };
+        let (result, count) = alias.replace(&mut vec!["bar".into()], &HashMap::new(), true)?;
+        assert_eq!(result, "cmd bar foo");
+        assert_eq!(count, 1);
+        Ok(())
+    }
+
+    #[test]
+    fn test_replace_two_defaults_no_args_eol() -> Result<()> {
+        // Both positionals have defaults — both substituted at eol
+        let alias = Alias {
+            name: "two".to_string(),
+            ..mk("cmd ${1:-a} ${2:-b}")
+        };
+        let (result, count) = alias.replace(&mut vec![], &HashMap::new(), true)?;
+        assert_eq!(result, "cmd a b");
         assert_eq!(count, 0);
         Ok(())
     }
@@ -600,7 +779,10 @@ mod tests {
 
     #[test]
     fn test_replace_variadic_eol_false() -> Result<()> {
-        let alias = Alias { name: "a".to_string(), ..mk("echo $@") };
+        let alias = Alias {
+            name: "a".to_string(),
+            ..mk("echo $@")
+        };
         let mut rem = vec!["Hello".into(), "World".into()];
         let (result, count) = alias.replace(&mut rem, &HashMap::new(), false)?;
         assert_eq!(result, "a");
@@ -610,7 +792,10 @@ mod tests {
 
     #[test]
     fn test_replace_mismatch_remainders() -> Result<()> {
-        let alias = Alias { name: "cmd".to_string(), ..mk("echo $1 $2 $3") };
+        let alias = Alias {
+            name: "cmd".to_string(),
+            ..mk("echo $1 $2 $3")
+        };
         let mut rem = vec!["Hello".into(), "World".into()];
         let (result, count) = alias.replace(&mut rem, &HashMap::new(), true)?;
         assert_eq!(result, "cmd"); // alias name returned when count mismatch
@@ -685,13 +870,25 @@ mod tests {
 
     #[test]
     fn test_alias_clone_and_eq() {
-        let alias = Alias { name: "t".to_string(), value: "echo t".to_string(), space: false, global: true, count: 10 };
+        let alias = Alias {
+            name: "t".to_string(),
+            value: "echo t".to_string(),
+            space: false,
+            global: true,
+            count: 10,
+        };
         assert_eq!(alias, alias.clone());
     }
 
     #[test]
     fn test_alias_debug_contains_fields() {
-        let alias = Alias { name: "t".to_string(), value: "echo t".to_string(), space: true, global: false, count: 0 };
+        let alias = Alias {
+            name: "t".to_string(),
+            value: "echo t".to_string(),
+            space: true,
+            global: false,
+            count: 0,
+        };
         let s = format!("{alias:?}");
         assert!(s.contains("t"));
         assert!(s.contains("echo t"));
@@ -699,7 +896,13 @@ mod tests {
 
     #[test]
     fn test_alias_serialize_contains_fields() {
-        let alias = Alias { name: "t".to_string(), value: "echo t".to_string(), space: true, global: false, count: 5 };
+        let alias = Alias {
+            name: "t".to_string(),
+            value: "echo t".to_string(),
+            space: true,
+            global: false,
+            count: 5,
+        };
         let json = serde_json::to_string(&alias).unwrap();
         assert!(json.contains("echo t"));
         assert!(json.contains("space"));
