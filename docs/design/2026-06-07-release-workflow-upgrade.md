@@ -26,30 +26,25 @@ pin newer actions. There are three changes to make. aka's extra packaging steps
 (`_aka_commands`, `aka-loader.zsh`, `aka.zsh` alongside the binary) stay exactly
 as they are.
 
-### 1. Opt JS actions into Node.js 24
+### 1. Move every action onto a Node.js 24 runtime
 
 Node.js 20 is deprecated on GitHub runners; the default flips to Node 24 on
-2026-06-16. Add one line to the top-level `env:` block:
+2026-06-16. The correct fix is to use action versions that target Node 24
+**natively** — not the `FORCE_JAVASCRIPT_ACTIONS_TO_NODE24` env var, which only
+masks the warning while the action's own `action.yml` still declares `node20`.
 
-```yaml
-env:
-  RUST_VERSION: 1.96.0
-  CARGO_TERM_COLOR: always
-  # Opt JS-based actions (e.g. softprops/action-gh-release) into Node.js 24
-  # ahead of the 2026-06-16 default switch; Node.js 20 is deprecated.
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
-```
+| Action | From | To | Runtime at target |
+|--------|------|----|-------------------|
+| `actions/checkout` | `@v4` | `@v6` | node24 |
+| `actions/upload-artifact` | `@v4` | `@v7` | node24 |
+| `actions/download-artifact` | `@v4` | `@v8` | node24 |
+| `softprops/action-gh-release` | `@v2` | `@v3` | node24 |
+| `Swatinem/rust-cache` | `@v2` | `@v2` | node24 (already) |
 
-### 2. Bump action versions
-
-| Action | From | To |
-|--------|------|----|
-| `actions/checkout` | `@v4` | `@v6` |
-| `actions/upload-artifact` | `@v4` | `@v7` |
-| `actions/download-artifact` | `@v4` | `@v8` |
-
-`Swatinem/rust-cache@v2` and `softprops/action-gh-release@v2` stay as-is (the
-Node 24 env var above handles the gh-release runtime warning).
+`action-gh-release@v3.0.0` is a runtime-only major bump (Node 20 → 24) with no
+input or behavior changes, so the `files:`/`GITHUB_TOKEN` usage is unchanged.
+With all five actions on node24, **no `FORCE_*` env var is needed** — leave the
+`env:` block as just `RUST_VERSION` + `CARGO_TERM_COLOR`.
 
 ### 3. Add the `linux-arm64` cross-compiled target
 
