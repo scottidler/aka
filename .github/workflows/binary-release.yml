@@ -4,10 +4,14 @@ on:
   push:
     tags:
       - 'v*'
+  workflow_dispatch:
 
 env:
   RUST_VERSION: 1.96.0
   CARGO_TERM_COLOR: always
+  # Opt JS-based actions (e.g. softprops/action-gh-release) into the Node.js 24
+  # runtime ahead of the 2026-06-16 default switch; Node.js 20 is deprecated.
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 permissions:
   contents: write
@@ -21,13 +25,21 @@ jobs:
         include:
           - target: x86_64-unknown-linux-gnu
             suffix: linux-amd64
+            cross: false
+          - target: aarch64-unknown-linux-gnu
+            suffix: linux-arm64
+            cross: true
     steps:
       - name: Install build dependencies
         run: |
           apt-get update
           apt-get install -y curl build-essential git pkg-config libssl-dev
 
-      - uses: actions/checkout@v4
+      - name: Install cross-compilation toolchain
+        if: matrix.cross
+        run: apt-get install -y gcc-aarch64-linux-gnu
+
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 0
           fetch-tags: true
@@ -54,6 +66,8 @@ jobs:
           shared-key: ${{ matrix.target }}
 
       - name: Build for ${{ matrix.target }}
+        env:
+          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: ${{ matrix.cross && 'aarch64-linux-gnu-gcc' || '' }}
         run: cargo build --release --target ${{ matrix.target }}
 
       - name: Package binary and scripts
@@ -71,7 +85,7 @@ jobs:
         run: sha256sum aka-${{ github.ref_name }}-${{ matrix.suffix }}.tar.gz > aka-${{ github.ref_name }}-${{ matrix.suffix }}.tar.gz.sha256
 
       - name: Upload artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: aka-${{ matrix.suffix }}
           path: |
@@ -88,7 +102,7 @@ jobs:
           - target: aarch64-apple-darwin
             suffix: macos-arm64
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 0
           fetch-tags: true
@@ -128,7 +142,7 @@ jobs:
         run: shasum -a 256 aka-${{ github.ref_name }}-${{ matrix.suffix }}.tar.gz > aka-${{ github.ref_name }}-${{ matrix.suffix }}.tar.gz.sha256
 
       - name: Upload artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: aka-${{ matrix.suffix }}
           path: |
@@ -140,7 +154,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Download all artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           path: artifacts/
 
