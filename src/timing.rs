@@ -303,7 +303,7 @@ pub fn get_timing_summary() -> Result<(Duration, Duration, usize, usize)> {
 }
 
 pub fn get_timing_file_path() -> Result<PathBuf> {
-    let data_dir = dirs::data_local_dir()
+    let data_dir = crate::xdg_data_dir()
         .ok_or_else(|| eyre!("Could not determine local data directory"))?
         .join("aka");
     std::fs::create_dir_all(&data_dir)?;

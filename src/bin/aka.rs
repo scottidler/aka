@@ -10,8 +10,8 @@ use std::time::{Duration, Instant};
 // Import from the shared library
 use aka_lib::{
     determine_socket_path, execute_health_check, export_timing_csv, get_config_path, get_config_path_with_override,
-    get_last_valid_config_path, get_timing_summary, load_alias_cache, log_timing, setup_logging, ConfigLoader,
-    DaemonRequest, DaemonResponse, ProcessingMode, TimingCollector, AKA,
+    get_last_valid_config_path, get_timing_summary, load_alias_cache, log_timing, setup_logging, xdg_config_dir,
+    ConfigLoader, DaemonRequest, DaemonResponse, ProcessingMode, TimingCollector, AKA,
 };
 
 // Version constant for compatibility checking
@@ -539,7 +539,7 @@ impl ServiceManager {
         use std::process::Command;
 
         // Create systemd user directory
-        let service_dir = dirs::config_dir()
+        let service_dir = xdg_config_dir()
             .ok_or_else(|| eyre::eyre!("Could not determine config directory"))?
             .join("systemd/user");
         fs::create_dir_all(&service_dir)?;
@@ -869,7 +869,7 @@ WantedBy=default.target
             .output()?;
 
         let status = String::from_utf8_lossy(&output.stdout).trim().to_string();
-        let service_file = dirs::config_dir()
+        let service_file = xdg_config_dir()
             .unwrap_or_default()
             .join("systemd/user/aka-daemon.service");
 
@@ -927,7 +927,7 @@ WantedBy=default.target
                 .status();
 
             // Remove service file
-            let service_file = dirs::config_dir()
+            let service_file = xdg_config_dir()
                 .ok_or_else(|| eyre::eyre!("Could not determine config directory"))?
                 .join("systemd/user/aka-daemon.service");
             if service_file.exists() {
