@@ -36,22 +36,13 @@ impl Loader {
 
         // Time YAML deserialization
         let start_yaml = Instant::now();
-        let mut spec: Spec =
-            serde_yaml::from_str(&content).context(format!("Can't parse YAML from file={filename:?}"))?;
+        let spec: Spec = serde_yaml::from_str(&content).context(format!("Can't parse YAML from file={filename:?}"))?;
         let yaml_duration = start_yaml.elapsed();
 
         // Time validation
         let start_validation = Instant::now();
         self.validate_config(&spec, filename)?;
         let validation_duration = start_validation.elapsed();
-
-        // Initialize usage counts for aliases that don't have them
-        for alias in spec.aliases.values_mut() {
-            if alias.count == 0 {
-                // count is already 0 due to skip_deserializing, but be explicit
-                alias.count = 0;
-            }
-        }
 
         let total_duration = start_total.elapsed();
 

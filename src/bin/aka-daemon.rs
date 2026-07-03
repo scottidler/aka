@@ -14,7 +14,7 @@ use std::thread;
 
 // Import from the shared library
 use aka_lib::{
-    determine_socket_path, get_config_path_with_override, hash_config_file, setup_logging, store_hash, DaemonRequest,
+    determine_socket_path, get_config_path_with_override, hash_config_file, setup_logging, DaemonRequest,
     DaemonResponse, ProcessingMode, AKA,
 };
 
@@ -72,11 +72,6 @@ impl DaemonServer {
         // Calculate initial config hash
         let initial_hash = hash_config_file(&config_path)?;
         let config_hash = Arc::new(RwLock::new(initial_hash.clone()));
-
-        // Store hash for CLI comparison
-        if let Err(e) = store_hash(&initial_hash, &home_dir) {
-            warn!("Failed to store initial config hash: {e}");
-        }
 
         let shutdown = Arc::new(AtomicBool::new(false));
 
@@ -171,11 +166,6 @@ impl DaemonServer {
 
             *aka_guard = new_aka;
             *hash_guard = new_hash.clone();
-        }
-
-        // Store hash for CLI comparison
-        if let Err(e) = store_hash(&new_hash, &home_dir) {
-            warn!("Failed to store updated config hash: {e}");
         }
 
         let reload_duration = start_reload.elapsed();
@@ -588,11 +578,6 @@ impl DaemonServer {
                             return Err(eyre!("Failed to acquire write lock on config hash: {}", e));
                         }
                     }
-                }
-
-                // Store hash for CLI comparison
-                if let Err(e) = store_hash(&new_hash, &home_dir) {
-                    warn!("Failed to store updated config hash: {e}");
                 }
 
                 debug!("✅ Auto-reload completed successfully");

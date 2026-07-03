@@ -183,13 +183,6 @@ pub fn get_stored_hash(home_dir: &std::path::Path) -> Result<Option<String>> {
     }
 }
 
-pub fn store_hash(hash: &str, _home_dir: &std::path::Path) -> Result<()> {
-    // Hash is now stored in the cache file itself, so this is a no-op
-    // The hash gets stored when we save the cache via sync_cache_with_config
-    debug!("Hash storage is now handled by cache file (hash: {hash})");
-    Ok(())
-}
-
 /// Result of probing the daemon's Health endpoint. `Synced`/`Stale` mean the
 /// daemon answered with a well-formed `healthy:<count>:synced|stale` status;
 /// `Unhealthy` means it answered but the payload was malformed or unexpected;
@@ -262,24 +255,13 @@ fn check_daemon_health(socket_path: &Path) -> bool {
     )
 }
 
-fn validate_fresh_config_and_store_hash(
-    config_path: &std::path::Path,
-    current_hash: &str,
-    home_dir: &std::path::Path,
-) -> Result<i32> {
+fn validate_fresh_config(config_path: &std::path::Path, home_dir: &std::path::Path) -> Result<i32> {
     // Use the same loader as direct mode for consistency
     let loader = Loader::new();
     debug!("🔄 Loading fresh config from: {config_path:?}");
     match loader.load(config_path) {
         Ok(spec) => {
             debug!("✅ Fresh config loaded successfully");
-
-            // Config is valid, store the new hash
-            if let Err(e) = store_hash(current_hash, home_dir) {
-                debug!("⚠️ Warning: could not store config hash: {e}");
-            } else {
-                debug!("✅ New config hash stored: {current_hash}");
-            }
 
             // Check if we have any aliases
             if spec.aliases.is_empty() {
@@ -403,7 +385,7 @@ pub fn execute_health_check(home_dir: &std::path::Path, config_override: &Option
 
     // Step 5: Hash doesn't match or no stored hash, validate config fresh
     debug!("📋 Step 5: Cache invalid, attempting fresh config load");
-    validate_fresh_config_and_store_hash(&config_path, &current_hash, home_dir)
+    validate_fresh_config(&config_path, home_dir)
 }
 
 // Processing mode enum to track daemon vs direct processing
@@ -2946,16 +2928,6 @@ mod tests {
     }
 
     #[test]
-    fn test_store_hash_no_op() {
-        use tempfile::TempDir;
-
-        let temp_dir = TempDir::new().unwrap();
-        // store_hash is a no-op now, just verify it doesn't panic
-        let result = store_hash("test_hash", temp_dir.path());
-        assert!(result.is_ok());
-    }
-
-    #[test]
     fn test_get_stored_hash_no_cache() {
         use tempfile::TempDir;
 
@@ -3852,17 +3824,6 @@ mod tests {
     }
 
     #[test]
-    fn test_store_hash_no_op_returns_ok() {
-        use tempfile::TempDir;
-
-        let temp_dir = TempDir::new().unwrap();
-
-        // store_hash is now a no-op, should succeed without error
-        let result = store_hash("test_hash", temp_dir.path());
-        assert!(result.is_ok());
-    }
-
-    #[test]
     fn test_save_and_load_alias_cache_roundtrip_with_base() {
         use tempfile::TempDir;
 
@@ -4191,7 +4152,7 @@ mod tests {
         let original_cache_dir = std::env::var("AKA_CACHE_DIR").ok();
         std::env::remove_var("AKA_CACHE_DIR");
 
-        let result = validate_fresh_config_and_store_hash(&config_path, "irrelevant-hash", &home_dir);
+        let result = validate_fresh_config(&config_path, &home_dir);
 
         match original_cache_dir {
             Some(val) => std::env::set_var("AKA_CACHE_DIR", val),
