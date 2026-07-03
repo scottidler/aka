@@ -492,6 +492,18 @@ mod tests {
     }
 
     #[test]
+    fn test_daemon_client_validate_socket_path_regular_file_not_socket() {
+        // Ported from the ad-hoc client's real-fs test: a regular file on disk is
+        // not a socket, so validation must reject it via the RealSocketConnector.
+        use tempfile::NamedTempFile;
+
+        let temp_file = NamedTempFile::new().unwrap();
+        let client = DaemonClient::new();
+        let result = client.validate_socket_path(temp_file.path());
+        assert_eq!(result, Err(DaemonError::SocketNotFound));
+    }
+
+    #[test]
     fn test_daemon_client_send_request_socket_not_found() {
         let connector = MockSocketConnector::not_found();
         let client = DaemonClient::with_connector(connector);

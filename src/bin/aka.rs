@@ -1,17 +1,16 @@
 use clap::{CommandFactory, FromArgMatches, Parser, Subcommand};
 use eyre::Result;
 use log::{debug, info, warn};
-use std::io::{BufRead, BufReader, Write};
-use std::os::unix::net::UnixStream;
 use std::path::PathBuf;
 use std::process::exit;
-use std::time::{Duration, Instant};
 
 // Import from the shared library
+use aka_lib::daemon_client::{DaemonClient as LibDaemonClient, DaemonError};
 use aka_lib::{
     determine_socket_path, execute_health_check, export_timing_csv, get_config_path, get_config_path_with_override,
-    get_last_valid_config_path, get_timing_summary, load_alias_cache, log_file_path, log_timing, setup_logging,
-    xdg_config_dir, ConfigLoader, DaemonRequest, DaemonResponse, ProcessingMode, TimingCollector, AKA,
+    get_last_valid_config_path, get_timing_summary, load_alias_cache, log_file_path, log_timing, probe_daemon_health,
+    setup_logging, xdg_config_dir, ConfigLoader, DaemonHealth, DaemonRequest, DaemonResponse, ProcessingMode,
+    TimingCollector, AKA,
 };
 
 // Version constant for compatibility checking
@@ -20,279 +19,25 @@ const CLI_VERSION: &str = env!("GIT_DESCRIBE");
 // Health status constants
 const CACHE_FALLBACK: i32 = 5; // config broken, serving from last-valid cache
 
-// Daemon client constants and types - moved from shared library
-const DAEMON_CONNECTION_TIMEOUT_MS: u64 = 100; // 100ms to connect
-const DAEMON_READ_TIMEOUT_MS: u64 = 200; // 200ms to read response
-const DAEMON_WRITE_TIMEOUT_MS: u64 = 50; // 50ms to write request
-const DAEMON_TOTAL_TIMEOUT_MS: u64 = 300; // 300ms total operation limit
-const DAEMON_RETRY_DELAY_MS: u64 = 50; // 50ms between retries
-const DAEMON_MAX_RETRIES: u32 = 1; // Only 1 retry attempt
-
-// Timeout for the --help daemon status probe. Bounds the read/write on the
-// status-emoji socket so a wedged daemon can never hang `--help` rendering.
-const HELP_STATUS_PROBE_TIMEOUT_MS: u64 = 500;
-
 // Marker embedded in the top-level `after_help` so the help interceptor can
 // distinguish top-level help (which gets the dynamic daemon-status line) from
 // subcommand help (which clap renders without any `after_help`).
 const AFTER_HELP_LOG_MARKER: &str = "Logs are written to:";
 
-#[derive(Debug, Clone)]
-enum DaemonError {
-    ConnectionTimeout,
-    ReadTimeout,
-    WriteTimeout,
-    ConnectionRefused,
-    SocketNotFound,
-    SocketPermissionDenied,
-    ProtocolError(String),
-    DaemonShutdown,
-    TotalOperationTimeout,
-    UnknownError(String),
-}
-
-impl std::fmt::Display for DaemonError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            DaemonError::ConnectionTimeout => write!(f, "Daemon connection timeout"),
-            DaemonError::ReadTimeout => write!(f, "Daemon read timeout"),
-            DaemonError::WriteTimeout => write!(f, "Daemon write timeout"),
-            DaemonError::ConnectionRefused => write!(f, "Daemon connection refused"),
-            DaemonError::SocketNotFound => write!(f, "Daemon socket not found"),
-            DaemonError::SocketPermissionDenied => write!(f, "Daemon socket permission denied"),
-            DaemonError::ProtocolError(msg) => write!(f, "Daemon protocol error: {msg}"),
-            DaemonError::DaemonShutdown => write!(f, "Daemon is shutting down"),
-            DaemonError::TotalOperationTimeout => write!(f, "Total daemon operation timeout"),
-            DaemonError::UnknownError(msg) => write!(f, "Unknown daemon error: {msg}"),
-        }
-    }
-}
-
-impl std::error::Error for DaemonError {}
-
-fn should_retry_daemon_error(error: &DaemonError) -> bool {
-    match error {
-        DaemonError::ConnectionTimeout => true,
-        DaemonError::ConnectionRefused => true,
-        DaemonError::ReadTimeout => false,  // Don't retry read timeouts
-        DaemonError::WriteTimeout => false, // Don't retry write timeouts
-        DaemonError::SocketNotFound => false,
-        DaemonError::SocketPermissionDenied => false,
-        DaemonError::ProtocolError(_) => false,
-        DaemonError::DaemonShutdown => false,
-        DaemonError::TotalOperationTimeout => false,
-        DaemonError::UnknownError(_) => false,
-    }
-}
-
-fn categorize_daemon_error(error: &std::io::Error) -> DaemonError {
-    use std::io::ErrorKind;
-    match error.kind() {
-        ErrorKind::TimedOut => DaemonError::ConnectionTimeout,
-        ErrorKind::ConnectionRefused => DaemonError::ConnectionRefused,
-        ErrorKind::NotFound => DaemonError::SocketNotFound,
-        ErrorKind::PermissionDenied => DaemonError::SocketPermissionDenied,
-        ErrorKind::WouldBlock => DaemonError::ReadTimeout,
-        _ => DaemonError::UnknownError(error.to_string()),
-    }
-}
-
-fn validate_socket_path(socket_path: &PathBuf) -> Result<(), DaemonError> {
-    if !socket_path.exists() {
-        return Err(DaemonError::SocketNotFound);
-    }
-
-    // Check if it's actually a socket (not a regular file)
-    match std::fs::metadata(socket_path) {
-        Ok(metadata) => {
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::FileTypeExt;
-                if !metadata.file_type().is_socket() {
-                    return Err(DaemonError::SocketNotFound);
-                }
-            }
-        }
-        Err(e) => {
-            return Err(categorize_daemon_error(&e));
-        }
-    }
-
-    Ok(())
-}
-
-// Daemon client for sending requests
+/// Thin CLI-side wrapper over the canonical `aka_lib::daemon_client::DaemonClient`.
+/// The binary keeps this shim only to (a) resolve the socket path from the home
+/// dir and (b) preserve `send_request_timed`'s `TimingCollector` bracketing; all
+/// connect/retry/timeout/error taxonomy lives in the shared client.
 struct DaemonClient;
 
 impl DaemonClient {
     fn send_request(request: DaemonRequest) -> Result<DaemonResponse> {
         let home_dir = dirs::home_dir().ok_or_else(|| eyre::eyre!("Unable to determine home directory"))?;
         let socket_path = determine_socket_path(&home_dir)?;
-
-        Self::send_request_with_timeout(request, &socket_path).map_err(|e| e.into())
-    }
-
-    fn send_request_with_timeout(request: DaemonRequest, socket_path: &PathBuf) -> Result<DaemonResponse, DaemonError> {
-        let operation_start = Instant::now();
-        let total_timeout = Duration::from_millis(DAEMON_TOTAL_TIMEOUT_MS);
-
-        // Pre-validate socket before attempting connection
-        validate_socket_path(socket_path)?;
-
-        let mut last_error = None;
-
-        for attempt in 0..=DAEMON_MAX_RETRIES {
-            // Check total operation timeout
-            if operation_start.elapsed() >= total_timeout {
-                debug!(
-                    "🚨 Total daemon operation timeout exceeded: {}ms",
-                    operation_start.elapsed().as_millis()
-                );
-                return Err(DaemonError::TotalOperationTimeout);
-            }
-
-            if attempt > 0 {
-                debug!(
-                    "🔄 Daemon retry attempt {} after {}ms",
-                    attempt,
-                    operation_start.elapsed().as_millis()
-                );
-                std::thread::sleep(Duration::from_millis(DAEMON_RETRY_DELAY_MS));
-            }
-
-            match Self::attempt_single_request(&request, socket_path, &operation_start, &total_timeout) {
-                Ok(response) => {
-                    debug!(
-                        "✅ Daemon request succeeded on attempt {} in {}ms",
-                        attempt + 1,
-                        operation_start.elapsed().as_millis()
-                    );
-                    return Ok(response);
-                }
-                Err(error) => {
-                    debug!("❌ Daemon attempt {} failed: {}", attempt + 1, error);
-
-                    // Check if we should retry this error type
-                    if !should_retry_daemon_error(&error) || attempt >= DAEMON_MAX_RETRIES {
-                        return Err(error);
-                    }
-
-                    last_error = Some(error);
-                }
-            }
-        }
-
-        // If we get here, all retries failed
-        Err(last_error.unwrap_or(DaemonError::UnknownError("All retry attempts failed".to_string())))
-    }
-
-    fn attempt_single_request(
-        request: &DaemonRequest,
-        socket_path: &PathBuf,
-        operation_start: &Instant,
-        total_timeout: &Duration,
-    ) -> Result<DaemonResponse, DaemonError> {
-        // Check timeout before connection
-        if operation_start.elapsed() >= *total_timeout {
-            return Err(DaemonError::TotalOperationTimeout);
-        }
-
-        debug!("📡 Connecting to daemon at: {socket_path:?}");
-
-        // Connect with timeout
-        let mut stream = Self::connect_with_timeout(socket_path)?;
-
-        // Check timeout after connection
-        if operation_start.elapsed() >= *total_timeout {
-            return Err(DaemonError::TotalOperationTimeout);
-        }
-
-        // Set socket timeouts
-        stream
-            .set_read_timeout(Some(Duration::from_millis(DAEMON_READ_TIMEOUT_MS)))
-            .map_err(|e| categorize_daemon_error(&e))?;
-        stream
-            .set_write_timeout(Some(Duration::from_millis(DAEMON_WRITE_TIMEOUT_MS)))
-            .map_err(|e| categorize_daemon_error(&e))?;
-
-        // Send request
-        let request_json = serde_json::to_string(&request)
-            .map_err(|e| DaemonError::ProtocolError(format!("Failed to serialize request: {e}")))?;
-
-        debug!("📤 Sending request: {request_json}");
-        writeln!(stream, "{request_json}").map_err(|e| {
-            if e.kind() == std::io::ErrorKind::TimedOut {
-                DaemonError::WriteTimeout
-            } else {
-                categorize_daemon_error(&e)
-            }
-        })?;
-
-        // Check timeout after write
-        if operation_start.elapsed() >= *total_timeout {
-            return Err(DaemonError::TotalOperationTimeout);
-        }
-
-        // Read response
-        let mut reader = BufReader::new(&stream);
-        let mut response_line = String::new();
-        reader.read_line(&mut response_line).map_err(|e| {
-            if e.kind() == std::io::ErrorKind::TimedOut {
-                DaemonError::ReadTimeout
-            } else {
-                categorize_daemon_error(&e)
-            }
-        })?;
-
-        debug!("📥 Received response: {}", response_line.trim());
-
-        // Validate response size
-        if let Err(e) = aka_lib::protocol::validate_message_size(&response_line) {
-            return Err(DaemonError::ProtocolError(format!("Response validation failed: {e}")));
-        }
-
-        // Parse response
-        let response: DaemonResponse = serde_json::from_str(response_line.trim())
-            .map_err(|e| DaemonError::ProtocolError(format!("Failed to parse response: {e}")))?;
-
-        // Check for daemon shutdown response
-        if let DaemonResponse::ShutdownAck = response {
-            return Err(DaemonError::DaemonShutdown);
-        }
-
-        Ok(response)
-    }
-
-    fn connect_with_timeout(socket_path: &PathBuf) -> Result<UnixStream, DaemonError> {
-        // Unix sockets don't have built-in connect timeout, so we simulate it
-        // by attempting connection in a non-blocking way
-        let start = Instant::now();
-        let timeout = Duration::from_millis(DAEMON_CONNECTION_TIMEOUT_MS);
-
-        loop {
-            match UnixStream::connect(socket_path) {
-                Ok(stream) => return Ok(stream),
-                Err(e) => {
-                    if start.elapsed() >= timeout {
-                        debug!("🚨 Connection timeout after {}ms", start.elapsed().as_millis());
-                        return Err(DaemonError::ConnectionTimeout);
-                    }
-
-                    // For connection refused, fail immediately (don't wait for timeout)
-                    if e.kind() == std::io::ErrorKind::ConnectionRefused {
-                        return Err(DaemonError::ConnectionRefused);
-                    }
-
-                    // For other errors, categorize and return
-                    if e.kind() != std::io::ErrorKind::WouldBlock {
-                        return Err(categorize_daemon_error(&e));
-                    }
-
-                    // Brief sleep before retry
-                    std::thread::sleep(Duration::from_millis(10));
-                }
-            }
-        }
+        debug!("DaemonClient::send_request: socket_path={socket_path:?}");
+        LibDaemonClient::new()
+            .send_request(request, &socket_path)
+            .map_err(|e| eyre::eyre!("{e}"))
     }
 
     fn send_request_timed(request: DaemonRequest, timing: &mut TimingCollector) -> Result<DaemonResponse, DaemonError> {
@@ -316,9 +61,6 @@ fn get_after_help() -> &'static str {
 }
 
 fn get_daemon_status_emoji() -> &'static str {
-    use std::io::{BufRead, BufReader, Write};
-    use std::os::unix::net::UnixStream;
-
     // Check daemon status quickly and return appropriate emoji
     let home_dir = match dirs::home_dir() {
         Some(dir) => dir,
@@ -334,34 +76,14 @@ fn get_daemon_status_emoji() -> &'static str {
 
     match (socket_exists, process_running) {
         (true, true) => {
-            // Daemon appears to be running, check config sync status
-            if let Ok(mut stream) = UnixStream::connect(&socket_path) {
-                // Bound the probe: a wedged daemon that accepts but never
-                // replies must not hang `--help` on an unbounded read_line.
-                let probe_timeout = Duration::from_millis(HELP_STATUS_PROBE_TIMEOUT_MS);
-                if stream.set_read_timeout(Some(probe_timeout)).is_err()
-                    || stream.set_write_timeout(Some(probe_timeout)).is_err()
-                {
-                    return "⚠️"; // Couldn't arm timeouts - refuse to risk a hang
-                }
-                let health_request = r#"{"type":"Health"}"#;
-                if writeln!(stream, "{health_request}").is_ok() {
-                    let mut reader = BufReader::new(&stream);
-                    let mut response_line = String::new();
-                    if reader.read_line(&mut response_line).is_ok() {
-                        if let Ok(response) = serde_json::from_str::<serde_json::Value>(response_line.trim()) {
-                            if let Some(status) = response.get("status").and_then(|s| s.as_str()) {
-                                if status.contains(":stale") {
-                                    return "🔄"; // Config out of sync
-                                } else if status.contains(":synced") {
-                                    return "✅"; // Healthy and synced
-                                }
-                            }
-                        }
-                    }
-                }
+            // Daemon appears to be running, check config sync status via the
+            // one bounded health probe (a wedged daemon can no longer hang
+            // `--help` on an unbounded read).
+            match probe_daemon_health(&socket_path) {
+                DaemonHealth::Synced { .. } => "✅",                         // Healthy and synced
+                DaemonHealth::Stale { .. } => "🔄",                          // Config out of sync
+                DaemonHealth::Unhealthy | DaemonHealth::Unreachable => "⚠️", // Health check failed
             }
-            "⚠️" // Socket exists, process running, but health check failed
         }
         (true, false) => "⚠️",  // Stale socket
         (false, false) => "❗", // Not running
@@ -2002,167 +1724,20 @@ mod tests {
     #[test]
     fn test_daemon_response_deserialization() {
         // Test that daemon responses can be deserialized
-        let response_json = r#"{"type":"Health","status":"healthy:5:aliases"}"#;
+        let response_json = r#"{"type":"Health","status":"healthy:5:synced"}"#;
         let response: Result<DaemonResponse, _> = serde_json::from_str(response_json);
         assert!(response.is_ok());
 
         if let Ok(DaemonResponse::Health { status }) = response {
-            assert_eq!(status, "healthy:5:aliases");
+            assert_eq!(status, "healthy:5:synced");
         }
     }
 
-    // DaemonError tests
-    #[test]
-    fn test_daemon_error_display_connection_timeout() {
-        let error = DaemonError::ConnectionTimeout;
-        assert_eq!(error.to_string(), "Daemon connection timeout");
-    }
-
-    #[test]
-    fn test_daemon_error_display_read_timeout() {
-        let error = DaemonError::ReadTimeout;
-        assert_eq!(error.to_string(), "Daemon read timeout");
-    }
-
-    #[test]
-    fn test_daemon_error_display_write_timeout() {
-        let error = DaemonError::WriteTimeout;
-        assert_eq!(error.to_string(), "Daemon write timeout");
-    }
-
-    #[test]
-    fn test_daemon_error_display_connection_refused() {
-        let error = DaemonError::ConnectionRefused;
-        assert_eq!(error.to_string(), "Daemon connection refused");
-    }
-
-    #[test]
-    fn test_daemon_error_display_socket_not_found() {
-        let error = DaemonError::SocketNotFound;
-        assert_eq!(error.to_string(), "Daemon socket not found");
-    }
-
-    #[test]
-    fn test_daemon_error_display_socket_permission_denied() {
-        let error = DaemonError::SocketPermissionDenied;
-        assert_eq!(error.to_string(), "Daemon socket permission denied");
-    }
-
-    #[test]
-    fn test_daemon_error_display_protocol_error() {
-        let error = DaemonError::ProtocolError("test error".to_string());
-        assert_eq!(error.to_string(), "Daemon protocol error: test error");
-    }
-
-    #[test]
-    fn test_daemon_error_display_daemon_shutdown() {
-        let error = DaemonError::DaemonShutdown;
-        assert_eq!(error.to_string(), "Daemon is shutting down");
-    }
-
-    #[test]
-    fn test_daemon_error_display_total_operation_timeout() {
-        let error = DaemonError::TotalOperationTimeout;
-        assert_eq!(error.to_string(), "Total daemon operation timeout");
-    }
-
-    #[test]
-    fn test_daemon_error_display_unknown_error() {
-        let error = DaemonError::UnknownError("something happened".to_string());
-        assert_eq!(error.to_string(), "Unknown daemon error: something happened");
-    }
-
-    #[test]
-    fn test_should_retry_daemon_error() {
-        // Should retry
-        assert!(should_retry_daemon_error(&DaemonError::ConnectionTimeout));
-        assert!(should_retry_daemon_error(&DaemonError::ConnectionRefused));
-
-        // Should not retry
-        assert!(!should_retry_daemon_error(&DaemonError::ReadTimeout));
-        assert!(!should_retry_daemon_error(&DaemonError::WriteTimeout));
-        assert!(!should_retry_daemon_error(&DaemonError::SocketNotFound));
-        assert!(!should_retry_daemon_error(&DaemonError::SocketPermissionDenied));
-        assert!(!should_retry_daemon_error(&DaemonError::ProtocolError(
-            "test".to_string()
-        )));
-        assert!(!should_retry_daemon_error(&DaemonError::DaemonShutdown));
-        assert!(!should_retry_daemon_error(&DaemonError::TotalOperationTimeout));
-        assert!(!should_retry_daemon_error(&DaemonError::UnknownError(
-            "test".to_string()
-        )));
-    }
-
-    #[test]
-    fn test_categorize_daemon_error() {
-        use std::io::{Error, ErrorKind};
-
-        let error = Error::new(ErrorKind::TimedOut, "timeout");
-        assert!(matches!(
-            categorize_daemon_error(&error),
-            DaemonError::ConnectionTimeout
-        ));
-
-        let error = Error::new(ErrorKind::ConnectionRefused, "refused");
-        assert!(matches!(
-            categorize_daemon_error(&error),
-            DaemonError::ConnectionRefused
-        ));
-
-        let error = Error::new(ErrorKind::NotFound, "not found");
-        assert!(matches!(categorize_daemon_error(&error), DaemonError::SocketNotFound));
-
-        let error = Error::new(ErrorKind::PermissionDenied, "denied");
-        assert!(matches!(
-            categorize_daemon_error(&error),
-            DaemonError::SocketPermissionDenied
-        ));
-
-        let error = Error::new(ErrorKind::WouldBlock, "would block");
-        assert!(matches!(categorize_daemon_error(&error), DaemonError::ReadTimeout));
-
-        let error = Error::other("other");
-        assert!(matches!(categorize_daemon_error(&error), DaemonError::UnknownError(_)));
-    }
-
-    #[test]
-    fn test_validate_socket_path_not_found() {
-        let socket_path = PathBuf::from("/nonexistent/path/to/socket.sock");
-        let result = validate_socket_path(&socket_path);
-        assert!(matches!(result, Err(DaemonError::SocketNotFound)));
-    }
-
-    #[test]
-    fn test_validate_socket_path_not_socket() {
-        use tempfile::NamedTempFile;
-
-        // Create a regular file (not a socket)
-        let temp_file = NamedTempFile::new().unwrap();
-        let result = validate_socket_path(&temp_file.path().to_path_buf());
-
-        // Should fail because it's not a socket
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn test_daemon_error_clone() {
-        let error = DaemonError::ConnectionTimeout;
-        let cloned = error.clone();
-        assert_eq!(error.to_string(), cloned.to_string());
-    }
-
-    #[test]
-    fn test_daemon_error_debug() {
-        let error = DaemonError::ConnectionTimeout;
-        let debug_str = format!("{:?}", error);
-        assert!(debug_str.contains("ConnectionTimeout"));
-    }
-
-    #[test]
-    fn test_daemon_error_is_std_error() {
-        let error: Box<dyn std::error::Error> = Box::new(DaemonError::ConnectionTimeout);
-        let _ = error.to_string();
-    }
+    // NOTE: DaemonError display / should_retry / categorize / validate_socket_path
+    // tests were removed here in Phase 2 - the ad-hoc client they exercised was
+    // deleted and its canonical replacement lives in `src/daemon-client.rs`, whose
+    // `#[cfg(test)] mod tests` already covers the identical taxonomy against
+    // `MockSocketConnector`.
 
     // Opts struct tests
     #[test]

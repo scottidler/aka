@@ -147,7 +147,7 @@ fn test_daemon_response_serialization() {
             message: "test error".to_string(),
         },
         DaemonResponse::Health {
-            status: "healthy:5:aliases".to_string(),
+            status: "healthy:5:synced".to_string(),
         },
         DaemonResponse::ConfigReloaded {
             success: true,

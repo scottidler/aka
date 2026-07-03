@@ -27,14 +27,41 @@ pub trait SocketConnector: Send + Sync {
     fn is_socket(&self, path: &Path) -> io::Result<bool>;
 }
 
+/// Hard cap on a single connect attempt. Unix sockets have no built-in connect
+/// timeout, so the bounded loop below retries transient `WouldBlock` up to this
+/// cap before surfacing a `TimedOut` error.
+const CONNECT_TIMEOUT_MS: u64 = 100;
+/// Sleep between transient `WouldBlock` connect retries inside the cap.
+const CONNECT_RETRY_SLEEP_MS: u64 = 10;
+
 /// Real Unix socket implementation
 #[derive(Default)]
 pub struct RealSocketConnector;
 
 impl SocketConnector for RealSocketConnector {
     fn connect(&self, path: &Path) -> io::Result<Box<dyn SocketStream>> {
-        let stream = std::os::unix::net::UnixStream::connect(path)?;
-        Ok(Box::new(RealSocketStream(stream)))
+        // Canonical bounded connect loop (ported from the ad-hoc client): retry
+        // only transient `WouldBlock` up to CONNECT_TIMEOUT_MS. `ConnectionRefused`
+        // and every other hard error (including a socket that vanished mid-race,
+        // surfacing as `NotFound`) fail immediately so `categorize_io_error` maps
+        // them to the correct retry/no-retry taxonomy; exceeding the cap yields
+        // `TimedOut` -> `ConnectionTimeout`.
+        let start = std::time::Instant::now();
+        let timeout = Duration::from_millis(CONNECT_TIMEOUT_MS);
+        loop {
+            match std::os::unix::net::UnixStream::connect(path) {
+                Ok(stream) => return Ok(Box::new(RealSocketStream(stream))),
+                Err(e) => {
+                    if start.elapsed() >= timeout {
+                        return Err(io::Error::new(io::ErrorKind::TimedOut, "connect timed out"));
+                    }
+                    if e.kind() != io::ErrorKind::WouldBlock {
+                        return Err(e);
+                    }
+                    std::thread::sleep(Duration::from_millis(CONNECT_RETRY_SLEEP_MS));
+                }
+            }
+        }
     }
 
     fn path_exists(&self, path: &Path) -> bool {

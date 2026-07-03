@@ -886,7 +886,7 @@ mod tests {
         assert!(serialized.is_ok());
 
         let health_response = Response::Health {
-            status: "healthy:5:aliases".to_string(),
+            status: "healthy:5:synced".to_string(),
         };
         let serialized = serde_json::to_string(&health_response);
         assert!(serialized.is_ok());

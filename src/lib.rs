@@ -5,7 +5,7 @@ use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs::OpenOptions;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use xxhash_rust::xxh3::xxh3_64;
 
 pub mod cfg;
@@ -190,82 +190,76 @@ pub fn store_hash(hash: &str, _home_dir: &std::path::Path) -> Result<()> {
     Ok(())
 }
 
-fn check_daemon_health(socket_path: &PathBuf) -> Result<bool> {
-    debug!("✅ Daemon socket exists, testing health");
+/// Result of probing the daemon's Health endpoint. `Synced`/`Stale` mean the
+/// daemon answered with a well-formed `healthy:<count>:synced|stale` status;
+/// `Unhealthy` means it answered but the payload was malformed or unexpected;
+/// `Unreachable` means we never got a valid answer (no socket, refused, timed
+/// out, or the connection broke).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DaemonHealth {
+    Synced { aliases: u32 },
+    Stale { aliases: u32 },
+    Unhealthy,
+    Unreachable,
+}
 
-    // Try to connect with timeout
-    let stream = match std::os::unix::net::UnixStream::connect(socket_path) {
-        Ok(stream) => {
-            // Set a short timeout for the connection
-            if let Err(e) = stream.set_read_timeout(Some(std::time::Duration::from_millis(500))) {
-                debug!("⚠️ Failed to set read timeout: {e}");
-                return Ok(false);
+/// Strict parse of the daemon Health status line. Accepts exactly
+/// `healthy:<u32>:synced` or `healthy:<u32>:stale`; anything else (extra parts,
+/// non-numeric count, the legacy `:aliases` shape) is `Unhealthy`.
+fn parse_health_status(status: &str) -> DaemonHealth {
+    let parts: Vec<&str> = status.split(':').collect();
+    if parts.len() == 3 && parts[0] == "healthy" {
+        if let Ok(aliases) = parts[1].parse::<u32>() {
+            match parts[2] {
+                "synced" => return DaemonHealth::Synced { aliases },
+                "stale" => return DaemonHealth::Stale { aliases },
+                _ => {}
             }
-            if let Err(e) = stream.set_write_timeout(Some(std::time::Duration::from_millis(500))) {
-                debug!("⚠️ Failed to set write timeout: {e}");
-                return Ok(false);
-            }
-            stream
-        }
-        Err(e) => {
-            debug!("⚠️ Failed to connect to daemon socket: {e}");
-            return Ok(false);
-        }
-    };
-
-    // Try to send health request
-    {
-        let mut stream = stream;
-        use std::io::{BufRead, BufReader, Write};
-
-        let health_request = serde_json::json!({
-            "type": "Health"
-        });
-
-        debug!("📤 Sending health request to daemon");
-        if writeln!(stream, "{health_request}").is_ok() {
-            let mut reader = BufReader::new(&stream);
-            let mut response_line = String::new();
-
-            match reader.read_line(&mut response_line) {
-                Ok(_) => {
-                    debug!("📥 Received daemon response: {}", response_line.trim());
-
-                    if let Ok(response) = serde_json::from_str::<serde_json::Value>(response_line.trim()) {
-                        if let Some(status) = response.get("status").and_then(|s| s.as_str()) {
-                            debug!("🔍 Daemon status parsed: {status}");
-                            // Parse format: "healthy:COUNT:synced" or "healthy:COUNT:stale"
-                            // Must be exactly 3 parts separated by colons
-                            let parts: Vec<&str> = status.split(':').collect();
-                            if parts.len() == 3
-                                && parts[0] == "healthy"
-                                && parts[1].parse::<u32>().is_ok()
-                                && (parts[2] == "synced" || parts[2] == "stale")
-                            {
-                                debug!("✅ Daemon is healthy and has config loaded: {status}");
-                                return Ok(true); // Daemon healthy
-                            } else {
-                                debug!("⚠️ Daemon status indicates unhealthy: {status}");
-                                return Ok(false); // Daemon unhealthy
-                            }
-                        } else {
-                            debug!("⚠️ Daemon response missing status field");
-                        }
-                    } else {
-                        debug!("⚠️ Failed to parse daemon response as JSON");
-                    }
-                }
-                Err(e) => {
-                    debug!("⚠️ Failed to read daemon response: {e}");
-                }
-            }
-        } else {
-            debug!("⚠️ Failed to send health request to daemon");
         }
     }
+    DaemonHealth::Unhealthy
+}
 
-    debug!("❌ Daemon socket exists but health check failed - daemon is dead");
-    Ok(false) // Daemon is dead
+/// Single, bounded daemon health probe. Routes through the canonical
+/// `daemon_client::DaemonClient` (so every connect/read/write timeout and the
+/// retry policy apply) and strictly parses the Health payload. This is the one
+/// health-probe implementation; `check_daemon_health` and the CLI status emoji
+/// are thin callers.
+pub fn probe_daemon_health(socket_path: &Path) -> DaemonHealth {
+    debug!("probe_daemon_health: socket_path={socket_path:?}");
+    let client = daemon_client::DaemonClient::new();
+    let health = match client.send_request(DaemonRequest::Health, socket_path) {
+        Ok(DaemonResponse::Health { status }) => {
+            debug!("probe_daemon_health: raw status={status}");
+            parse_health_status(&status)
+        }
+        Ok(other) => {
+            warn!("probe_daemon_health: unexpected response: {other:?}");
+            DaemonHealth::Unhealthy
+        }
+        // Got bytes back but they were not a valid frame -> reachable but broken.
+        Err(daemon_client::DaemonError::ProtocolError(msg)) => {
+            warn!("probe_daemon_health: protocol error: {msg}");
+            DaemonHealth::Unhealthy
+        }
+        // Transport-level failure (no socket, refused, timed out, shutting down).
+        Err(e) => {
+            debug!("probe_daemon_health: unreachable: {e}");
+            DaemonHealth::Unreachable
+        }
+    };
+    debug!("probe_daemon_health: result={health:?}");
+    health
+}
+
+/// Thin caller over `probe_daemon_health`: the daemon is "healthy" for routing
+/// purposes if it answered with either a synced or a stale config.
+fn check_daemon_health(socket_path: &Path) -> bool {
+    debug!("check_daemon_health: socket_path={socket_path:?}");
+    matches!(
+        probe_daemon_health(socket_path),
+        DaemonHealth::Synced { .. } | DaemonHealth::Stale { .. }
+    )
 }
 
 fn validate_fresh_config_and_store_hash(
@@ -325,7 +319,7 @@ pub fn execute_health_check(home_dir: &std::path::Path, config_override: &Option
     if let Ok(socket_path) = determine_socket_path(home_dir) {
         debug!("🔌 Daemon socket path: {socket_path:?}");
         if socket_path.exists() {
-            match check_daemon_health(&socket_path)? {
+            match check_daemon_health(&socket_path) {
                 true => {
                     debug!("✅ Daemon is healthy and running");
                     debug!("🎯 Health check result: DAEMON_HEALTHY (returning 0)");
