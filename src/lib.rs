@@ -212,11 +212,25 @@ pub enum DaemonHealth {
     Unreachable,
 }
 
+/// Optional trailing marker the daemon appends to its Health status after
+/// repeated cache-flush failures (Phase 5). It signals degraded persistence,
+/// NOT degraded routing: the daemon still expands aliases correctly, so it is
+/// reported as Synced/Stale for routing purposes and the marker is surfaced
+/// separately via [`DaemonHealthReport`] / `aka daemon --status`.
+const DEGRADED_PERSISTENCE_MARKER: &str = "degraded-persistence";
+
 /// Strict parse of the daemon Health status line. Accepts exactly
-/// `healthy:<u32>:synced` or `healthy:<u32>:stale`; anything else (extra parts,
-/// non-numeric count, the legacy `:aliases` shape) is `Unhealthy`.
+/// `healthy:<u32>:synced` or `healthy:<u32>:stale`, optionally followed by the
+/// `:degraded-persistence` marker; anything else (extra parts, non-numeric
+/// count, the legacy `:aliases` shape) is `Unhealthy`.
 fn parse_health_status(status: &str) -> DaemonHealth {
-    let parts: Vec<&str> = status.split(':').collect();
+    let mut parts: Vec<&str> = status.split(':').collect();
+    // Tolerate the optional trailing degraded-persistence marker: a daemon whose
+    // count-flush is failing still serves expansions, so drop the marker and
+    // parse the base form.
+    if parts.last() == Some(&DEGRADED_PERSISTENCE_MARKER) {
+        parts.pop();
+    }
     if parts.len() == 3 && parts[0] == "healthy" {
         if let Ok(aliases) = parts[1].parse::<u32>() {
             match parts[2] {
@@ -229,36 +243,70 @@ fn parse_health_status(status: &str) -> DaemonHealth {
     DaemonHealth::Unhealthy
 }
 
+/// True if the daemon's Health status carries the degraded-persistence marker.
+fn health_status_degraded(status: &str) -> bool {
+    status.split(':').any(|p| p == DEGRADED_PERSISTENCE_MARKER)
+}
+
+/// A daemon health probe result plus the degraded-persistence signal. The
+/// routing view (`health`) never becomes `Unhealthy` just because persistence
+/// is degraded; `degraded_persistence` carries that orthogonal fact for
+/// diagnostics (`aka daemon --status`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DaemonHealthReport {
+    pub health: DaemonHealth,
+    pub degraded_persistence: bool,
+}
+
 /// Single, bounded daemon health probe. Routes through the canonical
 /// `daemon_client::DaemonClient` (so every connect/read/write timeout and the
 /// retry policy apply) and strictly parses the Health payload. This is the one
 /// health-probe implementation; `check_daemon_health` and the CLI status emoji
 /// are thin callers.
 pub fn probe_daemon_health(socket_path: &Path) -> DaemonHealth {
-    debug!("probe_daemon_health: socket_path={socket_path:?}");
+    probe_daemon_health_report(socket_path).health
+}
+
+/// Like [`probe_daemon_health`] but also reports whether the daemon flagged its
+/// persistence as degraded. Single transport (the canonical `DaemonClient`); the
+/// degraded bit is parsed from the same Health frame, so callers pay one probe.
+pub fn probe_daemon_health_report(socket_path: &Path) -> DaemonHealthReport {
+    debug!("probe_daemon_health_report: socket_path={socket_path:?}");
     let client = daemon_client::DaemonClient::new();
-    let health = match client.send_request(DaemonRequest::Health, socket_path) {
+    let report = match client.send_request(DaemonRequest::Health, socket_path) {
         Ok(DaemonResponse::Health { status }) => {
-            debug!("probe_daemon_health: raw status={status}");
-            parse_health_status(&status)
+            debug!("probe_daemon_health_report: raw status={status}");
+            DaemonHealthReport {
+                health: parse_health_status(&status),
+                degraded_persistence: health_status_degraded(&status),
+            }
         }
         Ok(other) => {
-            warn!("probe_daemon_health: unexpected response: {other:?}");
-            DaemonHealth::Unhealthy
+            warn!("probe_daemon_health_report: unexpected response: {other:?}");
+            DaemonHealthReport {
+                health: DaemonHealth::Unhealthy,
+                degraded_persistence: false,
+            }
         }
         // Got bytes back but they were not a valid frame -> reachable but broken.
         Err(daemon_client::DaemonError::ProtocolError(msg)) => {
-            warn!("probe_daemon_health: protocol error: {msg}");
-            DaemonHealth::Unhealthy
+            warn!("probe_daemon_health_report: protocol error: {msg}");
+            DaemonHealthReport {
+                health: DaemonHealth::Unhealthy,
+                degraded_persistence: false,
+            }
         }
         // Transport-level failure (no socket, refused, timed out, shutting down).
         Err(e) => {
-            debug!("probe_daemon_health: unreachable: {e}");
-            DaemonHealth::Unreachable
+            debug!("probe_daemon_health_report: unreachable: {e}");
+            DaemonHealthReport {
+                health: DaemonHealth::Unreachable,
+                degraded_persistence: false,
+            }
         }
     };
-    debug!("probe_daemon_health: result={health:?}");
-    health
+    debug!("probe_daemon_health_report: result={report:?}");
+    report
 }
 
 /// Thin caller over `probe_daemon_health`: the daemon is "healthy" for routing
@@ -864,15 +912,27 @@ impl AKA {
             };
             info!("{} Command line transformed: {} -> {}", emoji, cmdline, result.trim());
 
-            // Save updated usage counts to cache if any aliases were used
+            // Persist updated usage counts to cache if any aliases were used.
+            // Direct mode is short-lived (one process per command), so the
+            // write-on-use here IS the per-command persistence. Daemon mode is
+            // long-lived and would otherwise rewrite the whole cache on every
+            // query; instead it buffers counts in memory and the daemon flushes
+            // them on a debounce timer / shutdown / pre-Freq (see aka-daemon.rs).
             if replaced {
-                debug!("🔍 SAVING CACHE: Aliases were used, saving cache");
-                let cache = AliasCache {
-                    hash: self.config_hash.clone(),
-                    aliases: self.spec.aliases.clone(),
-                };
-                if let Err(e) = save_alias_cache(&cache, &self.home_dir) {
-                    warn!("⚠️ Failed to save alias cache: {e}");
+                match mode {
+                    ProcessingMode::Daemon => {
+                        debug!("🔍 DAEMON MODE: buffering usage counts in memory (daemon debounces the flush)");
+                    }
+                    ProcessingMode::Direct => {
+                        debug!("🔍 SAVING CACHE: Aliases were used, saving cache");
+                        let cache = AliasCache {
+                            hash: self.config_hash.clone(),
+                            aliases: self.spec.aliases.clone(),
+                        };
+                        if let Err(e) = save_alias_cache(&cache, &self.home_dir) {
+                            warn!("⚠️ Failed to save alias cache: {e}");
+                        }
+                    }
                 }
             }
         } else {
@@ -3347,6 +3407,49 @@ mod tests {
 
         let result = aka.replace_with_mode("ls", ProcessingMode::Daemon).unwrap();
         assert_eq!(result, "eza ");
+    }
+
+    #[test]
+    fn test_parse_health_status_base_forms() {
+        assert_eq!(
+            parse_health_status("healthy:5:synced"),
+            DaemonHealth::Synced { aliases: 5 }
+        );
+        assert_eq!(
+            parse_health_status("healthy:0:stale"),
+            DaemonHealth::Stale { aliases: 0 }
+        );
+    }
+
+    #[test]
+    fn test_parse_health_status_tolerates_degraded_persistence_suffix() {
+        // Phase 5: a daemon whose count-flush is failing still serves expansions,
+        // so the suffixed form must parse to Synced/Stale, not Unhealthy.
+        assert_eq!(
+            parse_health_status("healthy:5:synced:degraded-persistence"),
+            DaemonHealth::Synced { aliases: 5 }
+        );
+        assert_eq!(
+            parse_health_status("healthy:12:stale:degraded-persistence"),
+            DaemonHealth::Stale { aliases: 12 }
+        );
+    }
+
+    #[test]
+    fn test_parse_health_status_rejects_legacy_and_garbage() {
+        // The legacy `:aliases` shape and other malformed frames stay Unhealthy.
+        assert_eq!(parse_health_status("healthy:5:aliases"), DaemonHealth::Unhealthy);
+        assert_eq!(parse_health_status("healthy:abc:synced"), DaemonHealth::Unhealthy);
+        assert_eq!(parse_health_status("garbage"), DaemonHealth::Unhealthy);
+        // A bare degraded marker with no valid base form is still Unhealthy.
+        assert_eq!(parse_health_status("degraded-persistence"), DaemonHealth::Unhealthy);
+    }
+
+    #[test]
+    fn test_health_status_degraded_detection() {
+        assert!(health_status_degraded("healthy:5:synced:degraded-persistence"));
+        assert!(!health_status_degraded("healthy:5:synced"));
+        assert!(!health_status_degraded("healthy:5:stale"));
     }
 
     #[test]

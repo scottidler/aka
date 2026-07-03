@@ -237,3 +237,190 @@ aliases:
     );
     assert!(stdout.contains("echo \"test\""), "Should show the alias value");
 }
+
+// ---------------------------------------------------------------------------
+// Phase 5: daemon-side debounced cache flush end-to-end.
+//
+// These spin up a real `aka-daemon` against a temp HOME so the daemon's
+// default-config path (ProcessingMode::Daemon) is exercised: usage counts are
+// buffered in memory and only reach disk on a flush trigger. The client talks
+// to the daemon directly via aka_lib::daemon_client so it can control the
+// protocol version (needed for the version-mismatch shutdown flush) and issue
+// Freq without shelling back through the CLI.
+// ---------------------------------------------------------------------------
+
+use aka_lib::daemon_client::DaemonClient;
+use aka_lib::{DaemonRequest, DaemonResponse};
+use std::time::Duration;
+
+// Client-side protocol version; identical to what the daemon was built with,
+// since both come from the same crate build.
+const TEST_CLIENT_VERSION: &str = env!("GIT_DESCRIBE");
+
+/// Kills the spawned daemon when it goes out of scope so a failed assertion
+/// never leaks a background process.
+struct DaemonGuard(std::process::Child);
+impl Drop for DaemonGuard {
+    fn drop(&mut self) {
+        let _ = self.0.kill();
+        let _ = self.0.wait();
+    }
+}
+
+fn build_daemon_binary() {
+    let output = std::process::Command::new("cargo")
+        .args(["build", "--bin", "aka-daemon"])
+        .output()
+        .expect("Failed to build aka-daemon binary");
+    assert!(
+        output.status.success(),
+        "aka-daemon build failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+/// Write a config with one simple expanding alias under `home/.config/aka/`.
+fn write_daemon_test_config(home: &std::path::Path) {
+    let config_dir = home.join(".config").join("aka");
+    fs::create_dir_all(&config_dir).expect("Failed to create config dir");
+    let config_content = r#"
+lookups: {}
+
+aliases:
+  gs:
+    value: git status
+    global: false
+"#;
+    fs::write(config_dir.join("aka.yml"), config_content).expect("Failed to write config");
+}
+
+/// Spawn the daemon against `home` with isolated runtime/cache/log dirs and no
+/// `--config` (so it resolves the default HOME config -> Daemon mode). Returns
+/// the guard plus the resolved socket and cache-base paths.
+fn spawn_daemon(home: &std::path::Path) -> (DaemonGuard, PathBuf, PathBuf) {
+    build_daemon_binary();
+
+    let runtime_dir = home.join("run");
+    let cache_dir = home.join("cache");
+    fs::create_dir_all(&runtime_dir).expect("Failed to create runtime dir");
+    fs::create_dir_all(&cache_dir).expect("Failed to create cache dir");
+
+    let child = std::process::Command::new("target/debug/aka-daemon")
+        .arg("--foreground")
+        .env("HOME", home)
+        .env("XDG_RUNTIME_DIR", &runtime_dir)
+        .env("AKA_CACHE_DIR", &cache_dir)
+        .env("AKA_LOG_FILE", home.join("aka.log"))
+        // Ensure ambient XDG_* from CI does not redirect config resolution away
+        // from the temp HOME.
+        .env_remove("XDG_CONFIG_HOME")
+        .env_remove("XDG_DATA_HOME")
+        .spawn()
+        .expect("Failed to spawn aka-daemon");
+
+    let socket_path = runtime_dir.join("aka").join("daemon.sock");
+
+    // Wait for the daemon to bind its socket.
+    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    while !socket_path.exists() {
+        if std::time::Instant::now() > deadline {
+            panic!("daemon socket never appeared at {socket_path:?}");
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+
+    (DaemonGuard(child), socket_path, cache_dir)
+}
+
+fn query(socket: &std::path::Path, version: &str, cmdline: &str) -> Result<DaemonResponse, String> {
+    DaemonClient::new()
+        .send_request(
+            DaemonRequest::Query {
+                version: version.to_string(),
+                cmdline: cmdline.to_string(),
+                eol: true,
+                config: None,
+            },
+            socket,
+        )
+        .map_err(|e| e.to_string())
+}
+
+/// Poll the cache file for `gs` reaching `expected` count, up to a deadline.
+fn wait_for_count(cache_dir: &PathBuf, alias: &str, expected: u64) -> u64 {
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    loop {
+        let count = aka_lib::load_alias_cache_with_base(Some(cache_dir))
+            .ok()
+            .and_then(|c| c.aliases.get(alias).map(|a| a.count))
+            .unwrap_or(0);
+        if count >= expected || std::time::Instant::now() > deadline {
+            return count;
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+}
+
+#[test]
+fn test_daemon_persists_counts_on_freq() {
+    let temp_dir = TempDir::new().expect("Failed to create temp dir");
+    let home = temp_dir.path();
+    write_daemon_test_config(home);
+
+    let (_guard, socket, cache_dir) = spawn_daemon(home);
+
+    // A daemon-mode query bumps the in-memory count but debounces the disk write.
+    let resp = query(&socket, TEST_CLIENT_VERSION, "gs").expect("query failed");
+    match resp {
+        DaemonResponse::Success { data } => assert_eq!(data.trim(), "git status"),
+        other => panic!("unexpected query response: {other:?}"),
+    }
+
+    // The pre-Freq flush must persist the buffered count to the cache file.
+    let freq = DaemonClient::new()
+        .send_request(
+            DaemonRequest::Freq {
+                version: TEST_CLIENT_VERSION.to_string(),
+                all: true,
+                config: None,
+            },
+            &socket,
+        )
+        .expect("freq request failed");
+    assert!(matches!(freq, DaemonResponse::Success { .. }), "freq should succeed");
+
+    let count = wait_for_count(&cache_dir, "gs", 1);
+    assert_eq!(count, 1, "pre-Freq flush should persist gs count to the cache file");
+}
+
+#[test]
+fn test_daemon_flushes_counts_on_version_mismatch_shutdown() {
+    let temp_dir = TempDir::new().expect("Failed to create temp dir");
+    let home = temp_dir.path();
+    write_daemon_test_config(home);
+
+    let (_guard, socket, cache_dir) = spawn_daemon(home);
+
+    // Buffer a count with a correctly-versioned query.
+    let resp = query(&socket, TEST_CLIENT_VERSION, "gs").expect("query failed");
+    assert!(matches!(resp, DaemonResponse::Success { .. }), "query should succeed");
+
+    // A wrong-version query triggers the graceful shutdown path, which flushes
+    // buffered counts before signalling shutdown (flush-before-reconstruction:
+    // the restarted daemon would otherwise reload a cache missing this count).
+    let mismatch = query(&socket, "v0.0.0-wrong-version", "gs");
+    // Response is VersionMismatch (or a transport error as the daemon tears down);
+    // either way the flush already ran synchronously inside the handler.
+    if let Ok(resp) = mismatch {
+        assert!(
+            matches!(resp, DaemonResponse::VersionMismatch { .. }),
+            "expected VersionMismatch, got {resp:?}"
+        );
+    }
+
+    let count = wait_for_count(&cache_dir, "gs", 1);
+    assert_eq!(
+        count, 1,
+        "version-mismatch shutdown should flush the buffered gs count to disk"
+    );
+}

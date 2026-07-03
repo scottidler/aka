@@ -178,6 +178,43 @@ fn test_usage_count_with_daemon_mode() {
 }
 
 #[test]
+fn test_daemon_mode_does_not_write_cache() {
+    // Phase 5: daemon-mode replacement buffers counts in memory and leaves the
+    // per-query disk write to the daemon's debounce flush. So an in-process
+    // daemon-mode replace must bump the in-memory count but NOT touch the file.
+    let (_config_temp_dir, _config_file, cache_temp_dir) = setup_test_environment("daemon_no_write");
+    let cache_path = cache_temp_dir.path().to_path_buf();
+
+    let mut aka = AKA::new(
+        false,
+        cache_path.to_path_buf(),
+        get_config_path(&cache_path.to_path_buf()).expect("Failed to get config path"),
+    )
+    .expect("Failed to create AKA instance");
+
+    let result = aka
+        .replace_with_mode("test-alias", ProcessingMode::Daemon)
+        .expect("Failed to replace");
+    assert_eq!(result.trim(), "echo \"test command\"");
+
+    // In-memory count reflects the use.
+    let in_memory = aka.spec.aliases.get("test-alias").expect("test-alias should exist");
+    assert_eq!(in_memory.count, 1, "in-memory count should be 1 after daemon use");
+
+    // On-disk cache was written by AKA::new at count 0 and must NOT have been
+    // rewritten by the daemon-mode replacement.
+    let loaded_cache = load_alias_cache(&cache_path).expect("Failed to load cache");
+    let on_disk = loaded_cache
+        .aliases
+        .get("test-alias")
+        .expect("test-alias should exist in cache");
+    assert_eq!(
+        on_disk.count, 0,
+        "daemon-mode replace must not persist counts to disk (debounced by daemon)"
+    );
+}
+
+#[test]
 fn test_cache_loading_directly() {
     let (_config_temp_dir, _config_file, cache_temp_dir) = setup_test_environment("cache_loading");
     let cache_path = cache_temp_dir.path().to_path_buf();

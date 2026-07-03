@@ -3,19 +3,20 @@ use std::fs;
 use std::io::{BufRead, BufReader, Write};
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
+use std::time::{Duration, Instant};
 
 use eyre::{eyre, Result};
 use log::{debug, error, info, warn};
 use notify::{Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
-use std::sync::mpsc::{channel, Receiver};
+use std::sync::mpsc::{channel, Receiver, RecvTimeoutError};
 use std::thread;
 
 // Import from the shared library
 use aka_lib::{
-    determine_socket_path, get_config_path_with_override, hash_config_file, setup_logging, DaemonRequest,
-    DaemonResponse, ProcessingMode, AKA,
+    determine_socket_path, get_config_path_with_override, hash_config_file, save_alias_cache, setup_logging,
+    AliasCache, DaemonRequest, DaemonResponse, ProcessingMode, AKA,
 };
 
 // Version constant for compatibility checking
@@ -25,6 +26,17 @@ const DAEMON_VERSION: &str = env!("GIT_DESCRIBE");
 // so a client that connects and never sends a newline must not stall the whole
 // daemon on an unbounded `read_line`. Same 500ms class as the client probes.
 const CLIENT_IO_TIMEOUT_MS: u64 = 500;
+
+// Minimum interval between debounced cache flushes. On every daemon-mode query
+// the daemon buffers usage counts in memory and marks the cache dirty; the
+// file-watcher loop's 100ms tick flushes at most once per this window instead
+// of rewriting the whole cache on every query.
+const CACHE_FLUSH_INTERVAL_SECS: u64 = 5;
+
+// After this many consecutive flush failures the daemon appends
+// `:degraded-persistence` to its Health status so `aka daemon --status` can
+// surface that usage counts are not being persisted (counts stay advisory).
+const FLUSH_DEGRADED_THRESHOLD: u32 = 5;
 
 #[derive(Parser)]
 #[command(name = "aka-daemon", about = "AKA Alias Daemon")]
@@ -40,6 +52,38 @@ struct DaemonOpts {
 type Request = DaemonRequest;
 type Response = DaemonResponse;
 
+// Timing state for the debounced cache flush. `last_flush` gates the 5s cadence;
+// `last_successful_flush` is log-visible observability only.
+struct FlushTiming {
+    last_flush: Instant,
+    last_successful_flush: Option<Instant>,
+}
+
+// Shared debounced-flush state. Bundled so the watcher thread and the server's
+// own paths pass one clonable handle (the Arcs are shared, not duplicated).
+#[derive(Clone)]
+struct FlushHandle {
+    // Set true after any daemon-mode query that transforms the command line
+    // (its usage counts changed); cleared by a successful flush.
+    cache_dirty: Arc<AtomicBool>,
+    // Consecutive flush failures; drives the Health `:degraded-persistence` suffix.
+    failures: Arc<AtomicU32>,
+    timing: Arc<Mutex<FlushTiming>>,
+}
+
+impl FlushHandle {
+    fn new() -> Self {
+        FlushHandle {
+            cache_dirty: Arc::new(AtomicBool::new(false)),
+            failures: Arc::new(AtomicU32::new(0)),
+            timing: Arc::new(Mutex::new(FlushTiming {
+                last_flush: Instant::now(),
+                last_successful_flush: None,
+            })),
+        }
+    }
+}
+
 struct DaemonServer {
     aka: Arc<RwLock<AKA>>,
     config_path: PathBuf,
@@ -47,6 +91,7 @@ struct DaemonServer {
     shutdown: Arc<AtomicBool>,
     _watcher: Option<RecommendedWatcher>,
     reload_receiver: Arc<Mutex<Receiver<()>>>,
+    flush: FlushHandle,
 }
 
 impl DaemonServer {
@@ -123,7 +168,92 @@ impl DaemonServer {
             shutdown,
             _watcher: Some(watcher),
             reload_receiver,
+            flush: FlushHandle::new(),
         })
+    }
+
+    /// Flush buffered usage counts to the cache file if the daemon has recorded
+    /// any since the last successful flush. This is the ONLY place daemon code
+    /// writes the cache (ownership invariant).
+    ///
+    /// Advisory (Data Model): a failed flush warns, keeps the dirty flag set,
+    /// and is retried later; it never propagates and never stops the daemon.
+    ///
+    /// Lock order: take the AKA read lock, snapshot, DROP the lock, then write
+    /// (atomic tmp+rename inside `save_alias_cache`). The dirty flag is claimed
+    /// with an atomic read-and-clear up front, so a query that fires mid-flush
+    /// re-sets it (worst case: one redundant flush next tick, never a lost
+    /// count); on write failure the flag is re-armed.
+    fn flush_counts(aka: &Arc<RwLock<AKA>>, flush: &FlushHandle) {
+        if !flush.cache_dirty.swap(false, Ordering::AcqRel) {
+            return;
+        }
+        debug!("flush_counts: cache dirty, flushing usage counts");
+        let start = Instant::now();
+
+        // Reset the cadence timer on every attempt (success or failure) so a
+        // persistently failing disk retries at the flush interval, not every tick.
+        if let Ok(mut timing) = flush.timing.lock() {
+            timing.last_flush = Instant::now();
+        }
+
+        // Snapshot under the read lock, then release before touching the disk.
+        let snapshot = match aka.read() {
+            Ok(guard) => Some((
+                AliasCache {
+                    hash: guard.config_hash.clone(),
+                    aliases: guard.spec.aliases.clone(),
+                },
+                guard.home_dir.clone(),
+                guard.spec.aliases.len(),
+            )),
+            Err(e) => {
+                warn!("flush_counts: failed to acquire read lock on AKA: {e}");
+                None
+            }
+        };
+
+        let Some((cache, home_dir, alias_count)) = snapshot else {
+            // Couldn't snapshot; re-arm so the next tick retries.
+            flush.cache_dirty.store(true, Ordering::Release);
+            return;
+        };
+
+        match save_alias_cache(&cache, &home_dir) {
+            Ok(()) => {
+                let elapsed_ms = start.elapsed().as_secs_f64() * 1000.0;
+                flush.failures.store(0, Ordering::Relaxed);
+                if let Ok(mut timing) = flush.timing.lock() {
+                    timing.last_successful_flush = Some(Instant::now());
+                }
+                debug!("flush_counts: flushed {alias_count} aliases in {elapsed_ms:.3}ms");
+            }
+            Err(e) => {
+                // Advisory: keep the dirty flag set and retry on the next window.
+                flush.cache_dirty.store(true, Ordering::Release);
+                let failures = flush.failures.fetch_add(1, Ordering::Relaxed) + 1;
+                warn!("flush_counts: failed to persist usage counts (consecutive failures: {failures}): {e}");
+            }
+        }
+    }
+
+    /// `&self` convenience over [`Self::flush_counts`] for the paths that own the
+    /// server: pre-Freq, manual reload, version-mismatch shutdown, and run()
+    /// cleanup. Unconditional (ignores the cadence timer): flushes if dirty.
+    fn flush_counts_if_dirty(&self) {
+        Self::flush_counts(&self.aka, &self.flush);
+    }
+
+    /// True if at least `CACHE_FLUSH_INTERVAL_SECS` have elapsed since the last
+    /// flush attempt. A poisoned timing lock errs toward flushing.
+    fn flush_due(flush: &FlushHandle) -> bool {
+        match flush.timing.lock() {
+            Ok(timing) => timing.last_flush.elapsed() >= Duration::from_secs(CACHE_FLUSH_INTERVAL_SECS),
+            Err(e) => {
+                warn!("flush_due: timing lock poisoned, flushing defensively: {e}");
+                true
+            }
+        }
     }
 
     fn reload_config(&self) -> Result<String> {
@@ -148,6 +278,11 @@ impl DaemonServer {
         }
 
         debug!("🔄 Config hash changed: {current_hash} -> {new_hash}");
+
+        // Flush buffered counts before reconstruction: AKA::new re-reads the
+        // cache from disk, so any in-memory counts must hit the file first or
+        // they are lost by the reload.
+        self.flush_counts_if_dirty();
 
         // Load new config using sync function
         let home_dir = dirs::home_dir().ok_or_else(|| eyre!("Unable to determine home directory"))?;
@@ -215,6 +350,11 @@ impl DaemonServer {
             warn!("   Client version: {client_version}");
             warn!("   Initiating graceful shutdown for auto-restart");
 
+            // Flush buffered counts before the restart: the replacement daemon
+            // process reconstructs AKA from the cache file on startup, so any
+            // in-memory counts must be persisted first.
+            self.flush_counts_if_dirty();
+
             // Trigger shutdown
             self.shutdown.store(true, Ordering::Relaxed);
 
@@ -251,11 +391,20 @@ impl DaemonServer {
             }
         };
 
-        let status = if current_hash == *hash_guard {
+        let mut status = if current_hash == *hash_guard {
             format!("healthy:{}:synced", aka_guard.spec.aliases.len())
         } else {
             format!("healthy:{}:stale", aka_guard.spec.aliases.len())
         };
+
+        // Surface degraded persistence (advisory counts not reaching disk) so
+        // `aka daemon --status` can report it. Routing is unaffected: the client
+        // parser tolerates this suffix and still treats the daemon as reachable.
+        let failures = self.flush.failures.load(Ordering::Relaxed);
+        if failures >= FLUSH_DEGRADED_THRESHOLD {
+            warn!("⚠️ Persistence degraded: {failures} consecutive cache-flush failures");
+            status.push_str(":degraded-persistence");
+        }
 
         debug!("✅ Health check complete: {status}");
         Ok(Response::Health { status })
@@ -366,6 +515,14 @@ impl DaemonServer {
                         match aka_guard.replace_with_mode(&cmdline, ProcessingMode::Daemon) {
                             Ok(result) => {
                                 debug!("✅ Query processed successfully");
+                                // A non-empty result means the command line was
+                                // transformed, so usage counts changed in memory.
+                                // Mark the cache dirty; the debounce timer flushes
+                                // it. (A sudo-only transform with no alias bump is a
+                                // harmless redundant flush at worst.)
+                                if !result.is_empty() {
+                                    self.flush.cache_dirty.store(true, Ordering::Relaxed);
+                                }
                                 Response::Success { data: result }
                             }
                             Err(e) => {
@@ -435,6 +592,11 @@ impl DaemonServer {
                 config,
             } => {
                 debug!("📤 Processing frequency request (all: {all}, config: {config:?})");
+
+                // Daemon-served freq reads counts from memory (always fresh), but
+                // flush first so the cache FILE is current for any later
+                // direct-mode fallback that reads it.
+                self.flush_counts_if_dirty();
 
                 match &config {
                     Some(custom_config_path) => {
@@ -596,43 +758,61 @@ impl DaemonServer {
         config_path_for_watcher: PathBuf,
         aka_for_watcher: Arc<RwLock<AKA>>,
         config_hash_for_watcher: Arc<RwLock<String>>,
+        flush: FlushHandle,
     ) -> Result<()> {
         while !shutdown_for_watcher.load(Ordering::Relaxed) {
-            if let Ok(()) = receiver.recv_timeout(std::time::Duration::from_millis(100)) {
-                debug!("📁 File change detected, reloading config automatically");
+            match receiver.recv_timeout(Duration::from_millis(100)) {
+                Ok(()) => {
+                    debug!("📁 File change detected, reloading config automatically");
 
-                // Calculate new hash
-                match hash_config_file(&config_path_for_watcher) {
-                    Ok(new_hash) => {
-                        let current_hash = {
-                            match config_hash_for_watcher.read() {
-                                Ok(guard) => guard.clone(),
-                                Err(e) => {
-                                    error!("Failed to acquire read lock on config hash: {e}");
-                                    continue;
+                    // Flush buffered counts before reconstruction: the reload
+                    // rebuilds AKA from the cache file, so counts must land first.
+                    Self::flush_counts(&aka_for_watcher, &flush);
+
+                    // Calculate new hash
+                    match hash_config_file(&config_path_for_watcher) {
+                        Ok(new_hash) => {
+                            let current_hash = {
+                                match config_hash_for_watcher.read() {
+                                    Ok(guard) => guard.clone(),
+                                    Err(e) => {
+                                        error!("Failed to acquire read lock on config hash: {e}");
+                                        continue;
+                                    }
                                 }
-                            }
-                        };
+                            };
 
-                        if new_hash != current_hash {
-                            let home_dir = dirs::home_dir().unwrap_or_else(|| std::path::PathBuf::from("/tmp"));
-                            if let Err(e) = Self::handle_config_file_change(
-                                new_hash,
-                                current_hash,
-                                &aka_for_watcher,
-                                &config_hash_for_watcher,
-                                home_dir,
-                                config_path_for_watcher.clone(),
-                            ) {
-                                error!("Failed to handle config file change: {e}");
+                            if new_hash != current_hash {
+                                let home_dir = dirs::home_dir().unwrap_or_else(|| std::path::PathBuf::from("/tmp"));
+                                if let Err(e) = Self::handle_config_file_change(
+                                    new_hash,
+                                    current_hash,
+                                    &aka_for_watcher,
+                                    &config_hash_for_watcher,
+                                    home_dir,
+                                    config_path_for_watcher.clone(),
+                                ) {
+                                    error!("Failed to handle config file change: {e}");
+                                }
+                            } else {
+                                debug!("⚡ Auto-reload: hash unchanged, skipping");
                             }
-                        } else {
-                            debug!("⚡ Auto-reload: hash unchanged, skipping");
+                        }
+                        Err(e) => {
+                            error!("Failed to calculate config hash for auto-reload: {e}");
                         }
                     }
-                    Err(e) => {
-                        error!("Failed to calculate config hash for auto-reload: {e}");
+                }
+                Err(RecvTimeoutError::Timeout) => {
+                    // Debounced flush: piggyback on the 100ms tick, but only
+                    // actually write once per CACHE_FLUSH_INTERVAL_SECS.
+                    if flush.cache_dirty.load(Ordering::Relaxed) && Self::flush_due(&flush) {
+                        Self::flush_counts(&aka_for_watcher, &flush);
                     }
+                }
+                Err(RecvTimeoutError::Disconnected) => {
+                    debug!("📁 Reload channel disconnected, stopping watcher loop");
+                    break;
                 }
             }
         }
@@ -683,6 +863,7 @@ impl DaemonServer {
         let config_path_for_watcher = self.config_path.clone();
         let config_hash_for_watcher = Arc::clone(&self.config_hash);
         let shutdown_for_watcher = Arc::clone(&self.shutdown);
+        let flush_for_watcher = self.flush.clone();
 
         thread::spawn(move || {
             let receiver = reload_receiver.lock().map_err(|e| {
@@ -696,6 +877,7 @@ impl DaemonServer {
                     config_path_for_watcher,
                     aka_for_watcher,
                     config_hash_for_watcher,
+                    flush_for_watcher,
                 ) {
                     error!("Failed to run file watcher loop: {e}");
                 }
@@ -703,6 +885,11 @@ impl DaemonServer {
         });
 
         let result = self.handle_incoming_connections(listener);
+
+        // Final flush on shutdown: the signal handler only sets the flag and
+        // removes the socket (it runs in a signal context), so persisting any
+        // buffered counts belongs here on the main thread after the accept loop.
+        self.flush_counts_if_dirty();
 
         // Clean up socket file on shutdown
         if socket_path.exists() {

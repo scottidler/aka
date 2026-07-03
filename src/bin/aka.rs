@@ -9,8 +9,8 @@ use aka_lib::daemon_client::{DaemonClient as LibDaemonClient, DaemonError};
 use aka_lib::{
     determine_socket_path, execute_health_check, export_timing_csv, get_alias_cache_path, get_config_path,
     get_config_path_with_override, get_last_valid_config_path, get_timing_summary, load_alias_cache, log_file_path,
-    log_timing, probe_daemon_health, setup_logging, xdg_config_dir, ConfigLoader, DaemonHealth, DaemonRequest,
-    DaemonResponse, ProcessingMode, TimingCollector, AKA,
+    log_timing, probe_daemon_health, probe_daemon_health_report, setup_logging, xdg_config_dir, ConfigLoader,
+    DaemonHealth, DaemonRequest, DaemonResponse, ProcessingMode, TimingCollector, AKA,
 };
 
 // Version constant for compatibility checking
@@ -606,6 +606,16 @@ WantedBy=default.target
             println!("⚙️  Daemon process: ✅ Running");
         } else {
             println!("⚙️  Daemon process: ❌ Not running");
+        }
+
+        // If the daemon is reachable, surface whether its usage-count persistence
+        // is degraded (repeated cache-flush failures). Counts are advisory, so
+        // this does not affect expansion, only `aka freq` freshness on disk.
+        if socket_exists && process_running {
+            let report = probe_daemon_health_report(&socket_path);
+            if report.degraded_persistence {
+                println!("🗄️  Persistence: ⚠️  Degraded (usage counts are not reaching disk; check daemon logs)");
+            }
         }
 
         // Check service manager status
