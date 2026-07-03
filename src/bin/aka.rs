@@ -7,10 +7,10 @@ use std::process::exit;
 // Import from the shared library
 use aka_lib::daemon_client::{DaemonClient as LibDaemonClient, DaemonError};
 use aka_lib::{
-    determine_socket_path, execute_health_check, export_timing_csv, get_config_path, get_config_path_with_override,
-    get_last_valid_config_path, get_timing_summary, load_alias_cache, log_file_path, log_timing, probe_daemon_health,
-    setup_logging, xdg_config_dir, ConfigLoader, DaemonHealth, DaemonRequest, DaemonResponse, ProcessingMode,
-    TimingCollector, AKA,
+    determine_socket_path, execute_health_check, export_timing_csv, get_alias_cache_path, get_config_path,
+    get_config_path_with_override, get_last_valid_config_path, get_timing_summary, load_alias_cache, log_file_path,
+    log_timing, probe_daemon_health, setup_logging, xdg_config_dir, ConfigLoader, DaemonHealth, DaemonRequest,
+    DaemonResponse, ProcessingMode, TimingCollector, AKA,
 };
 
 // Version constant for compatibility checking
@@ -58,6 +58,29 @@ fn get_after_help() -> &'static str {
         None => "~/.local/share/aka/logs/aka.log".to_string(),
     };
     Box::leak(format!("{AFTER_HELP_LOG_MARKER} {log_path}").into_boxed_str())
+}
+
+/// Build the `Environment=` lines to bake into the generated systemd unit.
+///
+/// `systemd --user` starts with a minimal environment and does NOT inherit
+/// `$XDG_CONFIG_HOME` / `$XDG_DATA_HOME` exported in the interactive shell. Left
+/// unset, the daemon would resolve cache/log paths from the default home layout
+/// while an interactive `aka` honored the shell's XDG overrides - the exact
+/// split-brain the XDG migration exists to cure. We snapshot only *absolute*
+/// values (the only shape the `xdg_*_dir` helpers honor). Returns lines that are
+/// each newline-terminated, or an empty string when neither var is set.
+fn xdg_environment_lines() -> String {
+    debug!("xdg_environment_lines: snapshotting XDG_CONFIG_HOME/XDG_DATA_HOME");
+    let mut lines = String::new();
+    for key in ["XDG_CONFIG_HOME", "XDG_DATA_HOME"] {
+        if let Ok(val) = std::env::var(key) {
+            if PathBuf::from(&val).is_absolute() {
+                lines.push_str(&format!("Environment={key}={val}\n"));
+            }
+        }
+    }
+    debug!("xdg_environment_lines: produced {} line(s)", lines.lines().count());
+    lines
 }
 
 fn get_daemon_status_emoji() -> &'static str {
@@ -290,6 +313,12 @@ impl ServiceManager {
         // Get aka-daemon binary path
         let daemon_path = self.get_daemon_binary_path()?;
 
+        // systemd --user does NOT inherit $XDG_CONFIG_HOME / $XDG_DATA_HOME exported
+        // in the interactive shell (e.g. .zshrc). Snapshot whatever is set now into
+        // Environment= lines so the daemon resolves cache/log paths identically to the
+        // CLI. Changing these env vars later requires `aka daemon --reinstall`.
+        let xdg_env_lines = xdg_environment_lines();
+
         // Create service file content
         let service_content = format!(
             r#"[Unit]
@@ -302,15 +331,15 @@ ExecStart={}
 Restart=always
 RestartSec=5
 Environment=PATH={}:/usr/local/bin:/usr/bin:/bin
-
-[Install]
+{}[Install]
 WantedBy=default.target
 "#,
             daemon_path.display(),
             dirs::home_dir()
                 .ok_or_else(|| eyre::eyre!("Could not determine home directory"))?
                 .join(".cargo/bin")
-                .display()
+                .display(),
+            xdg_env_lines,
         );
 
         // Write service file
@@ -557,6 +586,18 @@ WantedBy=default.target
             println!("🔌 Socket file: ✅ Found at {socket_path:?}");
         } else {
             println!("🔌 Socket file: ❌ Not found");
+        }
+
+        // Show the cache/log paths this CLI resolves to. The systemd-launched daemon
+        // uses the XDG env snapshotted into its unit at install time, so if these were
+        // changed since install they may differ - re-sync with `aka daemon --reinstall`.
+        match get_alias_cache_path(&home_dir) {
+            Ok(cache_path) => println!("🗃️  Cache file: {}", cache_path.display()),
+            Err(e) => println!("🗃️  Cache file: ⚠️  could not resolve ({e})"),
+        }
+        println!("📝 Log file: {}", log_file_path(&home_dir).display());
+        if std::env::var("XDG_CONFIG_HOME").is_ok() || std::env::var("XDG_DATA_HOME").is_ok() {
+            println!("   ⚠️  XDG_CONFIG_HOME/XDG_DATA_HOME is set; run `aka daemon --reinstall` after changing it so the daemon stays in sync");
         }
 
         // Check if daemon process is actually running
@@ -1649,6 +1690,43 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Mutex;
+
+    /// Serializes the env-mutating tests in this module (env mutation is
+    /// process-global and unsafe under parallel tests).
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    #[test]
+    fn test_xdg_environment_lines_snapshots_absolute_only() {
+        let _lock = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let prior_config = std::env::var("XDG_CONFIG_HOME").ok();
+        let prior_data = std::env::var("XDG_DATA_HOME").ok();
+
+        // Neither set -> no lines.
+        std::env::remove_var("XDG_CONFIG_HOME");
+        std::env::remove_var("XDG_DATA_HOME");
+        assert_eq!(xdg_environment_lines(), "");
+
+        // Absolute values are snapshotted; a relative value is ignored.
+        std::env::set_var("XDG_CONFIG_HOME", "/abs/config");
+        std::env::set_var("XDG_DATA_HOME", "relative/data");
+        assert_eq!(xdg_environment_lines(), "Environment=XDG_CONFIG_HOME=/abs/config\n");
+
+        std::env::set_var("XDG_DATA_HOME", "/abs/data");
+        assert_eq!(
+            xdg_environment_lines(),
+            "Environment=XDG_CONFIG_HOME=/abs/config\nEnvironment=XDG_DATA_HOME=/abs/data\n"
+        );
+
+        match prior_config {
+            Some(v) => std::env::set_var("XDG_CONFIG_HOME", v),
+            None => std::env::remove_var("XDG_CONFIG_HOME"),
+        }
+        match prior_data {
+            Some(v) => std::env::set_var("XDG_DATA_HOME", v),
+            None => std::env::remove_var("XDG_DATA_HOME"),
+        }
+    }
 
     #[test]
     fn test_daemon_process_check() {

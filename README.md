@@ -141,12 +141,40 @@ For everyday use you never call `aka` directly — the ZLE widgets call it for y
 
 ---
 
+## 📂 Paths and XDG
+
+`aka` resolves its config, cache, log, and socket paths through the XDG layout on
+every platform (macOS included):
+
+| What | Default | Env override |
+|------|---------|--------------|
+| Config | `$XDG_CONFIG_HOME/aka/aka.yml` (else `~/.config/aka/aka.yml`, then `~/aka.yml`) | `$XDG_CONFIG_HOME` |
+| Cache | `$XDG_DATA_HOME/aka/aka.json` (else `~/.local/share/aka/aka.json`) | `AKA_CACHE_DIR`, then `$XDG_DATA_HOME` |
+| Logs | `$XDG_DATA_HOME/aka/logs/aka.log` (else `~/.local/share/aka/logs/aka.log`) | `AKA_LOG_FILE`, then `$XDG_DATA_HOME` |
+| Socket | `$XDG_RUNTIME_DIR/aka/daemon.sock` (else `$XDG_DATA_HOME/aka/daemon.sock`) | `$XDG_RUNTIME_DIR`, then `$XDG_DATA_HOME` |
+
+`AKA_CACHE_DIR` / `AKA_LOG_FILE` are explicit overrides that beat XDG. `$XDG_*`
+values must be absolute paths; relative values are ignored.
+
+**Daemon and XDG env:** `systemd --user` does not inherit `$XDG_CONFIG_HOME` /
+`$XDG_DATA_HOME` exported in your shell (e.g. `.zshrc`). `aka daemon --install`
+snapshots whatever is set at install time into `Environment=` lines in the
+generated unit so the daemon and the CLI agree on where state lives. If you
+change either variable afterward, re-sync the daemon with `aka daemon --reinstall`
+(this is documented, not auto-detected). The socket is unaffected because it
+prefers `$XDG_RUNTIME_DIR`, which systemd sets for user sessions. `aka daemon
+--status` prints the CLI-resolved cache and log paths so you can confirm the two
+halves match.
+
+---
+
 ## 🩹 Troubleshooting
 
 * **Nothing expands** – touching `~/aka-killswitch` disables expansions; delete the file.
-* **Debug logging** – Logs are written to `~/.local/share/aka/logs/aka.log`
+* **Debug logging** – Logs are written to `~/.local/share/aka/logs/aka.log` by default, or under `$XDG_DATA_HOME`/`AKA_LOG_FILE` when set; `aka daemon --status` prints the resolved path.
 * **View shell script** – Run `aka shell-init zsh` to see the exact script being loaded.
 * **Widgets conflict** – Override bindings in your `.zshrc` after the `eval` line.
+* **Daemon reads a different cache/log than the CLI** – you changed `$XDG_CONFIG_HOME`/`$XDG_DATA_HOME` after installing the service; run `aka daemon --reinstall` to refresh the snapshot.
 
 ---
 

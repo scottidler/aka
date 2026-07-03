@@ -46,15 +46,42 @@ pub struct AliasCache {
     pub aliases: HashMap<String, Alias>,
 }
 
-/// XDG config dir, honoring `$XDG_CONFIG_HOME` and falling back to `$HOME/.config`.
-pub fn xdg_config_dir() -> Option<PathBuf> {
+/// XDG config dir resolved against an injected home dir: honors `$XDG_CONFIG_HOME`
+/// (absolute paths only) and otherwise falls back to `home_dir/.config`.
+///
+/// Taking `home_dir` as a parameter preserves the test seam every path helper in
+/// this file uses (tests inject a temp home). The zero-arg [`xdg_config_dir`] is a
+/// thin wrapper that supplies `dirs::home_dir()`.
+pub fn xdg_config_dir_from(home_dir: &Path) -> PathBuf {
+    debug!("xdg_config_dir_from: home_dir={home_dir:?}");
     if let Ok(dir) = std::env::var("XDG_CONFIG_HOME") {
         let path = PathBuf::from(dir);
         if path.is_absolute() {
-            return Some(path);
+            return path;
         }
     }
-    dirs::home_dir().map(|h| h.join(".config"))
+    home_dir.join(".config")
+}
+
+/// XDG data dir resolved against an injected home dir: honors `$XDG_DATA_HOME`
+/// (absolute paths only) and otherwise falls back to `home_dir/.local/share`.
+///
+/// See [`xdg_config_dir_from`] for why this takes `home_dir`. The zero-arg
+/// [`xdg_data_dir`] wraps it with `dirs::home_dir()`.
+pub fn xdg_data_dir_from(home_dir: &Path) -> PathBuf {
+    debug!("xdg_data_dir_from: home_dir={home_dir:?}");
+    if let Ok(dir) = std::env::var("XDG_DATA_HOME") {
+        let path = PathBuf::from(dir);
+        if path.is_absolute() {
+            return path;
+        }
+    }
+    home_dir.join(".local").join("share")
+}
+
+/// XDG config dir, honoring `$XDG_CONFIG_HOME` and falling back to `$HOME/.config`.
+pub fn xdg_config_dir() -> Option<PathBuf> {
+    dirs::home_dir().map(|h| xdg_config_dir_from(&h))
 }
 
 /// XDG data dir, honoring `$XDG_DATA_HOME` and falling back to `$HOME/.local/share`.
@@ -64,17 +91,11 @@ pub fn xdg_config_dir() -> Option<PathBuf> {
 /// APIs and return `~/Library/...`, ignoring the env vars. These helpers resolve to the
 /// same XDG layout on every platform.
 pub fn xdg_data_dir() -> Option<PathBuf> {
-    if let Ok(dir) = std::env::var("XDG_DATA_HOME") {
-        let path = PathBuf::from(dir);
-        if path.is_absolute() {
-            return Some(path);
-        }
-    }
-    dirs::home_dir().map(|h| h.join(".local").join("share"))
+    dirs::home_dir().map(|h| xdg_data_dir_from(&h))
 }
 
 pub fn get_config_path(home_dir: &std::path::Path) -> Result<PathBuf> {
-    let config_dirs = [home_dir.join(".config").join("aka"), home_dir.to_path_buf()];
+    let config_dirs = [xdg_config_dir_from(home_dir).join("aka"), home_dir.to_path_buf()];
 
     let config_files = ["aka.yml", "aka.yaml", ".aka.yml", ".aka.yaml"];
     let mut attempted_paths = Vec::new();
@@ -133,12 +154,7 @@ pub fn log_file_path(home_dir: &std::path::Path) -> PathBuf {
     if let Ok(custom_log_path) = std::env::var("AKA_LOG_FILE") {
         PathBuf::from(custom_log_path)
     } else {
-        home_dir
-            .join(".local")
-            .join("share")
-            .join("aka")
-            .join("logs")
-            .join("aka.log")
+        xdg_data_dir_from(home_dir).join("aka").join("logs").join("aka.log")
     }
 }
 
@@ -1066,17 +1082,17 @@ pub fn determine_socket_path(home_dir: &std::path::Path) -> Result<PathBuf> {
         return Ok(path);
     }
 
-    // Fallback to ~/.local/share/aka/
-    Ok(home_dir.join(".local/share/aka/daemon.sock"))
+    // Fallback to the XDG data dir (honors $XDG_DATA_HOME on every platform).
+    Ok(xdg_data_dir_from(home_dir).join("aka").join("daemon.sock"))
 }
 
 pub fn get_alias_cache_path(home_dir: &std::path::Path) -> Result<PathBuf> {
-    // Check if custom cache directory is specified via environment variable
+    // AKA_CACHE_DIR is the explicit override and beats XDG; otherwise resolve via
+    // the XDG data dir (honors $XDG_DATA_HOME on every platform).
     let data_dir = if let Ok(custom_cache_dir) = std::env::var("AKA_CACHE_DIR") {
         PathBuf::from(custom_cache_dir)
     } else {
-        // Default to production location
-        home_dir.join(".local").join("share").join("aka")
+        xdg_data_dir_from(home_dir).join("aka")
     };
 
     std::fs::create_dir_all(&data_dir)?;
@@ -1087,7 +1103,7 @@ pub fn get_last_valid_config_path(home_dir: &std::path::Path) -> Result<PathBuf>
     let data_dir = if let Ok(custom_cache_dir) = std::env::var("AKA_CACHE_DIR") {
         PathBuf::from(custom_cache_dir)
     } else {
-        home_dir.join(".local").join("share").join("aka")
+        xdg_data_dir_from(home_dir).join("aka")
     };
 
     Ok(data_dir.join("last").join("aka.yml"))
@@ -1107,9 +1123,10 @@ pub fn get_alias_cache_path_with_base(base_dir: Option<&PathBuf>) -> Result<Path
     let data_dir = match base_dir {
         Some(dir) => dir.clone(),
         None => {
-            // Check for test environment variable first
-            if let Ok(test_dir) = std::env::var("AKA_TEST_CACHE_DIR") {
-                PathBuf::from(test_dir)
+            // AKA_CACHE_DIR is the single explicit override (it beats XDG); otherwise
+            // resolve via the XDG data dir.
+            if let Ok(cache_dir) = std::env::var("AKA_CACHE_DIR") {
+                PathBuf::from(cache_dir)
             } else {
                 xdg_data_dir()
                     .ok_or_else(|| eyre!("Could not determine local data directory"))?
@@ -1299,6 +1316,77 @@ mod tests {
     use cfg::spec::Defaults;
     use std::collections::HashMap;
     use std::path::PathBuf;
+    use std::sync::Mutex;
+
+    /// Serializes every test that mutates or depends on the path-resolution
+    /// environment. Env-var mutation is process-global and unsafe under parallel
+    /// tests, so all such tests take this lock via the RAII [`XdgEnvGuard`].
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    /// The env vars every path helper consults. The guard snapshots and clears all
+    /// of them so a home-dir-injection test asserts the real fallback rather than a
+    /// leaked ambient value, and so a test setting one can't race another.
+    const PATH_ENV_VARS: [&str; 5] = [
+        "XDG_CONFIG_HOME",
+        "XDG_DATA_HOME",
+        "XDG_RUNTIME_DIR",
+        "AKA_CACHE_DIR",
+        "AKA_LOG_FILE",
+    ];
+
+    /// RAII guard: acquires [`ENV_LOCK`], snapshots and clears every path-resolution
+    /// env var, and restores their prior values (releasing the lock) on drop. Tests
+    /// that assert env-honoring set a value via `set_config` / `set_data` /
+    /// `set_cache_dir` while holding it. Because it is declared as the first binding
+    /// in a test, it drops last - after any inner per-test restore - so the true
+    /// ambient environment is always what survives.
+    struct XdgEnvGuard {
+        _lock: std::sync::MutexGuard<'static, ()>,
+        prior: Vec<(&'static str, Option<String>)>,
+    }
+
+    impl XdgEnvGuard {
+        /// Lock and clear every path-resolution env var (assert the fallback).
+        fn cleared() -> Self {
+            let lock = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+            let prior = PATH_ENV_VARS
+                .iter()
+                .map(|&key| {
+                    let val = std::env::var(key).ok();
+                    std::env::remove_var(key);
+                    (key, val)
+                })
+                .collect();
+            Self { _lock: lock, prior }
+        }
+
+        fn set_config(&self, path: &Path) {
+            std::env::set_var("XDG_CONFIG_HOME", path);
+        }
+
+        fn set_data(&self, path: &Path) {
+            std::env::set_var("XDG_DATA_HOME", path);
+        }
+
+        fn set_cache_dir(&self, path: &Path) {
+            std::env::set_var("AKA_CACHE_DIR", path);
+        }
+
+        fn set_runtime(&self, path: &Path) {
+            std::env::set_var("XDG_RUNTIME_DIR", path);
+        }
+    }
+
+    impl Drop for XdgEnvGuard {
+        fn drop(&mut self) {
+            for (key, val) in &self.prior {
+                match val {
+                    Some(v) => std::env::set_var(key, v),
+                    None => std::env::remove_var(key),
+                }
+            }
+        }
+    }
 
     fn create_test_aka_with_aliases(aliases: HashMap<String, Alias>) -> AKA {
         let spec = Spec {
@@ -2090,6 +2178,7 @@ mod tests {
     // High Priority Tests: Configuration Path Resolution Edge Cases
     #[test]
     fn test_get_config_path_nonexistent_home() {
+        let _env = XdgEnvGuard::cleared();
         // Test with a non-existent home directory
         let fake_home = PathBuf::from("/nonexistent/fake/home");
         let result = get_config_path(&fake_home);
@@ -2103,6 +2192,7 @@ mod tests {
         use std::fs;
         use tempfile::TempDir;
 
+        let _env = XdgEnvGuard::cleared();
         // Create temporary directory structure
         let temp_dir = TempDir::new().unwrap();
         let home_path = temp_dir.path();
@@ -2130,6 +2220,7 @@ mod tests {
         use std::fs;
         use tempfile::TempDir;
 
+        let _env = XdgEnvGuard::cleared();
         let temp_dir = TempDir::new().unwrap();
         let home_path = temp_dir.path();
         let config_dir = home_path.join(".config").join("aka");
@@ -2153,6 +2244,7 @@ mod tests {
         use std::fs;
         use tempfile::TempDir;
 
+        let _env = XdgEnvGuard::cleared();
         let temp_dir = TempDir::new().unwrap();
         let home_path = temp_dir.path();
 
@@ -2169,6 +2261,7 @@ mod tests {
         use std::fs;
         use tempfile::TempDir;
 
+        let _env = XdgEnvGuard::cleared();
         let temp_dir = TempDir::new().unwrap();
         let home_path = temp_dir.path();
 
@@ -2436,6 +2529,9 @@ mod tests {
     // High Priority Tests: Error Handling and Edge Cases
     #[test]
     fn test_setup_logging_with_invalid_directory() {
+        // Clear XDG/AKA_LOG_FILE so the log path deterministically resolves under the
+        // (nonexistent) home and setup_logging takes its create-dir-fails path.
+        let _env = XdgEnvGuard::cleared();
         // Test logging setup with invalid directory
         let fake_home = PathBuf::from("/nonexistent/fake/home");
         let result = setup_logging(&fake_home);
@@ -2515,6 +2611,9 @@ mod tests {
     fn test_log_file_path_honors_env_and_falls_back() {
         use tempfile::TempDir;
 
+        // The fallback now routes through xdg_data_dir_from, so clear XDG to assert
+        // the injected-home layout rather than an ambient $XDG_DATA_HOME.
+        let _env = XdgEnvGuard::cleared();
         let original = std::env::var("AKA_LOG_FILE").ok();
 
         // Explicit override wins over the home-dir default.
@@ -2547,12 +2646,10 @@ mod tests {
     fn test_determine_socket_path_with_xdg_runtime() {
         use tempfile::TempDir;
 
-        // Save original XDG_RUNTIME_DIR
-        let original_xdg = std::env::var("XDG_RUNTIME_DIR").ok();
-
+        let env = XdgEnvGuard::cleared();
         // Set up test XDG_RUNTIME_DIR
         let temp_dir = TempDir::new().unwrap();
-        std::env::set_var("XDG_RUNTIME_DIR", temp_dir.path());
+        env.set_runtime(temp_dir.path());
 
         let home_dir = PathBuf::from("/home/testuser");
         let result = determine_socket_path(&home_dir);
@@ -2561,22 +2658,14 @@ mod tests {
         let path = result.unwrap();
         assert!(path.to_string_lossy().contains("aka"));
         assert!(path.to_string_lossy().contains("daemon.sock"));
-
-        // Restore original XDG_RUNTIME_DIR
-        match original_xdg {
-            Some(val) => std::env::set_var("XDG_RUNTIME_DIR", val),
-            None => std::env::remove_var("XDG_RUNTIME_DIR"),
-        }
     }
 
     #[test]
     fn test_determine_socket_path_fallback() {
         use tempfile::TempDir;
 
-        // Save and clear XDG_RUNTIME_DIR to test fallback
-        let original_xdg = std::env::var("XDG_RUNTIME_DIR").ok();
-        std::env::remove_var("XDG_RUNTIME_DIR");
-
+        // Guard clears XDG_RUNTIME_DIR (and the rest) to exercise the fallback.
+        let _env = XdgEnvGuard::cleared();
         let temp_dir = TempDir::new().unwrap();
         let home_path = temp_dir.path();
 
@@ -2587,11 +2676,6 @@ mod tests {
         // Just verify it contains the daemon.sock and aka paths
         let path_str = path.to_string_lossy();
         assert!(path_str.contains("aka") && path_str.contains("daemon.sock"));
-
-        // Restore original XDG_RUNTIME_DIR
-        if let Some(val) = original_xdg {
-            std::env::set_var("XDG_RUNTIME_DIR", val);
-        }
     }
 
     #[test]
@@ -2931,6 +3015,7 @@ mod tests {
     fn test_get_stored_hash_no_cache() {
         use tempfile::TempDir;
 
+        let _env = XdgEnvGuard::cleared();
         // Save original AKA_CACHE_DIR
         let original_cache_dir = std::env::var("AKA_CACHE_DIR").ok();
 
@@ -2957,6 +3042,7 @@ mod tests {
     fn test_get_stored_hash_with_cache() {
         use tempfile::TempDir;
 
+        let _env = XdgEnvGuard::cleared();
         let original_cache_dir = std::env::var("AKA_CACHE_DIR").ok();
 
         let temp_dir = TempDir::new().unwrap();
@@ -3113,6 +3199,7 @@ mod tests {
     fn test_execute_health_check_no_config() {
         use tempfile::TempDir;
 
+        let _env = XdgEnvGuard::cleared();
         let temp_dir = TempDir::new().unwrap();
         // Don't create any config files
 
@@ -3130,6 +3217,7 @@ mod tests {
         use std::fs;
         use tempfile::TempDir;
 
+        let _env = XdgEnvGuard::cleared();
         let original_cache_dir = std::env::var("AKA_CACHE_DIR").ok();
 
         let temp_dir = TempDir::new().unwrap();
@@ -3163,6 +3251,7 @@ mod tests {
         use std::fs;
         use tempfile::TempDir;
 
+        let _env = XdgEnvGuard::cleared();
         let temp_dir = TempDir::new().unwrap();
 
         // Create an invalid config file
@@ -3185,6 +3274,7 @@ mod tests {
         use std::fs;
         use tempfile::TempDir;
 
+        let _env = XdgEnvGuard::cleared();
         let original_cache_dir = std::env::var("AKA_CACHE_DIR").ok();
 
         let temp_dir = TempDir::new().unwrap();
@@ -3264,6 +3354,7 @@ mod tests {
         use std::fs;
         use tempfile::TempDir;
 
+        let _env = XdgEnvGuard::cleared();
         let temp_dir = TempDir::new().unwrap();
         let config_dir = temp_dir.path().join(".config").join("aka");
         fs::create_dir_all(&config_dir).unwrap();
@@ -3329,6 +3420,7 @@ mod tests {
         use std::fs;
         use tempfile::TempDir;
 
+        let _env = XdgEnvGuard::cleared();
         let original_cache_dir = std::env::var("AKA_CACHE_DIR").ok();
 
         let temp_dir = TempDir::new().unwrap();
@@ -3926,6 +4018,7 @@ mod tests {
     #[test]
     fn test_corrupt_cache_returns_default() -> Result<()> {
         use tempfile::TempDir;
+        let _env = XdgEnvGuard::cleared();
         let temp = TempDir::new()?;
         let cache_path = temp.path().join("aka.json");
         std::fs::write(&cache_path, "this is not valid json {")?;
@@ -3958,16 +4051,17 @@ mod tests {
     #[test]
     fn test_corrupt_cache_with_base_returns_default() -> Result<()> {
         use tempfile::TempDir;
+        let _env = XdgEnvGuard::cleared();
         let temp = TempDir::new()?;
         let cache_path = temp.path().join("aka.json");
         std::fs::write(&cache_path, "{ broken json")?;
 
-        let original_test_cache_dir = std::env::var("AKA_TEST_CACHE_DIR").ok();
-        std::env::set_var("AKA_TEST_CACHE_DIR", temp.path());
+        let original_cache_dir = std::env::var("AKA_CACHE_DIR").ok();
+        std::env::set_var("AKA_CACHE_DIR", temp.path());
         let result = load_alias_cache_with_base(None);
-        match original_test_cache_dir {
-            Some(val) => std::env::set_var("AKA_TEST_CACHE_DIR", val),
-            None => std::env::remove_var("AKA_TEST_CACHE_DIR"),
+        match original_cache_dir {
+            Some(val) => std::env::set_var("AKA_CACHE_DIR", val),
+            None => std::env::remove_var("AKA_CACHE_DIR"),
         }
 
         assert!(
@@ -3988,6 +4082,7 @@ mod tests {
     #[test]
     fn test_get_last_valid_config_path_uses_cache_dir() -> Result<()> {
         use tempfile::TempDir;
+        let _env = XdgEnvGuard::cleared();
         let temp = TempDir::new()?;
         let fake_home = temp.path().join("home");
         let cache_dir = temp.path().join("cache");
@@ -4013,6 +4108,8 @@ mod tests {
     #[test]
     fn test_get_last_valid_config_path_uses_home_dir() -> Result<()> {
         use tempfile::TempDir;
+        // Clear XDG so the fallback resolves to the injected home, not an ambient dir.
+        let _env = XdgEnvGuard::cleared();
         let fake_home = TempDir::new()?;
 
         let original = std::env::var("AKA_CACHE_DIR").ok();
@@ -4037,6 +4134,7 @@ mod tests {
     #[test]
     fn test_backup_last_valid_config_creates_file() -> Result<()> {
         use tempfile::TempDir;
+        let _env = XdgEnvGuard::cleared();
         let fake_home = TempDir::new()?;
         let cache_temp = TempDir::new()?;
 
@@ -4116,6 +4214,8 @@ mod tests {
     fn test_validate_fresh_config_returns_cache_fallback_when_aliases_exist() -> Result<()> {
         use tempfile::TempDir;
 
+        // Clear XDG so config/cache resolve under the injected home, not ambient dirs.
+        let _env = XdgEnvGuard::cleared();
         let home_temp = TempDir::new()?;
         let home_dir = home_temp.path().to_path_buf();
 
@@ -4162,5 +4262,130 @@ mod tests {
         assert!(result.is_ok(), "expected Ok, got: {:?}", result.err());
         assert_eq!(result.unwrap(), 5, "expected CACHE_FALLBACK status 5");
         Ok(())
+    }
+
+    // Phase 4: XDG path-resolution tests. All env-touching, so all hold the
+    // ENV_LOCK via XdgEnvGuard (edition 2021: set_var/remove_var are not unsafe).
+
+    #[test]
+    fn test_xdg_config_dir_from_honors_env_and_falls_back() {
+        use tempfile::TempDir;
+        let env = XdgEnvGuard::cleared();
+        let home = PathBuf::from("/home/testuser");
+
+        // Absolute $XDG_CONFIG_HOME wins over the injected home.
+        let dir = TempDir::new().unwrap();
+        env.set_config(dir.path());
+        assert_eq!(xdg_config_dir_from(&home), dir.path());
+
+        // A relative $XDG_CONFIG_HOME is rejected -> fall back to home/.config.
+        env.set_config(&PathBuf::from("relative/config"));
+        assert_eq!(xdg_config_dir_from(&home), home.join(".config"));
+
+        // Unset -> home/.config, never a system dir.
+        std::env::remove_var("XDG_CONFIG_HOME");
+        assert_eq!(xdg_config_dir_from(&home), home.join(".config"));
+    }
+
+    #[test]
+    fn test_xdg_data_dir_from_honors_env_and_falls_back() {
+        use tempfile::TempDir;
+        let env = XdgEnvGuard::cleared();
+        let home = PathBuf::from("/home/testuser");
+
+        // Absolute $XDG_DATA_HOME wins over the injected home.
+        let dir = TempDir::new().unwrap();
+        env.set_data(dir.path());
+        assert_eq!(xdg_data_dir_from(&home), dir.path());
+
+        // A relative $XDG_DATA_HOME is rejected -> fall back to home/.local/share.
+        env.set_data(&PathBuf::from("relative/data"));
+        assert_eq!(xdg_data_dir_from(&home), home.join(".local").join("share"));
+
+        // Unset -> home/.local/share, never ~/Library/... on macOS.
+        std::env::remove_var("XDG_DATA_HOME");
+        assert_eq!(xdg_data_dir_from(&home), home.join(".local").join("share"));
+    }
+
+    #[test]
+    fn test_get_config_path_honors_xdg_config_home() {
+        use std::fs;
+        use tempfile::TempDir;
+        let env = XdgEnvGuard::cleared();
+
+        // Config lives under $XDG_CONFIG_HOME/aka, NOT under home/.config.
+        let xdg = TempDir::new().unwrap();
+        let home = TempDir::new().unwrap();
+        let aka_dir = xdg.path().join("aka");
+        fs::create_dir_all(&aka_dir).unwrap();
+        let config_file = aka_dir.join("aka.yml");
+        fs::write(&config_file, "aliases:\n  ls: eza").unwrap();
+
+        env.set_config(xdg.path());
+        let found = get_config_path(home.path()).unwrap();
+        assert_eq!(
+            found, config_file,
+            "get_config_path should resolve via $XDG_CONFIG_HOME"
+        );
+    }
+
+    #[test]
+    fn test_get_alias_cache_path_honors_xdg_and_override_precedence() {
+        use tempfile::TempDir;
+        let env = XdgEnvGuard::cleared();
+        let home = TempDir::new().unwrap();
+
+        // With no override, resolve under $XDG_DATA_HOME/aka.
+        let xdg = TempDir::new().unwrap();
+        env.set_data(xdg.path());
+        let path = get_alias_cache_path(home.path()).unwrap();
+        assert_eq!(path, xdg.path().join("aka").join("aka.json"));
+
+        // AKA_CACHE_DIR is the explicit override and beats XDG.
+        let cache = TempDir::new().unwrap();
+        env.set_cache_dir(cache.path());
+        let path = get_alias_cache_path(home.path()).unwrap();
+        assert_eq!(path, cache.path().join("aka.json"));
+    }
+
+    #[test]
+    fn test_get_last_valid_config_path_honors_xdg_data_home() {
+        use tempfile::TempDir;
+        let env = XdgEnvGuard::cleared();
+        let home = TempDir::new().unwrap();
+        let xdg = TempDir::new().unwrap();
+        env.set_data(xdg.path());
+
+        let path = get_last_valid_config_path(home.path()).unwrap();
+        assert_eq!(path, xdg.path().join("aka").join("last").join("aka.yml"));
+    }
+
+    #[test]
+    fn test_log_file_path_honors_xdg_data_home() {
+        use tempfile::TempDir;
+        let env = XdgEnvGuard::cleared();
+        let home = PathBuf::from("/home/testuser");
+        let xdg = TempDir::new().unwrap();
+        env.set_data(xdg.path());
+
+        // AKA_LOG_FILE unset (guard cleared it) -> log path under $XDG_DATA_HOME.
+        assert_eq!(
+            log_file_path(&home),
+            xdg.path().join("aka").join("logs").join("aka.log")
+        );
+    }
+
+    #[test]
+    fn test_determine_socket_path_xdg_data_home_fallback() {
+        use tempfile::TempDir;
+        // Guard clears XDG_RUNTIME_DIR, so the fallback branch (XDG data dir) runs.
+        let env = XdgEnvGuard::cleared();
+        let home = PathBuf::from("/home/testuser");
+
+        let xdg = TempDir::new().unwrap();
+        env.set_data(xdg.path());
+        let path = determine_socket_path(&home).unwrap();
+
+        assert_eq!(path, xdg.path().join("aka").join("daemon.sock"));
     }
 }
