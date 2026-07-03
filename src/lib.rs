@@ -122,6 +122,26 @@ pub fn test_config(file: &PathBuf) -> Result<PathBuf> {
     Err(eyre!("config {:?} not found!", file))
 }
 
+/// Resolve the path aka writes its log file to.
+///
+/// Single source of truth for both `setup_logging` (where the logger actually
+/// writes) and `--help`'s "Logs are written to:" line, so the two can never
+/// drift. Honors `AKA_LOG_FILE`; otherwise falls back to the production
+/// location under `home_dir`.
+pub fn log_file_path(home_dir: &std::path::Path) -> PathBuf {
+    debug!("log_file_path: home_dir={home_dir:?}");
+    if let Ok(custom_log_path) = std::env::var("AKA_LOG_FILE") {
+        PathBuf::from(custom_log_path)
+    } else {
+        home_dir
+            .join(".local")
+            .join("share")
+            .join("aka")
+            .join("logs")
+            .join("aka.log")
+    }
+}
+
 pub fn setup_logging(home_dir: &std::path::Path) -> Result<()> {
     if is_benchmark_mode() {
         // In benchmark mode, log to stdout for visibility
@@ -129,15 +149,8 @@ pub fn setup_logging(home_dir: &std::path::Path) -> Result<()> {
             .target(env_logger::Target::Stdout)
             .init();
     } else {
-        // Check if custom log file location is specified via environment variable
-        let log_file_path = if let Ok(custom_log_path) = std::env::var("AKA_LOG_FILE") {
-            PathBuf::from(custom_log_path)
-        } else {
-            // Default to production location
-            let log_dir = home_dir.join(".local").join("share").join("aka").join("logs");
-            std::fs::create_dir_all(&log_dir)?;
-            log_dir.join("aka.log")
-        };
+        // Resolve the log path from the shared resolver so --help stays honest.
+        let log_file_path = log_file_path(home_dir);
 
         // Ensure the parent directory exists
         if let Some(parent) = log_file_path.parent() {
@@ -2521,6 +2534,38 @@ mod tests {
     }
 
     // Additional tests for improved coverage
+
+    #[test]
+    fn test_log_file_path_honors_env_and_falls_back() {
+        use tempfile::TempDir;
+
+        let original = std::env::var("AKA_LOG_FILE").ok();
+
+        // Explicit override wins over the home-dir default.
+        let temp_dir = TempDir::new().unwrap();
+        let custom = temp_dir.path().join("custom").join("aka.log");
+        std::env::set_var("AKA_LOG_FILE", &custom);
+        assert_eq!(log_file_path(&PathBuf::from("/home/testuser")), custom);
+
+        // Unset -> fall back to $HOME/.local/share/aka/logs/aka.log.
+        std::env::remove_var("AKA_LOG_FILE");
+        let home = PathBuf::from("/home/testuser");
+        let fallback = log_file_path(&home);
+        assert_eq!(
+            fallback,
+            home.join(".local")
+                .join("share")
+                .join("aka")
+                .join("logs")
+                .join("aka.log")
+        );
+
+        // Restore prior state.
+        match original {
+            Some(val) => std::env::set_var("AKA_LOG_FILE", val),
+            None => std::env::remove_var("AKA_LOG_FILE"),
+        }
+    }
 
     #[test]
     fn test_determine_socket_path_with_xdg_runtime() {

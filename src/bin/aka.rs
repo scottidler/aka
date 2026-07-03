@@ -1,4 +1,4 @@
-use clap::{Parser, Subcommand};
+use clap::{CommandFactory, FromArgMatches, Parser, Subcommand};
 use eyre::Result;
 use log::{debug, info, warn};
 use std::io::{BufRead, BufReader, Write};
@@ -10,8 +10,8 @@ use std::time::{Duration, Instant};
 // Import from the shared library
 use aka_lib::{
     determine_socket_path, execute_health_check, export_timing_csv, get_config_path, get_config_path_with_override,
-    get_last_valid_config_path, get_timing_summary, load_alias_cache, log_timing, setup_logging, xdg_config_dir,
-    ConfigLoader, DaemonRequest, DaemonResponse, ProcessingMode, TimingCollector, AKA,
+    get_last_valid_config_path, get_timing_summary, load_alias_cache, log_file_path, log_timing, setup_logging,
+    xdg_config_dir, ConfigLoader, DaemonRequest, DaemonResponse, ProcessingMode, TimingCollector, AKA,
 };
 
 // Version constant for compatibility checking
@@ -27,6 +27,15 @@ const DAEMON_WRITE_TIMEOUT_MS: u64 = 50; // 50ms to write request
 const DAEMON_TOTAL_TIMEOUT_MS: u64 = 300; // 300ms total operation limit
 const DAEMON_RETRY_DELAY_MS: u64 = 50; // 50ms between retries
 const DAEMON_MAX_RETRIES: u32 = 1; // Only 1 retry attempt
+
+// Timeout for the --help daemon status probe. Bounds the read/write on the
+// status-emoji socket so a wedged daemon can never hang `--help` rendering.
+const HELP_STATUS_PROBE_TIMEOUT_MS: u64 = 500;
+
+// Marker embedded in the top-level `after_help` so the help interceptor can
+// distinguish top-level help (which gets the dynamic daemon-status line) from
+// subcommand help (which clap renders without any `after_help`).
+const AFTER_HELP_LOG_MARKER: &str = "Logs are written to:";
 
 #[derive(Debug, Clone)]
 enum DaemonError {
@@ -294,12 +303,16 @@ impl DaemonClient {
     }
 }
 
+/// Static `after_help`: the log path only, resolved from the same source the
+/// logger uses so `--help` never lies about where logs go. Evaluated on every
+/// invocation by clap's `command()` builder, so it must stay probe-free - the
+/// daemon-status line is appended lazily by the help interceptor in `main`.
 fn get_after_help() -> &'static str {
-    let daemon_status = get_daemon_status_emoji();
-    Box::leak(
-        format!("Logs are written to: ~/.local/share/aka/logs/aka.log\n\nDaemon status: {daemon_status}")
-            .into_boxed_str(),
-    )
+    let log_path = match dirs::home_dir() {
+        Some(home) => log_file_path(&home).display().to_string(),
+        None => "~/.local/share/aka/logs/aka.log".to_string(),
+    };
+    Box::leak(format!("{AFTER_HELP_LOG_MARKER} {log_path}").into_boxed_str())
 }
 
 fn get_daemon_status_emoji() -> &'static str {
@@ -323,6 +336,14 @@ fn get_daemon_status_emoji() -> &'static str {
         (true, true) => {
             // Daemon appears to be running, check config sync status
             if let Ok(mut stream) = UnixStream::connect(&socket_path) {
+                // Bound the probe: a wedged daemon that accepts but never
+                // replies must not hang `--help` on an unbounded read_line.
+                let probe_timeout = Duration::from_millis(HELP_STATUS_PROBE_TIMEOUT_MS);
+                if stream.set_read_timeout(Some(probe_timeout)).is_err()
+                    || stream.set_write_timeout(Some(probe_timeout)).is_err()
+                {
+                    return "⚠️"; // Couldn't arm timeouts - refuse to risk a hang
+                }
                 let health_request = r#"{"type":"Health"}"#;
                 if writeln!(stream, "{health_request}").is_ok() {
                     let mut reader = BufReader::new(&stream);
@@ -1773,8 +1794,50 @@ fn handle_shell_init(shell_opts: &ShellInitOpts) -> Result<i32> {
     }
 }
 
+/// Parse CLI args, intercepting help so the daemon-status probe runs ONLY when
+/// help is actually requested - never on the per-keystroke `aka query` path.
+///
+/// Clap is the sole source of help resolution: we build the command with a
+/// static `after_help` (log path only) and `try_get_matches`. Help/version and
+/// parse errors surface as `clap::Error`; for the top-level help case we append
+/// the (probe-backed) daemon-status line. Subcommand help carries no
+/// `after_help` marker, so it prints exactly as clap rendered it.
+fn parse_opts() -> AkaOpts {
+    use clap::error::ErrorKind;
+
+    debug!("parse_opts: intercepting help before daemon probe");
+    let matches = match AkaOpts::command().try_get_matches() {
+        Ok(matches) => matches,
+        Err(e) => match e.kind() {
+            ErrorKind::DisplayHelp | ErrorKind::DisplayHelpOnMissingArgumentOrSubcommand => {
+                let rendered = e.render().to_string();
+                let _ = e.print();
+                if is_top_level_help(&rendered) {
+                    println!("\nDaemon status: {}", get_daemon_status_emoji());
+                }
+                exit(0);
+            }
+            // Version display and genuine parse errors: clap owns the stream and
+            // exit code (stdout/0 for version, stderr/2 for usage errors).
+            _ => e.exit(),
+        },
+    };
+
+    match AkaOpts::from_arg_matches(&matches) {
+        Ok(opts) => opts,
+        Err(e) => e.exit(),
+    }
+}
+
+/// True when a rendered clap help string is the top-level `aka` help (which
+/// carries the `after_help` log-path marker) rather than a subcommand's help.
+/// Only top-level help gets the appended daemon-status line.
+fn is_top_level_help(rendered_help: &str) -> bool {
+    rendered_help.contains(AFTER_HELP_LOG_MARKER)
+}
+
 fn main() {
-    let opts = AkaOpts::parse();
+    let opts = parse_opts();
 
     // Set up logging
     let home_dir = match dirs::home_dir() {
@@ -1871,6 +1934,33 @@ mod tests {
         let result = check_daemon_process_simple();
         // Should return bool without panicking
         let _ = result; // Just verify it doesn't panic
+    }
+
+    #[test]
+    fn test_after_help_carries_log_marker() {
+        // The static after_help must contain the log-path marker so the help
+        // interceptor can recognize top-level help; it must NOT contain the
+        // dynamic daemon-status line (that is appended lazily on the help path).
+        let help = get_after_help();
+        assert!(
+            help.contains(AFTER_HELP_LOG_MARKER),
+            "after_help missing log marker: {help}"
+        );
+        assert!(
+            !help.contains("Daemon status:"),
+            "after_help must stay probe-free (no daemon status): {help}"
+        );
+    }
+
+    #[test]
+    fn test_is_top_level_help() {
+        // Top-level help renders the after_help marker; subcommand help does not.
+        let top_level =
+            format!("Usage: aka [OPTIONS]\n\n{AFTER_HELP_LOG_MARKER} /home/u/.local/share/aka/logs/aka.log");
+        assert!(is_top_level_help(&top_level));
+
+        let subcommand = "Usage: aka query [OPTIONS] <CMDLINE>\n\nquery for aka substitutions";
+        assert!(!is_top_level_help(subcommand));
     }
 
     #[test]

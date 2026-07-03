@@ -21,6 +21,11 @@ use aka_lib::{
 // Version constant for compatibility checking
 const DAEMON_VERSION: &str = env!("GIT_DESCRIBE");
 
+// Read/write timeout on an accepted client stream. The accept loop is serial,
+// so a client that connects and never sends a newline must not stall the whole
+// daemon on an unbounded `read_line`. Same 500ms class as the client probes.
+const CLIENT_IO_TIMEOUT_MS: u64 = 500;
+
 #[derive(Parser)]
 #[command(name = "aka-daemon", about = "AKA Alias Daemon")]
 struct DaemonOpts {
@@ -267,6 +272,16 @@ impl DaemonServer {
     }
 
     fn handle_client(&self, mut stream: UnixStream) -> Result<()> {
+        // Bound reads/writes: a client that connects and never sends a newline
+        // must not stall the serial accept loop on an unbounded read_line.
+        let io_timeout = std::time::Duration::from_millis(CLIENT_IO_TIMEOUT_MS);
+        if let Err(e) = stream.set_read_timeout(Some(io_timeout)) {
+            warn!("⚠️ Failed to set client read timeout: {e}");
+        }
+        if let Err(e) = stream.set_write_timeout(Some(io_timeout)) {
+            warn!("⚠️ Failed to set client write timeout: {e}");
+        }
+
         // Check if config has changed and reload if necessary
         self.ensure_cache_fresh()?;
 
