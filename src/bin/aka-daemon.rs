@@ -822,7 +822,23 @@ impl DaemonServer {
     }
 
     fn handle_incoming_connections(&self, listener: UnixListener) -> Result<()> {
-        // Main server loop
+        // Main server loop.
+        //
+        // This is a single-threaded, blocking accept loop. That is an accepted, deferred
+        // sharp edge (see docs/design/2026-07-03-tighten-sharp-edges.md Non-Goals): a
+        // per-user shell tool serves sub-ms requests and does not need concurrency, and the
+        // one real hazard (a peer that connects but never sends a line, wedging every
+        // subsequent keystroke) is bounded by the read/write timeouts on the accepted stream.
+        //
+        // The subtle consequence, NOT latency: a signal (SIGINT/SIGTERM) delivered while we
+        // are blocked in `incoming()` sets `shutdown` and unlinks the socket, but unlinking
+        // does not wake a blocked `accept()`, and no further connection arrives on the removed
+        // socket, so this loop never observes the flag and never returns. The final
+        // `flush_counts_if_dirty()` after this loop therefore does NOT run on signal-driven
+        // shutdown; systemd hard-kills the process at TimeoutStopSec. Buffered usage counts
+        // are advisory, so this bounded loss is acceptable; the cheap fix if it ever matters
+        // is a self-connect / shutdown(2) or a non-blocking accept polling `shutdown`.
+        // See docs/design/2026-07-04-deferred-edges-audit-note.md.
         for stream in listener.incoming() {
             if self.shutdown.load(Ordering::Relaxed) {
                 break;
@@ -965,6 +981,12 @@ fn main() {
     if let Err(e) = ctrlc::set_handler(move || {
         debug!("🛑 Shutdown signal received");
         shutdown_clone.store(true, Ordering::Relaxed);
+
+        // NOTE: setting the flag and unlinking the socket does NOT wake a blocked `accept()`
+        // in handle_incoming_connections, so on a signal received while idle the main loop
+        // stays parked and the post-loop count flush never runs (systemd SIGKILLs at
+        // TimeoutStopSec). Accepted: usage counts are advisory. See the accept-loop comment
+        // and docs/design/2026-07-04-deferred-edges-audit-note.md.
 
         // Clean up socket file on signal
         if socket_path_clone.exists() {

@@ -479,17 +479,34 @@ fn is_command_available_to_root(command: &str) -> bool {
         .unwrap_or(false)
 }
 
-/// Check if a command exists in user PATH but not root PATH
-fn is_user_only_command(command: &str) -> bool {
-    // First check if user has the command
-    let user_has_command = std::process::Command::new("which")
-        .arg(command)
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status()
-        .map(|status| status.success())
-        .unwrap_or(false);
+/// Resolve a command's location in the user's PATH with a single `which` invocation.
+/// Returns the trimmed path on success, or `None` if the user does not have the command.
+///
+/// This exists so the sudo-wrapping path spawns `which` exactly once per command: both
+/// `is_user_only_command` (does the user have it?) and `is_user_installed_tool` (where does
+/// it live?) previously ran their own `which` for the same command. The caller resolves the
+/// path once and hands it to both.
+fn resolve_user_command_path(command: &str) -> Option<String> {
+    debug!("resolve_user_command_path: command='{command}'");
+    let output = std::process::Command::new("which").arg(command).output().ok()?;
+    if !output.status.success() {
+        debug!("resolve_user_command_path: '{command}' not found in user PATH");
+        return None;
+    }
+    let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if path.is_empty() {
+        None
+    } else {
+        debug!("resolve_user_command_path: '{command}' -> '{path}'");
+        Some(path)
+    }
+}
 
+/// Check if a command exists in user PATH but not root PATH.
+///
+/// `user_has_command` is precomputed by the caller's single `resolve_user_command_path`
+/// lookup, so this only spawns the `sudo -n which` probe for root's PATH.
+fn is_user_only_command(command: &str, user_has_command: bool) -> bool {
     if !user_has_command {
         return false; // User doesn't have it, no point wrapping
     }
@@ -498,8 +515,11 @@ fn is_user_only_command(command: &str) -> bool {
     !is_command_available_to_root(command)
 }
 
-/// Determine if a command needs sudo wrapping
-fn needs_sudo_wrapping(command: &str) -> bool {
+/// Determine if a command needs sudo wrapping.
+///
+/// `user_path` is the command's user-PATH location as resolved once by the caller via
+/// `resolve_user_command_path` (`None` means it is not in the user's PATH).
+fn needs_sudo_wrapping(command: &str, user_path: Option<&str>) -> bool {
     // Skip if already wrapped (idempotent)
     if is_already_wrapped(command) {
         debug!("Command already wrapped: {command}");
@@ -519,28 +539,28 @@ fn needs_sudo_wrapping(command: &str) -> bool {
     }
 
     // Only wrap if it's available to user but not root
-    let needs_wrapping = is_user_only_command(command);
+    let needs_wrapping = is_user_only_command(command, user_path.is_some());
     debug!("Command '{command}' needs wrapping: {needs_wrapping}");
     needs_wrapping
 }
 
-/// Check if a command is user-installed and needs environment preservation
-fn is_user_installed_tool(command: &str) -> bool {
-    if let Ok(output) = std::process::Command::new("which").arg(command).output() {
-        if output.status.success() {
-            let path = String::from_utf8_lossy(&output.stdout);
-            let path = path.trim();
+/// Check if a command is user-installed and needs environment preservation.
+///
+/// Operates on the path already resolved by `resolve_user_command_path` instead of
+/// spawning its own `which` for the same command.
+fn is_user_installed_tool(user_path: Option<&str>) -> bool {
+    let Some(path) = user_path else {
+        return false;
+    };
 
-            // Check if command is in user directories
-            if path.contains("/.cargo/bin/")
-                || path.contains("/.local/bin/")
-                || path.contains("/home/")
-                || path.starts_with(&std::env::var("HOME").unwrap_or_default())
-            {
-                debug!("Command '{command}' at '{path}' is user-installed");
-                return true;
-            }
-        }
+    // Check if command is in user directories
+    if path.contains("/.cargo/bin/")
+        || path.contains("/.local/bin/")
+        || path.contains("/home/")
+        || path.starts_with(&std::env::var("HOME").unwrap_or_default())
+    {
+        debug!("Command at '{path}' is user-installed");
+        return true;
     }
     false
 }
@@ -865,8 +885,22 @@ impl AKA {
             debug!("🔍 SUDO PROCESSING: command='{command}'");
             let args_before_sudo = args.clone();
 
+            // Resolve the command's user-PATH location ONCE and share it between the wrapping
+            // and env-preservation checks below (previously each spawned its own `which` for
+            // the same command).
+            //
+            // NOTE: these subprocess probes run on the Space path, not only on `!`-triggered
+            // eol lines. `sudo` is set purely from `args[0] == "sudo"` (see the sudo-prefix
+            // handling above) with no `self.eol` guard, so `sudo <cmd>` + Space spawns `which`
+            // here (plus `sudo -n which` for the root check inside `needs_sudo_wrapping`). This
+            // is an accepted, deferred sharp edge: it fires once per submission on sudo lines
+            // only, and the user is already invoking sudo interactively. See
+            // docs/design/2026-07-03-tighten-sharp-edges.md (Non-Goals) and
+            // docs/design/2026-07-04-deferred-edges-audit-note.md.
+            let user_path = resolve_user_command_path(&command);
+
             // Check if we need to wrap the command with $(which)
-            if needs_sudo_wrapping(&command) {
+            if needs_sudo_wrapping(&command, user_path.as_deref()) {
                 let old_arg = args[0].clone();
                 args[0] = format!("$(which {command})");
                 debug!("🔧 SUDO $(which) WRAPPING: '{}' -> '{}'", old_arg, args[0]);
@@ -875,7 +909,7 @@ impl AKA {
             }
 
             // For user-installed tools, preserve environment with -E flag
-            if is_user_installed_tool(&command) {
+            if is_user_installed_tool(user_path.as_deref()) {
                 debug!("🔍 USER-INSTALLED TOOL DETECTED: '{command}'");
                 // Check if -E flag is not already present
                 if !sudo_prefix.contains("-E") {
@@ -1714,22 +1748,22 @@ mod tests {
 
     #[test]
     fn test_needs_sudo_wrapping_already_wrapped() {
-        // Should not wrap already wrapped commands
-        assert!(!needs_sudo_wrapping("$(which ls)"));
-        assert!(!needs_sudo_wrapping("  $(which eza)  "));
-        assert!(!needs_sudo_wrapping("$(which systemctl)"));
+        // Should not wrap already wrapped commands (short-circuits before the path check)
+        assert!(!needs_sudo_wrapping("$(which ls)", None));
+        assert!(!needs_sudo_wrapping("  $(which eza)  ", None));
+        assert!(!needs_sudo_wrapping("$(which systemctl)", None));
     }
 
     #[test]
     fn test_needs_sudo_wrapping_complex_commands() {
-        // Should not wrap complex commands
-        assert!(!needs_sudo_wrapping("ls -la"));
-        assert!(!needs_sudo_wrapping("cat file.txt"));
-        assert!(!needs_sudo_wrapping("grep pattern | less"));
-        assert!(!needs_sudo_wrapping("echo hello > file.txt"));
-        assert!(!needs_sudo_wrapping("command < input.txt"));
-        assert!(!needs_sudo_wrapping("cmd1 && cmd2"));
-        assert!(!needs_sudo_wrapping("cmd1; cmd2"));
+        // Should not wrap complex commands (short-circuits before the path check)
+        assert!(!needs_sudo_wrapping("ls -la", None));
+        assert!(!needs_sudo_wrapping("cat file.txt", None));
+        assert!(!needs_sudo_wrapping("grep pattern | less", None));
+        assert!(!needs_sudo_wrapping("echo hello > file.txt", None));
+        assert!(!needs_sudo_wrapping("command < input.txt", None));
+        assert!(!needs_sudo_wrapping("cmd1 && cmd2", None));
+        assert!(!needs_sudo_wrapping("cmd1; cmd2", None));
     }
 
     #[test]
@@ -2568,22 +2602,26 @@ mod tests {
     #[test]
     fn test_needs_sudo_wrapping_basic_cases() {
         // Test empty command
-        assert!(!needs_sudo_wrapping(""));
+        assert!(!needs_sudo_wrapping("", None));
 
         // Test whitespace-only command
-        assert!(!needs_sudo_wrapping("   "));
+        assert!(!needs_sudo_wrapping("   ", None));
 
         // Test command that's already wrapped
-        assert!(!needs_sudo_wrapping("$(which ls)"));
-        assert!(!needs_sudo_wrapping("$(which cat) file.txt"));
+        assert!(!needs_sudo_wrapping("$(which ls)", None));
+        assert!(!needs_sudo_wrapping("$(which cat) file.txt", None));
 
-        // Test some basic commands (results may vary by system)
-        let _ls_result = needs_sudo_wrapping("ls");
-        let _cat_result = needs_sudo_wrapping("cat file.txt");
+        // Test some basic commands (results may vary by system); resolve the path the same
+        // way the production call site does so the lookup path is exercised.
+        let _ls_result = needs_sudo_wrapping("ls", resolve_user_command_path("ls").as_deref());
+        let _cat_result = needs_sudo_wrapping("cat file.txt", None);
         // Just verify the function runs without panicking
 
         // Test commands that definitely shouldn't be wrapped (non-existent)
-        assert!(!needs_sudo_wrapping("nonexistent_command_12345"));
+        assert!(!needs_sudo_wrapping(
+            "nonexistent_command_12345",
+            resolve_user_command_path("nonexistent_command_12345").as_deref()
+        ));
     }
 
     // High Priority Tests: Error Handling and Edge Cases
