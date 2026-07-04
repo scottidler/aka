@@ -515,14 +515,15 @@ impl DaemonServer {
                         match aka_guard.replace_with_mode(&cmdline, ProcessingMode::Daemon) {
                             Ok(result) => {
                                 debug!("✅ Query processed successfully");
-                                // A non-empty result means the command line was
-                                // transformed, so usage counts changed in memory.
-                                // Mark the cache dirty; the debounce timer flushes
-                                // it. (A sudo-only transform with no alias bump is a
-                                // harmless redundant flush at worst.)
-                                if !result.is_empty() {
-                                    self.flush.cache_dirty.store(true, Ordering::Relaxed);
-                                }
+                                // Mark the cache dirty on every successful daemon
+                                // query. A count bump can occur even when the render
+                                // is empty (e.g. an alias whose value is `$@` with
+                                // space:false and zero args expands to ""), so gating
+                                // on a non-empty result would drop that count. The
+                                // debounce timer still bounds writes to at most one
+                                // per CACHE_FLUSH_INTERVAL_SECS; a flush that writes
+                                // unchanged counts is a harmless redundant flush.
+                                self.flush.cache_dirty.store(true, Ordering::Relaxed);
                                 Response::Success { data: result }
                             }
                             Err(e) => {

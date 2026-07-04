@@ -75,7 +75,11 @@ fn xdg_environment_lines() -> String {
     for key in ["XDG_CONFIG_HOME", "XDG_DATA_HOME"] {
         if let Ok(val) = std::env::var(key) {
             if PathBuf::from(&val).is_absolute() {
-                lines.push_str(&format!("Environment={key}={val}\n"));
+                // Quote the assignment so a value containing whitespace still
+                // round-trips through the unit (systemd splits unquoted
+                // Environment= values on whitespace). Belt-and-suspenders: such
+                // a path also violates the no-spaces convention.
+                lines.push_str(&format!("Environment=\"{key}={val}\"\n"));
             }
         }
     }
@@ -1720,12 +1724,20 @@ mod tests {
         // Absolute values are snapshotted; a relative value is ignored.
         std::env::set_var("XDG_CONFIG_HOME", "/abs/config");
         std::env::set_var("XDG_DATA_HOME", "relative/data");
-        assert_eq!(xdg_environment_lines(), "Environment=XDG_CONFIG_HOME=/abs/config\n");
+        assert_eq!(xdg_environment_lines(), "Environment=\"XDG_CONFIG_HOME=/abs/config\"\n");
 
         std::env::set_var("XDG_DATA_HOME", "/abs/data");
         assert_eq!(
             xdg_environment_lines(),
-            "Environment=XDG_CONFIG_HOME=/abs/config\nEnvironment=XDG_DATA_HOME=/abs/data\n"
+            "Environment=\"XDG_CONFIG_HOME=/abs/config\"\nEnvironment=\"XDG_DATA_HOME=/abs/data\"\n"
+        );
+
+        // A value containing whitespace stays intact inside the quotes.
+        std::env::set_var("XDG_CONFIG_HOME", "/abs/config dir");
+        std::env::set_var("XDG_DATA_HOME", "/abs/data");
+        assert_eq!(
+            xdg_environment_lines(),
+            "Environment=\"XDG_CONFIG_HOME=/abs/config dir\"\nEnvironment=\"XDG_DATA_HOME=/abs/data\"\n"
         );
 
         match prior_config {

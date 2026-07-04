@@ -219,7 +219,7 @@ Ships as a normal patch release via `bump` + the existing 4-target release workf
 |------|------------|--------|------------|
 | Lib client's simpler connect (no poll loop) behaves differently under daemon restart races | Med | Med | Phase 2 explicitly tests the restart window; port the poll loop into `RealSocketConnector` if needed |
 | XDG env overrides change where an existing install reads its cache/logs (user has `$XDG_DATA_HOME` set) | Low | Med | Behavior-neutral when unset (the common case); release notes call it out; `AKA_CACHE_DIR`/`AKA_LOG_FILE` still win |
-| Debounced counts lost on daemon SIGKILL | Low | Low | Counts are advisory; flush-on-shutdown covers SIGTERM/SIGINT; 5s window bounds loss |
+| Debounced counts lost on daemon SIGKILL or a SIGTERM/SIGINT received while idle-blocked in `accept()` | Low | Low | Counts are advisory; clean `Shutdown` requests and version-mismatch restarts flush deterministically; a signal delivered while blocked in `accept()` defers the flush until the next connection unblocks `run()`'s post-loop cleanup, so signal-driven flush is best-effort (bounded to one 5s window, same class as SIGKILL) - see implementation notes Phase 5 |
 | Env-mutating XDG tests race under parallel `cargo test` | Med | Low | Shared `ENV_LOCK` mutex per the repo's platform-path test pattern |
 | Help interception via `try_get_matches`/`DisplayHelp` misses an exotic help path | Low | Low | Worst case: static after_help without the emoji; `aka daemon --status` remains the full diagnostic |
 | Systemd daemon and interactive CLI resolve different XDG paths (env not inherited) | Med | High | `--install`/`--reinstall` snapshot XDG env into `Environment=` unit lines; socket unaffected (`$XDG_RUNTIME_DIR` is systemd-set); README documents reinstall-after-env-change |
@@ -227,8 +227,8 @@ Ships as a normal patch release via `bump` + the existing 4-target release workf
 
 ## Open Questions
 
-- [ ] Should the status emoji leave `--help` entirely (it duplicates `aka daemon --status`), making `after_help` fully static? Simpler, but loses a discoverable at-a-glance signal. (The `DisplayHelp`-interception mechanism makes keeping it cheap; leaning keep.)
-- [ ] Phase 4: is anything in Scott's dotfiles/scripts pointing at `AKA_TEST_CACHE_DIR`? (grep says tests-only in-repo; confirm before deleting.)
+- [x] ~~Should the status emoji leave `--help` entirely (it duplicates `aka daemon --status`), making `after_help` fully static?~~ Resolved: kept. The `DisplayHelp`-interception mechanism (Phase 1) makes it cheap - the probe runs only on the help path, never on `aka query` - so the discoverable at-a-glance signal stays at zero hot-path cost.
+- [x] ~~Phase 4: is anything in Scott's dotfiles/scripts pointing at `AKA_TEST_CACHE_DIR`?~~ Resolved: in-repo grep confirms tests-only (now migrated to `AKA_CACHE_DIR`); the panel's Codex reviewer verified no external references. Collapsed.
 - [x] ~~How do CLI and systemd daemon stay XDG-synchronized?~~ Resolved by panel review: `Environment=` snapshot at install time + documented `--reinstall` on env change (Phase 4).
 - [x] ~~Are usage counts advisory or correctness-visible?~~ Resolved: advisory telemetry, bounded loss accepted (Data Model).
 
