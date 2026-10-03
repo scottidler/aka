@@ -2,8 +2,12 @@ use aka_lib::*;
 use std::fs;
 use tempfile::TempDir;
 
+#[macro_use]
+mod user_only_tool;
+
 #[test]
 fn test_sudo_transition_sequence() {
+    require_user_only_tools!("rkvr");
     // Create a temporary directory for testing
     let temp_dir = TempDir::new().expect("Failed to create temp dir");
     let home_dir = temp_dir.path().to_path_buf();
@@ -169,6 +173,7 @@ aliases:
 
 #[test]
 fn test_home_environment_preservation() {
+    require_user_only_tools!("rkvr");
     let temp_dir = TempDir::new().expect("Failed to create temp dir");
     let home_dir = temp_dir.path().to_path_buf();
 

@@ -2,6 +2,9 @@ use aka_lib::*;
 use std::fs;
 use tempfile::TempDir;
 
+#[macro_use]
+mod user_only_tool;
+
 /// Test that simulates exactly what happens when a user types commands
 /// This tests the critical difference between space-expansion and enter-expansion
 #[test]
@@ -228,6 +231,7 @@ aliases:
 /// Test sudo command typing simulation
 #[test]
 fn test_sudo_typing_simulation() {
+    require_user_only_tools!("rkvr", "eza");
     let temp_dir = TempDir::new().expect("Failed to create temp dir");
     let home_dir = temp_dir.path().to_path_buf();
 
@@ -388,6 +392,7 @@ aliases:
 /// Test the exact sequence from the original user complaint
 #[test]
 fn test_original_user_sequence() {
+    require_user_only_tools!("rkvr");
     let temp_dir = TempDir::new().expect("Failed to create temp dir");
     let home_dir = temp_dir.path().to_path_buf();
 
