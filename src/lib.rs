@@ -589,7 +589,7 @@ impl AKA {
         let mut spec = loader.load(&config_path)?;
 
         // Expand keys in lookups - convert "prod|apps: us-east-1" to separate entries
-        for (_, map) in spec.lookups.iter_mut() {
+        for map in spec.lookups.values_mut() {
             let mut expanded = HashMap::new();
             for (pattern, value) in map.iter() {
                 let keys: Vec<&str> = pattern.split('|').collect();
