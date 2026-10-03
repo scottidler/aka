@@ -30,7 +30,8 @@ tasks:
   test:
     help: "Run all tests"
     bash: |
-      cargo test --all-features -- --test-threads=1
+      # Tests build throwaway $HOME dirs and assume XDG_* is unset; CI runners set XDG_CONFIG_HOME.
+      env -u XDG_CONFIG_HOME -u XDG_DATA_HOME -u XDG_RUNTIME_DIR cargo test --all-features -- --test-threads=1
 
   # Run coverage tests and output data
   cov:
