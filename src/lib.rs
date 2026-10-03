@@ -2860,6 +2860,7 @@ mod tests {
     fn test_get_config_path_with_override_none() {
         use std::fs;
         use tempfile::TempDir;
+        let _env = XdgEnvGuard::cleared();
 
         let temp_dir = TempDir::new().unwrap();
         let config_dir = temp_dir.path().join(".config").join("aka");
