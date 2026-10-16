@@ -8,3 +8,5 @@ tarpaulin-report.html
 
 # Git worktrees
 .worktrees/
+/rc
+mutants.out*
